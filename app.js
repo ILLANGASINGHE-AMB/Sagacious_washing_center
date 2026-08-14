@@ -300,12 +300,13 @@ async function renderDashboard() {
   if (!contentEl) return;
 
   try {
-    let orders = [], invoices = [], payments = [];
+    let orders = [], invoices = [], payments = [], customers = [];
     try {
-      [orders, invoices, payments] = await Promise.all([
+      [orders, invoices, payments, customers] = await Promise.all([
         DB.getOrders().catch(() => []),
         DB.getInvoices().catch(() => []),
-        DB.getPayments().catch(() => [])
+        DB.getPayments().catch(() => []),
+        DB.getCustomers().catch(() => [])
       ]);
     } catch (fetchErr) {
       console.warn('Dashboard fetch warning:', fetchErr);
@@ -352,9 +353,9 @@ async function renderDashboard() {
         </div>
       </div>`;
 
-    try { await renderDashCharts(orders || [], payments || []); } catch(e){ console.warn(e); }
-    try { await renderRecentOrders(orders || []); } catch(e){ console.warn(e); }
-    try { await renderUnpaidInvoices(invoices || []); } catch(e){ console.warn(e); }
+    try { renderDashCharts(orders || [], payments || []); } catch(e){ console.warn(e); }
+    try { renderRecentOrdersFast(orders || [], customers || []); } catch(e){ console.warn(e); }
+    try { renderUnpaidInvoicesFast(invoices || [], orders || [], customers || []); } catch(e){ console.warn(e); }
   } catch (err) {
     console.error('renderDashboard error:', err);
     contentEl.innerHTML = `
@@ -386,10 +387,10 @@ function getGreeting() {
   return 'Evening';
 }
 
-// Shared colour per order status — used by both dashboard charts so they stay consistent.
+// Shared colour per order status
 const STATUS_CHART_COLORS = {
-  'Paid':             '#22c55e', // green
-  'Unpaid':           '#ef4444'  // red
+  'Paid':             '#22c55e',
+  'Unpaid':           '#ef4444'
 };
 function statusChartColor(status) { return STATUS_CHART_COLORS[status] || '#94a3b8'; }
 
@@ -402,9 +403,6 @@ async function renderDashCharts(orders, payments) {
   const gridColor = isDark ? 'rgba(255,255,255,0.07)' : 'rgba(0,0,0,0.07)';
   const textColor = isDark ? '#94a3b8' : '#64748b';
 
-  // ── Daily Orders by Status (last 14 days) ──
-  // Counts EVERY order type per day (not just paid/revenue) so pickup requests,
-  // credit bills, etc. all show up. One stacked bar segment per status.
   const datasets = ORDER_STATUSES.map(status => ({
     label: status,
     data: days.map(d => orders.filter(o => o.status === status && (o.created_at || '').startsWith(d)).length),
@@ -437,7 +435,6 @@ async function renderDashCharts(orders, payments) {
     });
   }
 
-  // ── Order Status Distribution (doughnut) — same colours as the bar chart ──
   const statusCounts = {};
   orders.forEach(o => { statusCounts[o.status] = (statusCounts[o.status] || 0) + 1; });
   const statusLabels = Object.keys(statusCounts);
@@ -451,17 +448,18 @@ async function renderDashCharts(orders, payments) {
   }
 }
 
-async function renderRecentOrders(orders) {
-  const customers = await DB.getCustomers();
-  const cMap = Object.fromEntries(customers.map(c => [c.id, c]));
-  const recent = orders.sort((a, b) => new Date(b.created_at) - new Date(a.created_at)).slice(0, 5);
-  document.getElementById('recent-orders-table').innerHTML = `
+function renderRecentOrdersFast(orders, customers) {
+  const cMap = Object.fromEntries((customers || []).map(c => [c.id, c]));
+  const recent = (orders || []).slice().sort((a, b) => new Date(b.created_at) - new Date(a.created_at)).slice(0, 5);
+  const el = document.getElementById('recent-orders-table');
+  if (!el) return;
+  el.innerHTML = `
     <div class="table-wrap">
       <table>
         <thead><tr><th>Batch ID</th><th>Customer</th><th>Status</th><th>Total</th></tr></thead>
         <tbody>
           ${recent.map(o => `<tr>
-            <td style="font-family:monospace;font-weight:700;font-size:0.85em;">${o.batch_id}</td>
+            <td style="font-family:monospace;font-weight:700;font-size:0.85em;">${o.batch_id || '—'}</td>
             <td>${getOrderCustomerName(o, cMap)}</td>
             <td>${statusBadge(o.status)}</td>
             <td>${formatCurrency(o.total_amount)}</td>
@@ -471,20 +469,21 @@ async function renderRecentOrders(orders) {
     </div>`;
 }
 
-async function renderUnpaidInvoices(invoices) {
-  const [orders, customers] = await Promise.all([DB.getOrders(), DB.getCustomers()]);
-  const oMap = Object.fromEntries(orders.map(o => [o.id, o]));
-  const cMap = Object.fromEntries(customers.map(c => [c.id, c]));
-  const unpaid = invoices.filter(i => i.paid_status !== 'Paid').slice(0, 5);
-  document.getElementById('unpaid-invoices-table').innerHTML = `
+function renderUnpaidInvoicesFast(invoices, orders, customers) {
+  const oMap = Object.fromEntries((orders || []).map(o => [o.id, o]));
+  const cMap = Object.fromEntries((customers || []).map(c => [c.id, c]));
+  const unpaid = (invoices || []).filter(i => i.paid_status !== 'Paid').slice(0, 5);
+  const el = document.getElementById('unpaid-invoices-table');
+  if (!el) return;
+  el.innerHTML = `
     <div class="table-wrap">
       <table>
         <thead><tr><th>Invoice</th><th>Customer</th><th>Balance</th></tr></thead>
         <tbody>
           ${unpaid.map(inv => {
-            const o = oMap[inv.order_id]; const c = o ? cMap[o.customer_id] : null;
+            const o = oMap[inv.order_id];
             return `<tr>
-              <td style="font-weight:700;">${inv.invoice_number}</td>
+              <td style="font-weight:700;">${inv.invoice_number || '—'}</td>
               <td>${o ? getOrderCustomerName(o, cMap) : '—'}</td>
               <td style="color:var(--danger);font-weight:700;">${formatCurrency(inv.balance)}</td>
             </tr>`;
