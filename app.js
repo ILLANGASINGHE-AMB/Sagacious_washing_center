@@ -23,7 +23,7 @@ async function doLogin() {
     document.getElementById('login-screen').style.display = 'none';
     document.getElementById('app').style.display = 'flex';
 
-    await DB.logAction('User Login', `User "${currentUser.display_name}" logged in successfully`, { username: user.username, role: user.role }, 'User');
+    DB.logAction('User Login', `User "${currentUser.display_name}" logged in successfully`, { username: user.username, role: user.role }, 'User').catch(() => {});
 
     // Update topbar role chip
     const roleNames = { admin: 'Admin', user: 'User', driver: 'Driver' };
@@ -35,7 +35,7 @@ async function doLogin() {
     }
     updateRoleChip();
     initApp();
-    setTimeout(initGlobalSearch,300);
+    setTimeout(initGlobalSearch, 300);
   } catch (err) {
     console.error('Login error:', err);
     toast('Database error: ' + (err.message || err), 'error');
@@ -61,77 +61,104 @@ function updateRoleChip() {
 // ─────────────────────────────────────────────
 // ROLE-BASED ACCESS CONTROL (RBAC) HELPERS
 // ─────────────────────────────────────────────
-function isAdmin() { return currentUser && currentUser.role === 'admin'; }
-function isStaffUser() { return currentUser && currentUser.role === 'user'; }
-function isDriver() { return currentUser && currentUser.role === 'driver'; }
-
-function getRoleAllowedPages() {
-  if (isAdmin()) {
-    return ['dashboard', 'orders', 'customers', 'drivers', 'transport', 'paynow', 'invoices', 'deductions', 'items', 'expenses', 'analytics', 'reports', 'recent-actions', 'settings'];
-  }
-  if (isStaffUser()) {
-    return ['dashboard', 'orders', 'customers', 'drivers', 'transport', 'paynow', 'deductions', 'items', 'expenses', 'settings'];
-  }
-  if (isDriver()) {
-    return ['transport', 'customers', 'orders', 'settings'];
-  }
-  return ['dashboard', 'settings'];
-}
-
-function canDelete() { return isAdmin(); }
-function canAddOrders() { return isAdmin() || isStaffUser(); }
-function canEditOrders() { return isAdmin() || isStaffUser(); }
-function canEditCustomers() { return true; } // Admin, Staff User, Driver all can add/edit customers
-function canEditDrivers() { return isAdmin() || isStaffUser(); }
-function canEditTransport() { return isAdmin() || isDriver(); }
-function canEditPayNow() { return isAdmin() || isStaffUser(); }
-function canEditItems() { return isAdmin() || isStaffUser(); }
-function canEditExpenses() { return isAdmin() || isStaffUser(); }
-function canUseQuotation() { return isAdmin(); }
-function canPrintCatalogue() { return isAdmin(); }
-function canBackupRestore() { return isAdmin(); }
-
 function applyRoleSidebarRestrictions() {
-  if (!currentUser) return;
-  const allowed = getRoleAllowedPages();
+  const role = currentUser?.role || 'user';
+  const rolePages = {
+    driver: ['transport'],
+    user:   ['dashboard', 'customers', 'orders', 'paynow', 'invoices', 'items', 'expenses', 'deductions', 'recent-actions'],
+    admin:  ['dashboard', 'customers', 'drivers', 'transport', 'orders', 'paynow', 'invoices', 'items', 'expenses', 'analytics', 'reports', 'settings', 'deductions', 'recent-actions']
+  };
+  const allowed = rolePages[role] || rolePages.user;
 
   document.querySelectorAll('nav.sidebar-nav a').forEach(a => {
-    const page = a.dataset.page;
-    a.style.display = allowed.includes(page) ? 'flex' : 'none';
+    const p = a.dataset.page;
+    if (p) {
+      a.style.display = allowed.includes(p) ? 'flex' : 'none';
+    }
   });
 
-  if (!allowed.includes(currentPage)) {
-    const defaultPage = isDriver() ? 'transport' : 'dashboard';
-    navigate(defaultPage);
+  const settingsBtn = document.getElementById('topbar-settings-btn');
+  if (settingsBtn) {
+    settingsBtn.style.display = (role === 'admin') ? 'inline-flex' : 'none';
   }
+}
+
+function getRoleAllowedPages() {
+  const role = currentUser?.role || 'user';
+  const rolePages = {
+    driver: ['transport'],
+    user:   ['dashboard', 'customers', 'orders', 'paynow', 'invoices', 'items', 'expenses', 'deductions', 'recent-actions'],
+    admin:  ['dashboard', 'customers', 'drivers', 'transport', 'orders', 'paynow', 'invoices', 'items', 'expenses', 'analytics', 'reports', 'settings', 'deductions', 'recent-actions']
+  };
+  return rolePages[role] || rolePages.user;
+}
+
+function canDelete() {
+  return currentUser?.role === 'admin';
+}
+
+function canBackupRestore() {
+  return currentUser?.role === 'admin';
+}
+
+function isAdmin() {
+  return currentUser?.role === 'admin';
+}
+
+function isDriver() {
+  return currentUser?.role === 'driver';
+}
+
+function isUser() {
+  return currentUser?.role === 'user';
+}
+
+function requireAdmin() {
+  if (!isAdmin()) {
+    toast('Admin access required', 'error');
+    return false;
+  }
+  return true;
+}
+
+function requireDriverOrAdmin() {
+  if (!isAdmin() && !isDriver()) {
+    toast('Access restricted to drivers and admins', 'error');
+    return false;
+  }
+  return true;
 }
 
 function doLogout() {
-  confirmDialog('Are you sure you want to logout?', async () => {
-    if (currentUser) {
-      await DB.logAction('User Logout', `User "${currentUser.display_name}" logged out`, { username: currentUser.username }, 'User');
-    }
-    currentUser = null;
+  currentUser = null;
+  document.getElementById('app').style.display = 'none';
+  const ls = document.getElementById('login-screen');
+  if (ls) {
     document.getElementById('login-user').value = '';
     document.getElementById('login-pass').value = '';
-    document.getElementById('app').style.display    = 'none';
+    document.getElementById('login-role').value = 'admin';
     document.getElementById('login-screen').style.display = 'flex';
-  });
+  }
+  toast('Logged out');
 }
 
 // ─────────────────────────────────────────────
 // INIT
 // ─────────────────────────────────────────────
 async function initApp() {
-  await DB.seedDemoData();
-  await applySettings();
   updateTopbarDate();
   setInterval(updateTopbarDate, 60000);
+
+  // Navigate immediately to appropriate first page
   if (isDriver()) {
     navigate('transport');
   } else {
     navigate('dashboard');
   }
+
+  // Load settings and seed in background
+  applySettings().catch(e => console.warn('applySettings error:', e));
+  DB.seedDemoData().catch(e => console.warn('seedDemoData error:', e));
 }
 
 function updateTopbarDate() {
@@ -140,46 +167,52 @@ function updateTopbarDate() {
 }
 
 async function applySettings() {
-  const darkMode    = await DB.getSetting('dark_mode');
-  const textSize    = await DB.getSetting('text_size');
-  const logoData    = await DB.getSetting('logo_data');
-  const companyName = await DB.getSetting('company_name');
-  const showUndo    = await DB.getSetting('show_undo_button');
-  const showAiBtn   = await DB.getSetting('show_saga_ai_button');
-  showUndoButtonSetting = showUndo !== 'false' ? 'true' : 'false';
+  try {
+    const [darkMode, textSize, logoData, companyName, showUndo, showAiBtn] = await Promise.all([
+      DB.getSetting('dark_mode').catch(() => null),
+      DB.getSetting('text_size').catch(() => null),
+      DB.getSetting('logo_data').catch(() => null),
+      DB.getSetting('company_name').catch(() => null),
+      DB.getSetting('show_undo_button').catch(() => null),
+      DB.getSetting('show_saga_ai_button').catch(() => null)
+    ]);
+    showUndoButtonSetting = showUndo !== 'false' ? 'true' : 'false';
 
-  // Toggle SAGA AI floating drawer button
-  const fab = document.getElementById('gemini-fab');
-  const drawer = document.getElementById('gemini-drawer');
-  if (showAiBtn === 'false') {
-    if (fab) fab.style.display = 'none';
-    if (drawer) drawer.style.display = 'none';
-  } else {
-    if (fab) fab.style.display = 'flex';
-  }
+    // Toggle SAGA AI floating drawer button
+    const fab = document.getElementById('gemini-fab');
+    const drawer = document.getElementById('gemini-drawer');
+    if (showAiBtn === 'false') {
+      if (fab) fab.style.display = 'none';
+      if (drawer) drawer.style.display = 'none';
+    } else {
+      if (fab) fab.style.display = 'flex';
+    }
 
-  if (darkMode === 'true') {
-    document.documentElement.classList.add('dark');
-    const icon = document.getElementById('dark-icon');
-    if (icon) icon.className = 'fas fa-sun';
-  } else {
-    document.documentElement.classList.remove('dark');
-    const icon = document.getElementById('dark-icon');
-    if (icon) icon.className = 'fas fa-moon';
-  }
+    if (darkMode === 'true') {
+      document.documentElement.classList.add('dark');
+      const icon = document.getElementById('dark-icon');
+      if (icon) icon.className = 'fas fa-sun';
+    } else {
+      document.documentElement.classList.remove('dark');
+      const icon = document.getElementById('dark-icon');
+      if (icon) icon.className = 'fas fa-moon';
+    }
 
-  if (textSize) {
-    document.body.classList.remove('text-size-sm', 'text-size-md', 'text-size-lg');
-    document.body.classList.add(`text-size-${textSize}`);
-  }
+    if (textSize) {
+      document.body.classList.remove('text-size-sm', 'text-size-md', 'text-size-lg');
+      document.body.classList.add(`text-size-${textSize}`);
+    }
 
-  if (companyName) {
-    const el = document.getElementById('sidebar-company-name');
-    if (el) el.innerHTML = companyName.replace(' ', '<br/>');
-  }
+    if (companyName) {
+      const el = document.getElementById('sidebar-company-name');
+      if (el) el.innerHTML = companyName.replace(' ', '<br/>');
+    }
 
-  if (logoData && typeof updateLogo === 'function') {
-    updateLogo(logoData);
+    if (logoData && typeof updateLogo === 'function') {
+      updateLogo(logoData);
+    }
+  } catch (err) {
+    console.warn('applySettings error:', err);
   }
 }
 
@@ -205,7 +238,19 @@ function navigate(page) {
     items: 'Items', expenses: 'Expenses & Chemical Register', analytics: 'Data Analytics', reports: 'Reports', settings: 'Settings', deductions: 'Deductions',
     'recent-actions': 'Recent Actions'
   };
-  document.getElementById('page-title').textContent = titles[page] || page;
+  const titleText = titles[page] || page;
+  const pageTitleEl = document.getElementById('page-title');
+  if (pageTitleEl) pageTitleEl.textContent = titleText;
+
+  // Immediate loading indicator in content area
+  const contentDiv = document.getElementById('content');
+  if (contentDiv && page !== 'expenses' && page !== 'transport') {
+    contentDiv.innerHTML = `
+      <div style="display:flex;flex-direction:column;align-items:center;justify-content:center;min-height:300px;color:var(--text-muted);">
+        <i class="fas fa-circle-notch fa-spin" style="font-size:2em;color:var(--primary);margin-bottom:12px;"></i>
+        <div style="font-size:0.9em;font-weight:500;">Loading ${titleText}...</div>
+      </div>`;
+  }
 
   const pages = {
     dashboard: renderDashboard,
