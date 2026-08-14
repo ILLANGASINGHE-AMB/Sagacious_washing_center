@@ -1,0 +1,133 @@
+================================================================================
+SAGACIOUS WASHING CENTER — FINANCIAL EQUATIONS & CALCULATION REFERENCE
+================================================================================
+
+This document provides a clean, simple, plain-text reference for every formula
+used in the SAGA Washing Center ERP system.
+
+
+--------------------------------------------------------------------------------
+1. ORDER CALCULATIONS (orders.js)
+--------------------------------------------------------------------------------
+
+A. ITEMS SUBTOTAL
+   Total price of all clothes/items in the order before any discounts.
+
+   Items Subtotal = Sum of (Quantity x Unit Price for each line item)
+
+
+B. DISCOUNT AMOUNT
+   Discount applied only to laundry items (not applied to delivery or extra fees).
+
+   Discount Amount = Items Subtotal x (Discount Rate % / 100)
+
+
+C. ORDER GRAND TOTAL
+   Order Grand Total = (Items Subtotal - Discount Amount) + Delivery Charge + Extra Payment
+
+
+D. ORDER STATUS
+   - Paid:   If Advance Payment >= Order Grand Total
+   - Unpaid: If Advance Payment < Order Grand Total
+
+
+
+--------------------------------------------------------------------------------
+2. INVOICE CALCULATIONS (invoice.js & financials.js)
+--------------------------------------------------------------------------------
+
+A. GROSS INVOICE TOTAL
+   Total bill before any customer dispute/damage deductions.
+
+   Gross Invoice Total = (Items Subtotal - Discount Amount) + Delivery Charge + Extra Payment
+
+
+B. FINAL NET PAYABLE TOTAL
+   Final amount owed by customer after subtracting approved deductions
+   (e.g., damaged linen, customer concessions).
+
+   Final Net Payable = Gross Invoice Total - Deductions Amount
+
+
+C. TOTAL PAID
+   All money received so far from the customer for this invoice.
+
+   Total Paid = Advance Payment + Sum of all Recorded Payments
+
+
+D. BALANCE DUE (OUTSTANDING AMOUNT)
+   Balance Due = Final Net Payable - Total Paid  (Minimum is 0)
+
+
+E. INVOICE PAYMENT STATUS
+   - Paid:           If Balance Due <= 0
+   - Partially Paid: If Total Paid > 0 AND Balance Due > 0
+   - Unpaid:         If Total Paid == 0
+
+
+
+--------------------------------------------------------------------------------
+3. EXPENSE & TRANSPORT CALCULATIONS (expenses.js, transport.js)
+--------------------------------------------------------------------------------
+
+A. MULTI-MONTH EXPENSE AVERAGING (AMORTIZATION)
+   Spreads long-term expenses (e.g. 12-month insurance, annual license) evenly
+   across all covered months.
+
+   Monthly Expense Share = Total Expense Amount / Months Covered
+   (Example: LKR 120,000 for 12 months = LKR 10,000 per month)
+
+
+B. CHEMICAL STOCK COSTS (TWO COSTING OPTIONS)
+   Option 1: Cash Outflow (Purchases)
+   Sum of all chemical purchase invoices in the period.
+   Chemical Expense = Sum of all Chemical Stock Purchase Amounts (type = 'IN')
+
+   Option 2: COGS (Actual Inventory Consumed)
+   Value of chemicals actually used during washing operations.
+   Chemical Expense (COGS) = Sum of (Quantity Used x Purchase Unit Price) (type = 'OUT')
+
+
+C. TRANSPORT FUEL COST PER TRIP
+   Cost Per KM = Fuel Price per Litre / KM per Litre
+   Trip Fuel Cost = Trip Distance (in KM) x Cost Per KM
+
+
+
+--------------------------------------------------------------------------------
+4. EXECUTIVE ANALYTICS & PROFIT / LOSS (analytics.js)
+--------------------------------------------------------------------------------
+
+A. BOOKED REVENUE VS. NET BOOKED REVENUE (ACCRUAL BASIS)
+   Gross Revenue = Sum of all Order Grand Totals created in the period
+   Net Booked Revenue = Gross Revenue - Sum of all Invoice Deductions in the period
+
+
+B. CASH COLLECTED (REALIZED CASH FLOW BASIS)
+   Actual cash received in hand during the selected period.
+   Cash Collected = Sum of Advance Payments + Sum of all Payments Received in the period
+
+
+C. TOTAL OPERATING EXPENSES (OPEX)
+   Total Expenses = Amortized General Expenses + Chemical Expenses + Transport Fuel Costs
+
+
+D. NET OPERATING PROFIT
+   Net Operating Profit = Net Booked Revenue - Total Expenses
+
+
+E. PROFIT MARGIN %
+   Profit Margin % = (Net Operating Profit / Net Booked Revenue) x 100
+
+
+F. OPERATING COST RATIO %
+   Cost Ratio % = (Total Expenses / Net Booked Revenue) x 100
+
+
+G. AVERAGE ORDER VALUE (AOV)
+   Average Order Value = Net Booked Revenue / Total Number of Orders
+
+
+H. UNCOLLECTED RECEIVABLES
+   Total unpaid money owed to the business across all customers.
+   Total Uncollected Receivables = Sum of Balance Due across all Unpaid Invoices
