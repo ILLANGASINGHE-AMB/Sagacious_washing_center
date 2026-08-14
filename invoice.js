@@ -672,9 +672,6 @@ async function viewInvoice(id) {
       </div>
     </div>` : '';
 
-  const discountedItems = itemsSubtotal - discount;
-  const grandTotal = discountedItems + deliveryCharge;
-
   const invoiceHTML = `
     <div class="invoice-page" id="invoice-print-area" style="position:relative;font-family:'DM Sans',sans-serif;background:#fff;color:#1e293b;max-width:780px;margin:0 auto;padding:40px 44px;box-shadow:0 4px 32px rgba(0,0,0,0.1);border-radius:4px;">
       ${creditBanner}
