@@ -15,6 +15,7 @@ let _invCache = { invoices: [], oMap: {}, cMap: {}, filteredInvoices: [], invoic
 
 async function renderInvoices() {
   document.getElementById('page-title').textContent = 'Invoice Management';
+  showLoading('content', 'Loading Invoices...');
   
   // Build page shell
   document.getElementById('content').innerHTML = `

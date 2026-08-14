@@ -644,6 +644,9 @@ async function sendGeminiDrawerMessage() {
   const userText = inputEl.value.trim();
   if (!userText) return;
 
+  const fab = document.getElementById('gemini-fab');
+  if (fab) fab.classList.add('thinking');
+
   // Add User message
   geminiDrawerHistory.push({ role: 'user', content: userText });
   inputEl.value = '';
@@ -683,6 +686,8 @@ CRITICAL: ONLY provide metric reports, lists of orders/customers, or financial s
     document.getElementById('drawer-typing-indicator')?.remove();
     geminiDrawerHistory.push({ role: 'system', content: `Error: ${error.message}` });
     renderDrawerChatBubbles();
+  } finally {
+    if (fab) fab.classList.remove('thinking');
   }
 }
 

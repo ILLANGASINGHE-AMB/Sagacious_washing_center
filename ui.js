@@ -108,11 +108,22 @@ function toast(message, type = 'success', duration = 3000) {
   const icons = { success: 'fa-check-circle', error: 'fa-exclamation-circle', info: 'fa-info-circle', warning: 'fa-exclamation-triangle' };
   const colors = { success: '#22c55e', error: '#ef4444', info: '#3b82f6', warning: '#f59e0b' };
   const container = document.getElementById('toast-container');
+  if (!container) return;
   const el = document.createElement('div');
   el.className = `toast ${type}`;
   el.innerHTML = `<i class="fas ${icons[type]||icons.info}" style="color:${colors[type]};font-size:1.1em;"></i><span>${message}</span>`;
   container.appendChild(el);
   setTimeout(() => { el.style.opacity='0'; el.style.transform='translateX(40px)'; el.style.transition='0.3s'; setTimeout(()=>el.remove(),400); }, duration);
+}
+const showToast = toast;
+
+function showLoading(containerId = 'content', message = 'Loading...') {
+  const el = document.getElementById(containerId);
+  if (!el) return;
+  el.innerHTML = `<div style="text-align:center;padding:48px 20px;color:var(--text-muted);">
+    <i class="fas fa-spinner fa-spin" style="font-size:2em;color:var(--primary);margin-bottom:12px;"></i>
+    <div style="font-size:0.9em;font-weight:500;">${message}</div>
+  </div>`;
 }
 
 function showModal(id) { document.getElementById(id).style.display = 'flex'; }

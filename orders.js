@@ -14,6 +14,7 @@ async function renderOrders() {
   }
 
   // ── First load: build the full shell ──────────────────────────────────
+  showLoading('content', 'Loading Orders...');
   const [allOrders, customers, drivers] = await Promise.all([DB.getOrders(), DB.getCustomers(), DB.getDrivers()]);
   _ordersCustomers=customers; _ordersDrivers=drivers;
   const hasFilter = ordersStatusFilter||ordersDriverFilter||ordersCustFilter;

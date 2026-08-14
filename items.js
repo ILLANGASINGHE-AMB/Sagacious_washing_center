@@ -18,6 +18,7 @@ async function renderItems() {
     return;
   }
 
+  showLoading('content', 'Loading Catalog...');
   document.getElementById('content').innerHTML = `
     <div class="section-header">
       <span class="section-title">Items Catalog</span>

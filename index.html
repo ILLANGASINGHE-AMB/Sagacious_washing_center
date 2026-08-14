@@ -470,6 +470,18 @@
       background: #ef4444;
       box-shadow: 0 4px 12px rgba(239, 68, 68, 0.4);
     }
+    .gemini-fab.thinking {
+      animation: fabPulse 1s infinite alternate;
+      border: 3px solid #f59e0b;
+    }
+    @keyframes fabPulse {
+      0% { transform: scale(1); box-shadow: 0 0 0 0 rgba(245, 158, 11, 0.7); }
+      100% { transform: scale(1.1); box-shadow: 0 0 0 10px rgba(245, 158, 11, 0); }
+    }
+    .input-error {
+      border-color: var(--danger) !important;
+      box-shadow: 0 0 0 3px rgba(239,68,68,0.25) !important;
+    }
     
     .gemini-fab::after {
       content: '';
@@ -776,10 +788,10 @@
         <div id="global-search-bar" style="position:relative;flex:1;max-width:380px;margin:0 16px;" class="no-print"></div>
         <div class="topbar-right">
           <span id="topbar-date" style="font-size:0.82em;color:var(--text-muted);"></span>
-          <button onclick="toggleDark()" class="btn btn-secondary btn-icon" title="Toggle Dark Mode [Alt+T]">
+          <button onclick="toggleDark()" class="btn btn-secondary btn-icon" title="Toggle Dark Mode [Alt+T]" aria-label="Toggle Dark Mode">
             <i class="fas fa-moon" id="dark-icon"></i>
           </button>
-          <button onclick="navigate('settings')" class="btn btn-secondary btn-icon" title="Settings [Alt+S]">
+          <button onclick="navigate('settings')" class="btn btn-secondary btn-icon" title="Settings [Alt+S]" aria-label="Settings">
             <i class="fas fa-cog"></i>
           </button>
           <div class="topbar-avatar" id="topbar-avatar" title="Admin">Admin</div>
@@ -791,43 +803,43 @@
     </div>
 
     <!-- Gemini AI Floating Drawer & Button -->
-    <div id="gemini-drawer" class="gemini-drawer">
+    <div id="gemini-drawer" class="gemini-drawer" role="dialog" aria-modal="true" aria-label="SAGA AI Assistant">
       <div class="gemini-drawer-header">
         <div class="gemini-drawer-title">
           <i class="fas fa-brain" style="color:#8b5cf6;"></i>
           <span>SAGA AI</span>
         </div>
-        <button class="gemini-drawer-close" onclick="toggleGeminiDrawer()"><i class="fas fa-times"></i></button>
+        <button class="gemini-drawer-close" aria-label="Close AI Drawer" onclick="toggleGeminiDrawer()"><i class="fas fa-times"></i></button>
       </div>
       <div id="gemini-drawer-chat" class="gemini-drawer-body">
         <!-- Chat bubbles injected here -->
       </div>
       <div class="gemini-drawer-footer">
-        <input type="text" id="gemini-drawer-input" class="form-input" placeholder="Ask SAGA AI..." style="margin: 0; flex: 1;" onkeydown="handleGeminiDrawerKey(event)" />
-        <button class="btn btn-primary" onclick="sendGeminiDrawerMessage()" style="padding: 10px 14px;"><i class="fas fa-paper-plane"></i></button>
+        <input type="text" id="gemini-drawer-input" class="form-input" placeholder="Ask SAGA AI..." style="margin: 0; flex: 1;" onkeydown="handleGeminiDrawerKey(event)" aria-label="Ask SAGA AI prompt input" />
+        <button class="btn btn-primary" aria-label="Send message to SAGA AI" onclick="sendGeminiDrawerMessage()" style="padding: 10px 14px;"><i class="fas fa-paper-plane"></i></button>
       </div>
     </div>
 
-    <div id="gemini-fab" class="gemini-fab" onclick="toggleGeminiDrawer()" title="Ask Gemini AI">
+    <div id="gemini-fab" class="gemini-fab" onclick="toggleGeminiDrawer()" title="Ask Gemini AI" aria-label="Open SAGA AI Assistant">
       <i class="fas fa-wand-magic-sparkles"></i>
     </div>
   </div>
 
   <!-- Scripts -->
-  <script src="config.js?v=5.11"></script>
-  <script src="db.js?v=5.11"></script>
-  <script src="ui.js?v=5.11"></script>
-  <script src="financials.js?v=5.11"></script>
-  <script src="orders.js?v=5.11"></script>
-  <script src="invoice.js?v=5.11"></script>
-  <script src="items.js?v=5.11"></script>
-  <script src="reports.js?v=5.11"></script>
-  <script src="expenses.js?v=5.11"></script>
-  <script src="transport.js?v=5.11"></script>
-  <script src="settings.js?v=5.11"></script>
-  <script src="analytics.js?v=5.11"></script>
-  <script src="gemini.js?v=5.11"></script>
-  <script src="app.js?v=5.11"></script>
-  <script src="keyboard.js?v=5.11"></script>
+  <script src="config.js?v=5.12"></script>
+  <script src="db.js?v=5.12"></script>
+  <script src="ui.js?v=5.12"></script>
+  <script src="financials.js?v=5.12"></script>
+  <script src="orders.js?v=5.12"></script>
+  <script src="invoice.js?v=5.12"></script>
+  <script src="items.js?v=5.12"></script>
+  <script src="reports.js?v=5.12"></script>
+  <script src="expenses.js?v=5.12"></script>
+  <script src="transport.js?v=5.12"></script>
+  <script src="settings.js?v=5.12"></script>
+  <script src="analytics.js?v=5.12"></script>
+  <script src="gemini.js?v=5.12"></script>
+  <script src="app.js?v=5.12"></script>
+  <script src="keyboard.js?v=5.12"></script>
 </body>
 </html>

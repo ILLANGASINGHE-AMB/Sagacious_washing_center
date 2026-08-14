@@ -866,17 +866,24 @@ const ExpensesModule = {
   },
 
   async deleteGeneralExpense(id) {
-    if (!confirm('Are you sure you want to delete this expense record?')) return;
     try {
-      const expenses = await DB.getGeneralExpenses();
+      const expenses = await DB.getGeneralExpenses().catch(() => []);
       const exp = expenses.find(e => e.id === id || e.expense_id === id);
-      await DB.deleteGeneralExpense(id);
-      await DB.logAction('Delete Expense', `Deleted expense "${exp ? exp.expense_name : id}" (LKR ${exp ? parseFloat(exp.amount||0).toLocaleString() : '0'})`, { id, expense: exp }, 'Expense');
-      showToast('Expense record deleted.');
-      await this.switchSubTab(this.activeSubTab);
+      const nameStr = exp ? `"${exp.expense_name}" (LKR ${parseFloat(exp.amount||0).toLocaleString()})` : 'this expense record';
+
+      confirmDialog(`Are you sure you want to delete expense ${nameStr}?`, async () => {
+        try {
+          await DB.deleteGeneralExpense(id);
+          await DB.logAction('Delete Expense', `Deleted expense ${nameStr}`, { id, expense: exp }, 'Expense');
+          showToast('Expense record deleted.');
+          await this.switchSubTab(this.activeSubTab);
+        } catch (err) {
+          console.error('deleteGeneralExpense error:', err);
+          showToast('Failed to delete expense: ' + (err.message || err), 'error');
+        }
+      }, 'Delete Expense');
     } catch (err) {
-      console.error('deleteGeneralExpense error:', err);
-      showToast('Failed to delete expense: ' + (err.message || err), 'error');
+      console.error('deleteGeneralExpense fetch error:', err);
     }
   },
 
@@ -885,7 +892,7 @@ const ExpensesModule = {
     const activeChems = chemicals.filter(c => c.status !== 'Inactive');
 
     if (activeChems.length === 0) {
-      alert('Please add chemicals in Chemical Master catalog first.');
+      toast('Please add chemicals in Chemical Master catalog first.', 'warning');
       return;
     }
 
@@ -1065,12 +1072,24 @@ const ExpensesModule = {
   },
 
   async deleteChemical(id) {
-    if (!confirm('Are you sure you want to delete this chemical master record?')) return;
-    const chemicals = await DB.getChemicals();
-    const chem = chemicals.find(c => c.id === id || c.chemical_id === id);
-    await DB.deleteChemical(id);
-    await DB.logAction('Delete Chemical Master', `Deleted chemical catalog entry "${chem ? chem.name : id}" (${chem ? chem.chemical_id : id})`, { id, chemical: chem }, 'Chemical');
-    showToast('Chemical deleted.');
-    await this.switchSubTab(this.activeSubTab);
+    try {
+      const chemicals = await DB.getChemicals().catch(() => []);
+      const chem = chemicals.find(c => c.id === id || c.chemical_id === id);
+      const nameStr = chem ? `"${chem.name}" (${chem.chemical_id})` : 'this chemical master record';
+
+      confirmDialog(`Are you sure you want to delete chemical master record ${nameStr}?`, async () => {
+        try {
+          await DB.deleteChemical(id);
+          await DB.logAction('Delete Chemical Master', `Deleted chemical catalog entry ${nameStr}`, { id, chemical: chem }, 'Chemical');
+          showToast('Chemical deleted.');
+          await this.switchSubTab(this.activeSubTab);
+        } catch (err) {
+          console.error('deleteChemical error:', err);
+          showToast('Failed to delete chemical: ' + (err.message || err), 'error');
+        }
+      }, 'Delete Chemical');
+    } catch (err) {
+      console.error('deleteChemical fetch error:', err);
+    }
   }
 };

@@ -774,7 +774,7 @@ const TransportModule = {
 
       if (finalKm < trip.starting_km) {
         if (btn) btn.disabled = false;
-        alert(`Final KM (${finalKm}) cannot be less than Starting KM (${trip.starting_km}).`);
+        showToast(`Final KM (${finalKm}) cannot be less than Starting KM (${trip.starting_km}).`, 'error');
         return;
       }
 
@@ -881,13 +881,25 @@ const TransportModule = {
   },
 
   async deleteTrip(tripDbId) {
-    if (!canDelete()) return showToast('Admin permission required to delete trips');
-    if (!confirm('Are you sure you want to delete this trip record?')) return;
-    const trip = await DB.getTrip(tripDbId);
-    await DB.deleteTrip(tripDbId);
-    await DB.logAction('Delete Trip', `Deleted trip record ${trip ? trip.trip_id : tripDbId}`, { id: tripDbId }, 'Transport');
-    showToast('Trip record deleted.');
-    await this.renderTripsList();
+    if (!canDelete()) return showToast('Admin permission required to delete trips', 'error');
+    try {
+      const trip = await DB.getTrip(tripDbId);
+      const tripName = trip ? `Trip ${trip.trip_id} (${trip.driver_name || 'Driver'})` : 'this trip record';
+
+      confirmDialog(`Are you sure you want to delete ${tripName}?`, async () => {
+        try {
+          await DB.deleteTrip(tripDbId);
+          await DB.logAction('Delete Trip', `Deleted trip record ${trip ? trip.trip_id : tripDbId}`, { id: tripDbId }, 'Transport');
+          showToast('Trip record deleted.');
+          await this.renderTripsList();
+        } catch (err) {
+          console.error('deleteTrip error:', err);
+          showToast('Failed to delete trip: ' + (err.message || err), 'error');
+        }
+      }, 'Delete Trip');
+    } catch (err) {
+      console.error('deleteTrip fetch error:', err);
+    }
   },
 
   changeMonthlyStatMonth(monthKey) {
