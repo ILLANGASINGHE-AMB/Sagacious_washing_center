@@ -342,21 +342,26 @@ async function _refreshInvoicesTable() {
     return isCredit && inv.credit_due_date && new Date(inv.credit_due_date) < new Date() && inv.computedBalance > 0;
   }).length;
 
-  document.getElementById('card-total-invoices').textContent = totalInvoices;
-  document.getElementById('card-total-revenue').textContent = formatCurrency(totalRevenue);
-  document.getElementById('card-outstanding-balance').textContent = formatCurrency(totalOutstanding);
-  
+  const elInvoices = document.getElementById('card-total-invoices');
+  if (elInvoices) elInvoices.textContent = totalInvoices;
+  const elRevenue = document.getElementById('card-total-revenue');
+  if (elRevenue) elRevenue.textContent = formatCurrency(totalRevenue);
+  const elOutstanding = document.getElementById('card-outstanding-balance');
+  if (elOutstanding) elOutstanding.textContent = formatCurrency(totalOutstanding);
+
   const overdueEl = document.getElementById('card-overdue-count');
-  overdueEl.textContent = overdueCount;
+  if (overdueEl) overdueEl.textContent = overdueCount;
   const overdueContainer = document.getElementById('card-overdue-container');
-  if (overdueCount > 0) {
-    overdueContainer.style.border = '1px solid var(--danger)';
-    overdueContainer.style.background = 'rgba(239, 68, 68, 0.04)';
-    overdueEl.style.color = 'var(--danger)';
-  } else {
-    overdueContainer.style.border = 'none';
-    overdueContainer.style.background = 'var(--card-bg)';
-    overdueEl.style.color = 'inherit';
+  if (overdueContainer && overdueEl) {
+    if (overdueCount > 0) {
+      overdueContainer.style.border = '1px solid var(--danger)';
+      overdueContainer.style.background = 'rgba(239, 68, 68, 0.04)';
+      overdueEl.style.color = 'var(--danger)';
+    } else {
+      overdueContainer.style.border = 'none';
+      overdueContainer.style.background = 'var(--card-bg)';
+      overdueEl.style.color = 'inherit';
+    }
   }
 
   // Set Count Label

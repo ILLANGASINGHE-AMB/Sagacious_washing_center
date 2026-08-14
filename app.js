@@ -484,7 +484,7 @@ async function renderCustomers() {
       <div id="cust-pagination" style="padding:14px 18px;display:flex;justify-content:space-between;align-items:center;border-top:1px solid var(--border);"></div>
     </div>`;
   await _refreshCustomersTable();
-  document.getElementById('cust-search-input').focus();
+  document.getElementById('cust-search-input')?.focus();
 }
 
 async function _refreshCustomersTable() {
@@ -796,7 +796,7 @@ async function renderDrivers() {
     <div id="drv-grid" style="display:grid;grid-template-columns:repeat(auto-fill,minmax(280px,1fr));gap:16px;"></div>
     <div id="drv-pagination" style="margin-top:16px;display:flex;justify-content:flex-end;"></div>`;
   await _refreshDriversGrid();
-  document.getElementById('drv-search-input').focus();
+  document.getElementById('drv-search-input')?.focus();
 }
 
 async function _refreshDriversGrid() {
@@ -1084,7 +1084,7 @@ async function renderPayNow() {
     </div>`;
 
   await _refreshPayNowTable();
-  document.getElementById('paynow-search-input').focus();
+  document.getElementById('paynow-search-input')?.focus();
 }
 
 async function _refreshPayNowTable() {

@@ -74,7 +74,7 @@ async function renderOrders() {
     </div>`;
 
   await _refreshOrdersTable();
-  document.getElementById('orders-search-input').focus();
+  document.getElementById('orders-search-input')?.focus();
 }
 
 // ── Only updates tbody + pagination + count — never touches the search input ──
