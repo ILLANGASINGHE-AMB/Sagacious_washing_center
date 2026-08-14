@@ -299,73 +299,77 @@ async function renderDashboard() {
   const contentEl = document.getElementById('content');
   if (!contentEl) return;
 
+  // ① Render the layout shell immediately — no spinner, instant feel
+  contentEl.innerHTML = `
+    <div style="margin-bottom:22px;">
+      <div style="font-size:0.85em;color:var(--text-muted);">Good ${getGreeting()}, <strong>${currentUser?.display_name || 'User'}</strong></div>
+      <div style="font-family:'Playfair Display',serif;font-size:1.6em;font-weight:700;color:var(--text);">Welcome to Sagacious Washing Center</div>
+    </div>
+    <div id="dash-stat-cards" style="display:grid;grid-template-columns:repeat(auto-fit,minmax(175px,1fr));gap:16px;margin-bottom:24px;">
+      ${statCard("Today's Pickups",  '…', "fa-truck",           "#3b82f6", "#dbeafe", "Scheduled for today")}
+      ${statCard("Pending Payments", '…', "fa-clock",           "#f59e0b", "#fef9c3", "Awaiting payment")}
+      ${statCard("Monthly Income",   '…', "fa-coins",           "#8b5cf6", "#f3e8ff", "All bills this month")}
+      ${statCard("Total Income",     '…', "fa-money-bill-wave", "#06b6d4", "#cffafe", "All bill types")}
+    </div>
+    <div style="display:grid;grid-template-columns:3fr 2fr;gap:20px;margin-bottom:24px;">
+      <div class="card">
+        <div style="font-weight:700;margin-bottom:14px;font-family:'Playfair Display',serif;">Daily Orders by Status (Last 14 Days)</div>
+        <div class="chart-container"><canvas id="revenue-chart"></canvas></div>
+      </div>
+      <div class="card">
+        <div style="font-weight:700;margin-bottom:14px;font-family:'Playfair Display',serif;">Order Status Distribution</div>
+        <div class="chart-container"><canvas id="status-chart"></canvas></div>
+      </div>
+    </div>
+    <div style="display:grid;grid-template-columns:1fr 1fr;gap:20px;">
+      <div class="card">
+        <div style="font-weight:700;margin-bottom:14px;font-family:'Playfair Display',serif;"><i class="fas fa-boxes-stacked" style="color:var(--primary);margin-right:8px;"></i>Recent Orders</div>
+        <div id="recent-orders-table"><div style="color:var(--text-muted);padding:16px;text-align:center;font-size:0.88em;">Loading...</div></div>
+        <button class="btn btn-secondary btn-sm" style="margin-top:12px;" onclick="navigate('orders')">View All <i class="fas fa-arrow-right"></i></button>
+      </div>
+      <div class="card">
+        <div style="font-weight:700;margin-bottom:14px;font-family:'Playfair Display',serif;"><i class="fas fa-file-invoice" style="color:var(--primary);margin-right:8px;"></i>Unpaid Invoices</div>
+        <div id="unpaid-invoices-table"><div style="color:var(--text-muted);padding:16px;text-align:center;font-size:0.88em;">Loading...</div></div>
+        <button class="btn btn-secondary btn-sm" style="margin-top:12px;" onclick="navigate('invoices')">View All <i class="fas fa-arrow-right"></i></button>
+      </div>
+    </div>`;
+
+  // ② Fetch only what the dashboard needs (lean columns — avoids 237KB full payload)
   try {
-    let orders = [], invoices = [], payments = [], customers = [];
-    try {
-      [orders, invoices, payments, customers] = await Promise.all([
-        DB.getOrders().catch(() => []),
-        DB.getInvoices().catch(() => []),
-        DB.getPayments().catch(() => []),
-        DB.getCustomers().catch(() => [])
-      ]);
-    } catch (fetchErr) {
-      console.warn('Dashboard fetch warning:', fetchErr);
+    const { orders, invoices } = await DB.getDashboardData();
+    const customers = await DB.getCustomers().catch(() => []);
+
+    // Update stat card values
+    const todayStr        = today();
+    const curMonth        = new Date().toISOString().slice(0, 7);
+    const todayPickups    = orders.filter(o => o.pickup_date === todayStr).length;
+    const pendingPayments = orders.filter(o => o.status === 'Unpaid').length;
+    const monthlyGain     = orders.filter(o => (o.created_at || '').startsWith(curMonth)).reduce((s, o) => s + (o.total_amount || 0), 0);
+    const totalIncome     = orders.reduce((s, o) => s + (o.total_amount || 0), 0);
+
+    const cardsEl = document.getElementById('dash-stat-cards');
+    if (cardsEl) {
+      cardsEl.innerHTML =
+        statCard("Today's Pickups",  todayPickups,                 "fa-truck",           "#3b82f6", "#dbeafe", "Scheduled for today") +
+        statCard("Pending Payments", pendingPayments,              "fa-clock",           "#f59e0b", "#fef9c3", "Awaiting payment") +
+        statCard("Monthly Income",   formatCurrency(monthlyGain),  "fa-coins",           "#8b5cf6", "#f3e8ff", "All bills this month") +
+        statCard("Total Income",     formatCurrency(totalIncome),  "fa-money-bill-wave", "#06b6d4", "#cffafe", "All bill types");
     }
 
-    const todayStr = today();
-    const todayPickups    = (orders || []).filter(o => o.pickup_date === todayStr).length;
-    const curMonth        = new Date().toISOString().slice(0, 7); // "YYYY-MM"
-    const monthlyGain     = (orders || []).filter(o => (o.created_at || '').startsWith(curMonth)).reduce((s, o) => s + (o.total_amount || 0), 0);
-    const pendingPayments = (orders || []).filter(o => o.status === 'Unpaid').length;
-    const totalIncome     = (orders || []).reduce((s, o) => s + (o.total_amount || 0), 0);
+    try { renderDashCharts(orders, []); } catch(e) { console.warn('chart error:', e); }
+    try { renderRecentOrdersFast(orders, customers); } catch(e) { console.warn('recent orders error:', e); }
+    try { renderUnpaidInvoicesFast(invoices, orders, customers); } catch(e) { console.warn('unpaid invoices error:', e); }
 
-    contentEl.innerHTML = `
-      <div style="margin-bottom:22px;">
-        <div style="font-size:0.85em;color:var(--text-muted);">Good ${getGreeting()}, <strong>${currentUser?.display_name || 'User'}</strong></div>
-        <div style="font-family:'Playfair Display',serif;font-size:1.6em;font-weight:700;color:var(--text);">Welcome to Sagacious Washing Center</div>
-      </div>
-      <div style="display:grid;grid-template-columns:repeat(auto-fit,minmax(175px,1fr));gap:16px;margin-bottom:24px;">
-        ${statCard("Today's Pickups",   todayPickups,                    "fa-truck",          "#3b82f6", "#dbeafe", "Scheduled for today")}
-        ${statCard("Pending Payments",  pendingPayments,                 "fa-clock",          "#f59e0b", "#fef9c3", "Awaiting payment")}
-        ${statCard("Monthly Income",    formatCurrency(monthlyGain),     "fa-coins",          "#8b5cf6", "#f3e8ff", "All bills this month")}
-        ${statCard("Total Income",      formatCurrency(totalIncome),     "fa-money-bill-wave","#06b6d4", "#cffafe", "All bill types")}
-      </div>
-      <div style="display:grid;grid-template-columns:3fr 2fr;gap:20px;margin-bottom:24px;">
-        <div class="card">
-          <div style="font-weight:700;margin-bottom:14px;font-family:'Playfair Display',serif;">Daily Orders by Status (Last 14 Days)</div>
-          <div class="chart-container"><canvas id="revenue-chart"></canvas></div>
-        </div>
-        <div class="card">
-          <div style="font-weight:700;margin-bottom:14px;font-family:'Playfair Display',serif;">Order Status Distribution</div>
-          <div class="chart-container"><canvas id="status-chart"></canvas></div>
-        </div>
-      </div>
-      <div style="display:grid;grid-template-columns:1fr 1fr;gap:20px;">
-        <div class="card">
-          <div style="font-weight:700;margin-bottom:14px;font-family:'Playfair Display',serif;"><i class="fas fa-boxes-stacked" style="color:var(--primary);margin-right:8px;"></i>Recent Orders</div>
-          <div id="recent-orders-table"></div>
-          <button class="btn btn-secondary btn-sm" style="margin-top:12px;" onclick="navigate('orders')">View All <i class="fas fa-arrow-right"></i></button>
-        </div>
-        <div class="card">
-          <div style="font-weight:700;margin-bottom:14px;font-family:'Playfair Display',serif;"><i class="fas fa-file-invoice" style="color:var(--primary);margin-right:8px;"></i>Unpaid Invoices</div>
-          <div id="unpaid-invoices-table"></div>
-          <button class="btn btn-secondary btn-sm" style="margin-top:12px;" onclick="navigate('invoices')">View All <i class="fas fa-arrow-right"></i></button>
-        </div>
-      </div>`;
-
-    try { renderDashCharts(orders || [], payments || []); } catch(e){ console.warn(e); }
-    try { renderRecentOrdersFast(orders || [], customers || []); } catch(e){ console.warn(e); }
-    try { renderUnpaidInvoicesFast(invoices || [], orders || [], customers || []); } catch(e){ console.warn(e); }
   } catch (err) {
-    console.error('renderDashboard error:', err);
-    contentEl.innerHTML = `
-      <div style="padding:24px;background:#fee2e2;border-radius:12px;color:#991b1b;margin-top:16px;">
-        <div style="font-weight:700;font-size:1.1em;margin-bottom:6px;"><i class="fas fa-triangle-exclamation"></i> Dashboard Loading Error</div>
-        <div style="font-size:0.9em;margin-bottom:14px;">${err.message || err}</div>
-        <button class="btn btn-primary btn-sm" onclick="renderDashboard()"><i class="fas fa-rotate-right"></i> Retry</button>
-      </div>`;
+    console.error('renderDashboard data error:', err);
+    // Don't replace the whole layout — just show an inline warning banner
+    const banner = document.createElement('div');
+    banner.style.cssText = 'padding:12px 18px;background:#fef9c3;border:1px solid #f59e0b;border-radius:8px;color:#92400e;margin-bottom:16px;font-size:0.88em;';
+    banner.innerHTML = `<i class="fas fa-triangle-exclamation"></i> Some data could not be loaded. <a href="#" onclick="renderDashboard()" style="color:#92400e;font-weight:700;">Retry</a>`;
+    contentEl.prepend(banner);
   }
 }
+
 
 function statCard(label, value, icon, color, bgColor, sub) {
   return `<div class="stat-card">

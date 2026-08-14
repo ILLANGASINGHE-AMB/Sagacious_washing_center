@@ -82,6 +82,34 @@ const DB = {
     window._deletedCustOrders = deletedMap || {};
     return (rows || []).map(r => { r.status = (r.status === 'Paid' ? 'Paid' : 'Unpaid'); return r; });
   },
+
+  // Lightweight fetch for dashboard — only the columns we actually need.
+  // Avoids fetching signature, qr_token, and other heavy fields across 500+ rows.
+  async getDashboardData() {
+    try {
+      const curMonth = new Date().toISOString().slice(0, 7); // YYYY-MM
+      const todayStr = new Date().toISOString().split('T')[0];
+
+      const [orderRows, invoiceRows, deletedMap] = await Promise.all([
+        _q(_sb.from('orders')
+          .select('id,customer_id,batch_id,status,pickup_date,created_at,total_amount')
+          .order('created_at', { ascending: false })).catch(() => []),
+        _q(_sb.from('invoices')
+          .select('id,order_id,invoice_number,paid_status,balance')
+          .neq('paid_status', 'Paid')
+          .limit(20)).catch(() => []),
+        DB.getDeletedCustomerOrders().catch(() => ({}))
+      ]);
+
+      window._deletedCustOrders = deletedMap || {};
+      const orders = (orderRows || []).map(r => { r.status = (r.status === 'Paid' ? 'Paid' : 'Unpaid'); return r; });
+
+      return { orders, invoices: invoiceRows || [], deletedMap: deletedMap || {} };
+    } catch(e) {
+      console.warn('getDashboardData error:', e);
+      return { orders: [], invoices: [], deletedMap: {} };
+    }
+  },
   async addOrder(data) {
     const rows = await _q(_sb.from('orders').insert({ ...data, created_at: new Date().toISOString() }).select());
     return rows[0].id;
