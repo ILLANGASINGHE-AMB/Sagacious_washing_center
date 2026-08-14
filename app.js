@@ -4,6 +4,16 @@ let currentPage = 'dashboard';
 let dashCharts  = {};
 let showUndoButtonSetting = 'true';
 
+// Unsaved changes beforeunload listener
+window.isFormDirty = false;
+window.addEventListener('beforeunload', (e) => {
+  if (window.isFormDirty) {
+    e.preventDefault();
+    e.returnValue = 'You have unsaved changes. Are you sure you want to leave?';
+    return e.returnValue;
+  }
+});
+
 // ─────────────────────────────────────────────
 // AUTH — role-based login
 // ─────────────────────────────────────────────

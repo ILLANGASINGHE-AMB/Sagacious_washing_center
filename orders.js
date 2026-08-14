@@ -472,7 +472,9 @@ async function saveCreditBill() {
       batch_id:        batchId
     });
 
-    for(const item of orderItems) await DB.addOrderItem({ ...item, order_id: orderId });
+    if (orderItems.length > 0) {
+      await DB.addOrderItemsBatch(orderItems.map(item => ({ ...item, order_id: orderId })));
+    }
 
     // Auto-generate the Credit invoice immediately
     const invNum = await DB.generateInvoiceNumber();
@@ -901,7 +903,9 @@ async function saveNewOrder(){
       total_amount:    grandTotal,
       batch_id:        batchId
     });
-    for(const item of orderItems) await DB.addOrderItem({...item, order_id:orderId});
+    if (orderItems.length > 0) {
+      await DB.addOrderItemsBatch(orderItems.map(item => ({ ...item, order_id: orderId })));
+    }
 
     if (orderStatus === 'Paid') {
       const invNum = await DB.generateInvoiceNumber();
@@ -1168,7 +1172,9 @@ async function saveEditOrder(orderId,wasPickupOnly=false){
     is_pickup_only:  orderItems.length===0
   });
   await DB.deleteOrderItems(orderId);
-  for(const item of orderItems) await DB.addOrderItem({...item,order_id:orderId});
+  if (orderItems.length > 0) {
+    await DB.addOrderItemsBatch(orderItems.map(item => ({ ...item, order_id: orderId })));
+  }
 
   const existingOrder = await DB.getOrder(orderId);
   const batchId = existingOrder ? existingOrder.batch_id : '#' + orderId;

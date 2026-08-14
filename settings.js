@@ -479,9 +479,12 @@ async function importDatabase(event) {
 }
 
 async function uploadToCloud() {
-  const data = await DB.exportAll();
   const endpoint = prompt('Enter cloud endpoint URL:', 'https://your-server.com/upload-database');
   if (!endpoint) return;
+  if (!endpoint.toLowerCase().startsWith('https://')) {
+    return toast('Cloud endpoint must use secure HTTPS protocol', 'error');
+  }
+  const data = await DB.exportAll(true); // Strip passwords
   try {
     const res = await fetch(endpoint, { method:'POST', headers:{'Content-Type':'application/json'}, body:JSON.stringify(data) });
     if (res.ok) toast('Database uploaded to cloud!'); else toast('Upload failed: '+res.statusText,'error');
@@ -491,6 +494,9 @@ async function uploadToCloud() {
 async function importFromCloud() {
   const endpoint = prompt('Enter cloud database URL:', 'https://your-server.com/database.json');
   if (!endpoint) return;
+  if (!endpoint.toLowerCase().startsWith('https://')) {
+    return toast('Cloud database URL must use secure HTTPS protocol', 'error');
+  }
   try {
     const res = await fetch(endpoint); if (!res.ok) throw new Error(res.statusText);
     const data = await res.json();

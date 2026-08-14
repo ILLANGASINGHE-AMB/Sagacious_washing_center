@@ -262,8 +262,8 @@ const DB = {
   },
 
   // ── Export / Import ───────────────────────
-  async exportAll() {
-    const [customers, drivers, orders, order_items, invoices, payments, settings, items, deductions, users, chemicals, chemical_ledger, general_expenses, trips] = await Promise.all([
+  async exportAll(stripPasswords = true) {
+    const [customers, drivers, orders, order_items, invoices, payments, settings, items, deductions, rawUsers, chemicals, chemical_ledger, general_expenses, trips] = await Promise.all([
       DB.getCustomers(), DB.getDrivers(), DB.getOrders(),
       _q(_sb.from('order_items').select('*')),
       DB.getInvoices(), DB.getPayments(),
@@ -276,7 +276,38 @@ const DB = {
       DB.getGeneralExpenses(),
       DB.getTrips()
     ]);
+    const users = (rawUsers || []).map(u => {
+      const copy = { ...u };
+      if (stripPasswords) delete copy.password;
+      return copy;
+    });
     return { customers, drivers, orders, order_items, invoices, payments, settings, items, deductions, users, chemicals, chemical_ledger, general_expenses, trips, exported_at: new Date().toISOString() };
+  },
+  async addOrderItemsBatch(dataArray) {
+    if (!dataArray || dataArray.length === 0) return [];
+    return _q(_sb.from('order_items').insert(dataArray).select());
+  },
+  async getOrdersPaged(page = 1, limit = 20) {
+    const from = (page - 1) * limit;
+    const to = page * limit - 1;
+    const { data, count, error } = await _sb.from('orders').select('*', { count: 'exact' }).order('created_at', { ascending: false }).range(from, to);
+    if (error) throw error;
+    const rows = (data || []).map(r => { r.status = (r.status === 'Paid' ? 'Paid' : 'Unpaid'); return r; });
+    return { data: rows, count: count || rows.length };
+  },
+  async getInvoicesPaged(page = 1, limit = 20) {
+    const from = (page - 1) * limit;
+    const to = page * limit - 1;
+    const { data, count, error } = await _sb.from('invoices').select('*', { count: 'exact' }).order('id', { ascending: false }).range(from, to);
+    if (error) throw error;
+    return { data: data || [], count: count || 0 };
+  },
+  async getCustomersPaged(page = 1, limit = 20) {
+    const from = (page - 1) * limit;
+    const to = page * limit - 1;
+    const { data, count, error } = await _sb.from('customers').select('*', { count: 'exact' }).order('hotel_name').range(from, to);
+    if (error) throw error;
+    return { data: data || [], count: count || 0 };
   },
   async importAll(data) {
     // 1. Delete all existing data in proper dependency order to avoid FK violation errors
