@@ -23,7 +23,7 @@ async function doLogin() {
     document.getElementById('login-screen').style.display = 'none';
     document.getElementById('app').style.display = 'flex';
 
-    DB.logAction('User Login', `User "${currentUser.display_name}" logged in successfully`, { username: user.username, role: user.role }, 'User').catch(() => {});
+    await DB.logAction('User Login', `User "${currentUser.display_name}" logged in successfully`, { username: user.username, role: user.role }, 'User');
 
     // Update topbar role chip
     const roleNames = { admin: 'Admin', user: 'User', driver: 'Driver' };
@@ -35,7 +35,7 @@ async function doLogin() {
     }
     updateRoleChip();
     initApp();
-    setTimeout(initGlobalSearch, 300);
+    setTimeout(initGlobalSearch,300);
   } catch (err) {
     console.error('Login error:', err);
     toast('Database error: ' + (err.message || err), 'error');
@@ -61,85 +61,62 @@ function updateRoleChip() {
 // ─────────────────────────────────────────────
 // ROLE-BASED ACCESS CONTROL (RBAC) HELPERS
 // ─────────────────────────────────────────────
-function applyRoleSidebarRestrictions() {
-  const role = currentUser?.role || 'user';
-  const rolePages = {
-    driver: ['transport'],
-    user:   ['dashboard', 'customers', 'orders', 'paynow', 'invoices', 'items', 'expenses', 'deductions', 'recent-actions'],
-    admin:  ['dashboard', 'customers', 'drivers', 'transport', 'orders', 'paynow', 'invoices', 'items', 'expenses', 'analytics', 'reports', 'settings', 'deductions', 'recent-actions']
-  };
-  const allowed = rolePages[role] || rolePages.user;
-
-  document.querySelectorAll('nav.sidebar-nav a').forEach(a => {
-    const p = a.dataset.page;
-    if (p) {
-      a.style.display = allowed.includes(p) ? 'flex' : 'none';
-    }
-  });
-
-  const settingsBtn = document.getElementById('topbar-settings-btn');
-  if (settingsBtn) {
-    settingsBtn.style.display = (role === 'admin') ? 'inline-flex' : 'none';
-  }
-}
+function isAdmin() { return currentUser && currentUser.role === 'admin'; }
+function isStaffUser() { return currentUser && currentUser.role === 'user'; }
+function isDriver() { return currentUser && currentUser.role === 'driver'; }
 
 function getRoleAllowedPages() {
-  const role = currentUser?.role || 'user';
-  const rolePages = {
-    driver: ['transport'],
-    user:   ['dashboard', 'customers', 'orders', 'paynow', 'invoices', 'items', 'expenses', 'deductions', 'recent-actions'],
-    admin:  ['dashboard', 'customers', 'drivers', 'transport', 'orders', 'paynow', 'invoices', 'items', 'expenses', 'analytics', 'reports', 'settings', 'deductions', 'recent-actions']
-  };
-  return rolePages[role] || rolePages.user;
-}
-
-function canDelete() {
-  return currentUser?.role === 'admin';
-}
-
-function canBackupRestore() {
-  return currentUser?.role === 'admin';
-}
-
-function isAdmin() {
-  return currentUser?.role === 'admin';
-}
-
-function isDriver() {
-  return currentUser?.role === 'driver';
-}
-
-function isUser() {
-  return currentUser?.role === 'user';
-}
-
-function requireAdmin() {
-  if (!isAdmin()) {
-    toast('Admin access required', 'error');
-    return false;
+  if (isAdmin()) {
+    return ['dashboard', 'orders', 'customers', 'drivers', 'transport', 'paynow', 'invoices', 'deductions', 'items', 'expenses', 'analytics', 'reports', 'recent-actions', 'settings'];
   }
-  return true;
+  if (isStaffUser()) {
+    return ['dashboard', 'orders', 'customers', 'drivers', 'transport', 'paynow', 'deductions', 'items', 'expenses', 'settings'];
+  }
+  if (isDriver()) {
+    return ['transport', 'customers', 'orders', 'settings'];
+  }
+  return ['dashboard', 'settings'];
 }
 
-function requireDriverOrAdmin() {
-  if (!isAdmin() && !isDriver()) {
-    toast('Access restricted to drivers and admins', 'error');
-    return false;
+function canDelete() { return isAdmin(); }
+function canAddOrders() { return isAdmin() || isStaffUser(); }
+function canEditOrders() { return isAdmin() || isStaffUser(); }
+function canEditCustomers() { return true; } // Admin, Staff User, Driver all can add/edit customers
+function canEditDrivers() { return isAdmin() || isStaffUser(); }
+function canEditTransport() { return isAdmin() || isDriver(); }
+function canEditPayNow() { return isAdmin() || isStaffUser(); }
+function canEditItems() { return isAdmin() || isStaffUser(); }
+function canEditExpenses() { return isAdmin() || isStaffUser(); }
+function canUseQuotation() { return isAdmin(); }
+function canPrintCatalogue() { return isAdmin(); }
+function canBackupRestore() { return isAdmin(); }
+
+function applyRoleSidebarRestrictions() {
+  if (!currentUser) return;
+  const allowed = getRoleAllowedPages();
+
+  document.querySelectorAll('nav.sidebar-nav a').forEach(a => {
+    const page = a.dataset.page;
+    a.style.display = allowed.includes(page) ? 'flex' : 'none';
+  });
+
+  if (!allowed.includes(currentPage)) {
+    const defaultPage = isDriver() ? 'transport' : 'dashboard';
+    navigate(defaultPage);
   }
-  return true;
 }
 
 function doLogout() {
-  currentUser = null;
-  document.getElementById('app').style.display = 'none';
-  const ls = document.getElementById('login-screen');
-  if (ls) {
+  confirmDialog('Are you sure you want to logout?', async () => {
+    if (currentUser) {
+      await DB.logAction('User Logout', `User "${currentUser.display_name}" logged out`, { username: currentUser.username }, 'User');
+    }
+    currentUser = null;
     document.getElementById('login-user').value = '';
     document.getElementById('login-pass').value = '';
-    document.getElementById('login-role').value = 'admin';
+    document.getElementById('app').style.display    = 'none';
     document.getElementById('login-screen').style.display = 'flex';
-  }
-  toast('Logged out');
+  });
 }
 
 // ─────────────────────────────────────────────
@@ -148,17 +125,15 @@ function doLogout() {
 async function initApp() {
   updateTopbarDate();
   setInterval(updateTopbarDate, 60000);
-
-  // Navigate immediately to appropriate first page
+  // Navigate immediately — don't block on seed/settings
   if (isDriver()) {
     navigate('transport');
   } else {
     navigate('dashboard');
   }
-
-  // Load settings and seed in background
-  applySettings().catch(e => console.warn('applySettings error:', e));
-  DB.seedDemoData().catch(e => console.warn('seedDemoData error:', e));
+  // Run these in background so they never delay the first page render
+  DB.seedDemoData().catch(e => console.warn('seedDemoData:', e));
+  applySettings().catch(e => console.warn('applySettings:', e));
 }
 
 function updateTopbarDate() {
@@ -167,52 +142,46 @@ function updateTopbarDate() {
 }
 
 async function applySettings() {
-  try {
-    const [darkMode, textSize, logoData, companyName, showUndo, showAiBtn] = await Promise.all([
-      DB.getSetting('dark_mode').catch(() => null),
-      DB.getSetting('text_size').catch(() => null),
-      DB.getSetting('logo_data').catch(() => null),
-      DB.getSetting('company_name').catch(() => null),
-      DB.getSetting('show_undo_button').catch(() => null),
-      DB.getSetting('show_saga_ai_button').catch(() => null)
-    ]);
-    showUndoButtonSetting = showUndo !== 'false' ? 'true' : 'false';
+  const darkMode    = await DB.getSetting('dark_mode');
+  const textSize    = await DB.getSetting('text_size');
+  const logoData    = await DB.getSetting('logo_data');
+  const companyName = await DB.getSetting('company_name');
+  const showUndo    = await DB.getSetting('show_undo_button');
+  const showAiBtn   = await DB.getSetting('show_saga_ai_button');
+  showUndoButtonSetting = showUndo !== 'false' ? 'true' : 'false';
 
-    // Toggle SAGA AI floating drawer button
-    const fab = document.getElementById('gemini-fab');
-    const drawer = document.getElementById('gemini-drawer');
-    if (showAiBtn === 'false') {
-      if (fab) fab.style.display = 'none';
-      if (drawer) drawer.style.display = 'none';
-    } else {
-      if (fab) fab.style.display = 'flex';
-    }
+  // Toggle SAGA AI floating drawer button
+  const fab = document.getElementById('gemini-fab');
+  const drawer = document.getElementById('gemini-drawer');
+  if (showAiBtn === 'false') {
+    if (fab) fab.style.display = 'none';
+    if (drawer) drawer.style.display = 'none';
+  } else {
+    if (fab) fab.style.display = 'flex';
+  }
 
-    if (darkMode === 'true') {
-      document.documentElement.classList.add('dark');
-      const icon = document.getElementById('dark-icon');
-      if (icon) icon.className = 'fas fa-sun';
-    } else {
-      document.documentElement.classList.remove('dark');
-      const icon = document.getElementById('dark-icon');
-      if (icon) icon.className = 'fas fa-moon';
-    }
+  if (darkMode === 'true') {
+    document.documentElement.classList.add('dark');
+    const icon = document.getElementById('dark-icon');
+    if (icon) icon.className = 'fas fa-sun';
+  } else {
+    document.documentElement.classList.remove('dark');
+    const icon = document.getElementById('dark-icon');
+    if (icon) icon.className = 'fas fa-moon';
+  }
 
-    if (textSize) {
-      document.body.classList.remove('text-size-sm', 'text-size-md', 'text-size-lg');
-      document.body.classList.add(`text-size-${textSize}`);
-    }
+  if (textSize) {
+    document.body.classList.remove('text-size-sm', 'text-size-md', 'text-size-lg');
+    document.body.classList.add(`text-size-${textSize}`);
+  }
 
-    if (companyName) {
-      const el = document.getElementById('sidebar-company-name');
-      if (el) el.innerHTML = companyName.replace(' ', '<br/>');
-    }
+  if (companyName) {
+    const el = document.getElementById('sidebar-company-name');
+    if (el) el.innerHTML = companyName.replace(' ', '<br/>');
+  }
 
-    if (logoData && typeof updateLogo === 'function') {
-      updateLogo(logoData);
-    }
-  } catch (err) {
-    console.warn('applySettings error:', err);
+  if (logoData && typeof updateLogo === 'function') {
+    updateLogo(logoData);
   }
 }
 
@@ -238,19 +207,7 @@ function navigate(page) {
     items: 'Items', expenses: 'Expenses & Chemical Register', analytics: 'Data Analytics', reports: 'Reports', settings: 'Settings', deductions: 'Deductions',
     'recent-actions': 'Recent Actions'
   };
-  const titleText = titles[page] || page;
-  const pageTitleEl = document.getElementById('page-title');
-  if (pageTitleEl) pageTitleEl.textContent = titleText;
-
-  // Immediate loading indicator in content area
-  const contentDiv = document.getElementById('content');
-  if (contentDiv && page !== 'expenses' && page !== 'transport') {
-    contentDiv.innerHTML = `
-      <div style="display:flex;flex-direction:column;align-items:center;justify-content:center;min-height:300px;color:var(--text-muted);">
-        <i class="fas fa-circle-notch fa-spin" style="font-size:2em;color:var(--primary);margin-bottom:12px;"></i>
-        <div style="font-size:0.9em;font-weight:500;">Loading ${titleText}...</div>
-      </div>`;
-  }
+  document.getElementById('page-title').textContent = titles[page] || page;
 
   const pages = {
     dashboard: renderDashboard,
@@ -299,17 +256,32 @@ async function renderDashboard() {
   const contentEl = document.getElementById('content');
   if (!contentEl) return;
 
-  // ① Render the layout shell immediately — no spinner, instant feel
+  let orders = [], invoices = [], payments = [];
+  try {
+    [orders, invoices, payments] = await Promise.all([
+      DB.getOrders().catch(() => []),
+      DB.getInvoices().catch(() => []),
+      DB.getPayments().catch(() => [])
+    ]);
+  } catch (e) { console.warn('Dashboard data fetch:', e); }
+
+  const todayStr = today();
+  const todayPickups    = orders.filter(o => o.pickup_date === todayStr).length;
+  const curMonth        = new Date().toISOString().slice(0, 7); // "YYYY-MM"
+  const monthlyGain     = orders.filter(o => (o.created_at || '').startsWith(curMonth)).reduce((s, o) => s + (o.total_amount || 0), 0);
+  const pendingPayments = orders.filter(o => o.status === 'Unpaid').length;
+  const totalIncome     = orders.reduce((s, o) => s + (o.total_amount || 0), 0);
+
   contentEl.innerHTML = `
     <div style="margin-bottom:22px;">
       <div style="font-size:0.85em;color:var(--text-muted);">Good ${getGreeting()}, <strong>${currentUser?.display_name || 'User'}</strong></div>
       <div style="font-family:'Playfair Display',serif;font-size:1.6em;font-weight:700;color:var(--text);">Welcome to Sagacious Washing Center</div>
     </div>
-    <div id="dash-stat-cards" style="display:grid;grid-template-columns:repeat(auto-fit,minmax(175px,1fr));gap:16px;margin-bottom:24px;">
-      ${statCard("Today's Pickups",  '…', "fa-truck",           "#3b82f6", "#dbeafe", "Scheduled for today")}
-      ${statCard("Pending Payments", '…', "fa-clock",           "#f59e0b", "#fef9c3", "Awaiting payment")}
-      ${statCard("Monthly Income",   '…', "fa-coins",           "#8b5cf6", "#f3e8ff", "All bills this month")}
-      ${statCard("Total Income",     '…', "fa-money-bill-wave", "#06b6d4", "#cffafe", "All bill types")}
+    <div style="display:grid;grid-template-columns:repeat(auto-fit,minmax(175px,1fr));gap:16px;margin-bottom:24px;">
+      ${statCard("Today's Pickups",   todayPickups,                    "fa-truck",          "#3b82f6", "#dbeafe", "Scheduled for today")}
+      ${statCard("Pending Payments",  pendingPayments,                 "fa-clock",          "#f59e0b", "#fef9c3", "Awaiting payment")}
+      ${statCard("Monthly Income",    formatCurrency(monthlyGain),     "fa-coins",          "#8b5cf6", "#f3e8ff", "All bills this month")}
+      ${statCard("Total Income",      formatCurrency(totalIncome),     "fa-money-bill-wave","#06b6d4", "#cffafe", "All bill types")}
     </div>
     <div style="display:grid;grid-template-columns:3fr 2fr;gap:20px;margin-bottom:24px;">
       <div class="card">
@@ -324,52 +296,20 @@ async function renderDashboard() {
     <div style="display:grid;grid-template-columns:1fr 1fr;gap:20px;">
       <div class="card">
         <div style="font-weight:700;margin-bottom:14px;font-family:'Playfair Display',serif;"><i class="fas fa-boxes-stacked" style="color:var(--primary);margin-right:8px;"></i>Recent Orders</div>
-        <div id="recent-orders-table"><div style="color:var(--text-muted);padding:16px;text-align:center;font-size:0.88em;">Loading...</div></div>
+        <div id="recent-orders-table"></div>
         <button class="btn btn-secondary btn-sm" style="margin-top:12px;" onclick="navigate('orders')">View All <i class="fas fa-arrow-right"></i></button>
       </div>
       <div class="card">
         <div style="font-weight:700;margin-bottom:14px;font-family:'Playfair Display',serif;"><i class="fas fa-file-invoice" style="color:var(--primary);margin-right:8px;"></i>Unpaid Invoices</div>
-        <div id="unpaid-invoices-table"><div style="color:var(--text-muted);padding:16px;text-align:center;font-size:0.88em;">Loading...</div></div>
+        <div id="unpaid-invoices-table"></div>
         <button class="btn btn-secondary btn-sm" style="margin-top:12px;" onclick="navigate('invoices')">View All <i class="fas fa-arrow-right"></i></button>
       </div>
     </div>`;
 
-  // ② Fetch only what the dashboard needs (lean columns — avoids 237KB full payload)
-  try {
-    const { orders, invoices } = await DB.getDashboardData();
-    const customers = await DB.getCustomers().catch(() => []);
-
-    // Update stat card values
-    const todayStr        = today();
-    const curMonth        = new Date().toISOString().slice(0, 7);
-    const todayPickups    = orders.filter(o => o.pickup_date === todayStr).length;
-    const pendingPayments = orders.filter(o => o.status === 'Unpaid').length;
-    const monthlyGain     = orders.filter(o => (o.created_at || '').startsWith(curMonth)).reduce((s, o) => s + (o.total_amount || 0), 0);
-    const totalIncome     = orders.reduce((s, o) => s + (o.total_amount || 0), 0);
-
-    const cardsEl = document.getElementById('dash-stat-cards');
-    if (cardsEl) {
-      cardsEl.innerHTML =
-        statCard("Today's Pickups",  todayPickups,                 "fa-truck",           "#3b82f6", "#dbeafe", "Scheduled for today") +
-        statCard("Pending Payments", pendingPayments,              "fa-clock",           "#f59e0b", "#fef9c3", "Awaiting payment") +
-        statCard("Monthly Income",   formatCurrency(monthlyGain),  "fa-coins",           "#8b5cf6", "#f3e8ff", "All bills this month") +
-        statCard("Total Income",     formatCurrency(totalIncome),  "fa-money-bill-wave", "#06b6d4", "#cffafe", "All bill types");
-    }
-
-    try { renderDashCharts(orders, []); } catch(e) { console.warn('chart error:', e); }
-    try { renderRecentOrdersFast(orders, customers); } catch(e) { console.warn('recent orders error:', e); }
-    try { renderUnpaidInvoicesFast(invoices, orders, customers); } catch(e) { console.warn('unpaid invoices error:', e); }
-
-  } catch (err) {
-    console.error('renderDashboard data error:', err);
-    // Don't replace the whole layout — just show an inline warning banner
-    const banner = document.createElement('div');
-    banner.style.cssText = 'padding:12px 18px;background:#fef9c3;border:1px solid #f59e0b;border-radius:8px;color:#92400e;margin-bottom:16px;font-size:0.88em;';
-    banner.innerHTML = `<i class="fas fa-triangle-exclamation"></i> Some data could not be loaded. <a href="#" onclick="renderDashboard()" style="color:#92400e;font-weight:700;">Retry</a>`;
-    contentEl.prepend(banner);
-  }
+  try { await renderDashCharts(orders, payments); } catch(e) { console.warn('charts:', e); }
+  try { await renderRecentOrders(orders); } catch(e) { console.warn('recent orders:', e); }
+  try { await renderUnpaidInvoices(invoices, orders); } catch(e) { console.warn('unpaid invoices:', e); }
 }
-
 
 function statCard(label, value, icon, color, bgColor, sub) {
   return `<div class="stat-card">
@@ -391,10 +331,10 @@ function getGreeting() {
   return 'Evening';
 }
 
-// Shared colour per order status
+// Shared colour per order status — used by both dashboard charts so they stay consistent.
 const STATUS_CHART_COLORS = {
-  'Paid':             '#22c55e',
-  'Unpaid':           '#ef4444'
+  'Paid':             '#22c55e', // green
+  'Unpaid':           '#ef4444'  // red
 };
 function statusChartColor(status) { return STATUS_CHART_COLORS[status] || '#94a3b8'; }
 
@@ -407,6 +347,9 @@ async function renderDashCharts(orders, payments) {
   const gridColor = isDark ? 'rgba(255,255,255,0.07)' : 'rgba(0,0,0,0.07)';
   const textColor = isDark ? '#94a3b8' : '#64748b';
 
+  // ── Daily Orders by Status (last 14 days) ──
+  // Counts EVERY order type per day (not just paid/revenue) so pickup requests,
+  // credit bills, etc. all show up. One stacked bar segment per status.
   const datasets = ORDER_STATUSES.map(status => ({
     label: status,
     data: days.map(d => orders.filter(o => o.status === status && (o.created_at || '').startsWith(d)).length),
@@ -439,6 +382,7 @@ async function renderDashCharts(orders, payments) {
     });
   }
 
+  // ── Order Status Distribution (doughnut) — same colours as the bar chart ──
   const statusCounts = {};
   orders.forEach(o => { statusCounts[o.status] = (statusCounts[o.status] || 0) + 1; });
   const statusLabels = Object.keys(statusCounts);
@@ -452,18 +396,17 @@ async function renderDashCharts(orders, payments) {
   }
 }
 
-function renderRecentOrdersFast(orders, customers) {
-  const cMap = Object.fromEntries((customers || []).map(c => [c.id, c]));
-  const recent = (orders || []).slice().sort((a, b) => new Date(b.created_at) - new Date(a.created_at)).slice(0, 5);
-  const el = document.getElementById('recent-orders-table');
-  if (!el) return;
-  el.innerHTML = `
+async function renderRecentOrders(orders) {
+  const customers = await DB.getCustomers();
+  const cMap = Object.fromEntries(customers.map(c => [c.id, c]));
+  const recent = orders.sort((a, b) => new Date(b.created_at) - new Date(a.created_at)).slice(0, 5);
+  document.getElementById('recent-orders-table').innerHTML = `
     <div class="table-wrap">
       <table>
         <thead><tr><th>Batch ID</th><th>Customer</th><th>Status</th><th>Total</th></tr></thead>
         <tbody>
           ${recent.map(o => `<tr>
-            <td style="font-family:monospace;font-weight:700;font-size:0.85em;">${o.batch_id || '—'}</td>
+            <td style="font-family:monospace;font-weight:700;font-size:0.85em;">${o.batch_id}</td>
             <td>${getOrderCustomerName(o, cMap)}</td>
             <td>${statusBadge(o.status)}</td>
             <td>${formatCurrency(o.total_amount)}</td>
@@ -473,9 +416,12 @@ function renderRecentOrdersFast(orders, customers) {
     </div>`;
 }
 
-function renderUnpaidInvoicesFast(invoices, orders, customers) {
-  const oMap = Object.fromEntries((orders || []).map(o => [o.id, o]));
-  const cMap = Object.fromEntries((customers || []).map(c => [c.id, c]));
+async function renderUnpaidInvoices(invoices, passedOrders) {
+  // Re-use orders already fetched by dashboard; only fetch customers (small table)
+  const orders = passedOrders || await DB.getOrders().catch(() => []);
+  const customers = await DB.getCustomers().catch(() => []);
+  const oMap = Object.fromEntries(orders.map(o => [o.id, o]));
+  const cMap = Object.fromEntries(customers.map(c => [c.id, c]));
   const unpaid = (invoices || []).filter(i => i.paid_status !== 'Paid').slice(0, 5);
   const el = document.getElementById('unpaid-invoices-table');
   if (!el) return;
@@ -487,7 +433,7 @@ function renderUnpaidInvoicesFast(invoices, orders, customers) {
           ${unpaid.map(inv => {
             const o = oMap[inv.order_id];
             return `<tr>
-              <td style="font-weight:700;">${inv.invoice_number || '—'}</td>
+              <td style="font-weight:700;">${inv.invoice_number}</td>
               <td>${o ? getOrderCustomerName(o, cMap) : '—'}</td>
               <td style="color:var(--danger);font-weight:700;">${formatCurrency(inv.balance)}</td>
             </tr>`;
