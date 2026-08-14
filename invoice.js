@@ -1395,6 +1395,7 @@ async function undoPaymentForInvoice(invoiceId) {
 }
 
 function deleteInvoiceConfirm(invoiceId) {
+  if (!canDelete()) return toast('Admin permission required to delete invoices', 'error');
   confirmDialog('Are you sure you want to delete this invoice? Linked orders will revert to Unpaid.', async () => {
     try {
       const inv = await DB.getInvoice(invoiceId);

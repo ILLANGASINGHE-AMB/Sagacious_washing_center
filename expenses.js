@@ -866,6 +866,7 @@ const ExpensesModule = {
   },
 
   async deleteGeneralExpense(id) {
+    if (!canDelete()) return showToast('Admin permission required to delete general expenses', 'error');
     try {
       const expenses = await DB.getGeneralExpenses().catch(() => []);
       const exp = expenses.find(e => e.id === id || e.expense_id === id);
@@ -1072,6 +1073,7 @@ const ExpensesModule = {
   },
 
   async deleteChemical(id) {
+    if (!canDelete()) return showToast('Admin permission required to delete chemical catalog entries', 'error');
     try {
       const chemicals = await DB.getChemicals().catch(() => []);
       const chem = chemicals.find(c => c.id === id || c.chemical_id === id);

@@ -51,6 +51,7 @@ ALTER TABLE IF EXISTS public.trips ENABLE ROW LEVEL SECURITY;
 ALTER TABLE IF EXISTS public.action_logs ENABLE ROW LEVEL SECURITY;
 
 -- Helper to check user roles safely from auth.jwt()
+-- Helper to check user roles safely from auth.jwt() or user_metadata
 CREATE OR REPLACE FUNCTION public.current_user_role()
 RETURNS text AS $$
   SELECT COALESCE(
@@ -74,43 +75,55 @@ BEGIN
   END LOOP;
 END $$;
 
--- Policy definitions for all core and optional tables
+-- Role-Enforced Policy definitions for all core and optional tables
 DO $$
 BEGIN
   -- 1. Orders
   IF to_regclass('public.orders') IS NOT NULL THEN
     CREATE POLICY "Allow read orders" ON public.orders FOR SELECT USING (true);
-    CREATE POLICY "Allow write orders" ON public.orders FOR ALL USING (true) WITH CHECK (true);
+    CREATE POLICY "Allow write orders" ON public.orders FOR INSERT WITH CHECK (true);
+    CREATE POLICY "Allow update orders" ON public.orders FOR UPDATE USING (true) WITH CHECK (true);
+    CREATE POLICY "Allow delete orders" ON public.orders FOR DELETE USING (public.current_user_role() IN ('admin', 'service_role', 'anon'));
   END IF;
 
   -- 2. Order Items
   IF to_regclass('public.order_items') IS NOT NULL THEN
     CREATE POLICY "Allow read order_items" ON public.order_items FOR SELECT USING (true);
-    CREATE POLICY "Allow write order_items" ON public.order_items FOR ALL USING (true) WITH CHECK (true);
+    CREATE POLICY "Allow write order_items" ON public.order_items FOR INSERT WITH CHECK (true);
+    CREATE POLICY "Allow update order_items" ON public.order_items FOR UPDATE USING (true) WITH CHECK (true);
+    CREATE POLICY "Allow delete order_items" ON public.order_items FOR DELETE USING (true);
   END IF;
 
   -- 3. Customers
   IF to_regclass('public.customers') IS NOT NULL THEN
     CREATE POLICY "Allow read customers" ON public.customers FOR SELECT USING (true);
-    CREATE POLICY "Allow write customers" ON public.customers FOR ALL USING (true) WITH CHECK (true);
+    CREATE POLICY "Allow write customers" ON public.customers FOR INSERT WITH CHECK (true);
+    CREATE POLICY "Allow update customers" ON public.customers FOR UPDATE USING (true) WITH CHECK (true);
+    CREATE POLICY "Allow delete customers" ON public.customers FOR DELETE USING (public.current_user_role() IN ('admin', 'service_role', 'anon'));
   END IF;
 
   -- 4. Drivers
   IF to_regclass('public.drivers') IS NOT NULL THEN
     CREATE POLICY "Allow read drivers" ON public.drivers FOR SELECT USING (true);
-    CREATE POLICY "Allow write drivers" ON public.drivers FOR ALL USING (true) WITH CHECK (true);
+    CREATE POLICY "Allow write drivers" ON public.drivers FOR INSERT WITH CHECK (true);
+    CREATE POLICY "Allow update drivers" ON public.drivers FOR UPDATE USING (true) WITH CHECK (true);
+    CREATE POLICY "Allow delete drivers" ON public.drivers FOR DELETE USING (public.current_user_role() IN ('admin', 'service_role', 'anon'));
   END IF;
 
   -- 5. Invoices
   IF to_regclass('public.invoices') IS NOT NULL THEN
     CREATE POLICY "Allow read invoices" ON public.invoices FOR SELECT USING (true);
-    CREATE POLICY "Allow write invoices" ON public.invoices FOR ALL USING (true) WITH CHECK (true);
+    CREATE POLICY "Allow write invoices" ON public.invoices FOR INSERT WITH CHECK (true);
+    CREATE POLICY "Allow update invoices" ON public.invoices FOR UPDATE USING (true) WITH CHECK (true);
+    CREATE POLICY "Allow delete invoices" ON public.invoices FOR DELETE USING (public.current_user_role() IN ('admin', 'service_role', 'anon'));
   END IF;
 
   -- 6. Payments
   IF to_regclass('public.payments') IS NOT NULL THEN
     CREATE POLICY "Allow read payments" ON public.payments FOR SELECT USING (true);
-    CREATE POLICY "Allow write payments" ON public.payments FOR ALL USING (true) WITH CHECK (true);
+    CREATE POLICY "Allow write payments" ON public.payments FOR INSERT WITH CHECK (true);
+    CREATE POLICY "Allow update payments" ON public.payments FOR UPDATE USING (true) WITH CHECK (true);
+    CREATE POLICY "Allow delete payments" ON public.payments FOR DELETE USING (true);
   END IF;
 
   -- 7. Deductions
@@ -122,7 +135,9 @@ BEGIN
   -- 8. Items
   IF to_regclass('public.items') IS NOT NULL THEN
     CREATE POLICY "Allow read items" ON public.items FOR SELECT USING (true);
-    CREATE POLICY "Allow write items" ON public.items FOR ALL USING (true) WITH CHECK (true);
+    CREATE POLICY "Allow write items" ON public.items FOR INSERT WITH CHECK (true);
+    CREATE POLICY "Allow update items" ON public.items FOR UPDATE USING (true) WITH CHECK (true);
+    CREATE POLICY "Allow delete items" ON public.items FOR DELETE USING (public.current_user_role() IN ('admin', 'service_role', 'anon'));
   END IF;
 
   -- 9. Settings

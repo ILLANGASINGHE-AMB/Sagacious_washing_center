@@ -915,6 +915,7 @@ async function toggleDriverStatus(id, current) {
   toast('Status updated'); renderDrivers();
 }
 async function deleteDriverConfirm(id) {
+  if (!canDelete()) return toast('Admin permission required to delete drivers', 'error');
   const d = await DB.getDriver(id);
   confirmDialog('Delete this driver?', async()=>{
     await DB.deleteDriver(id);
