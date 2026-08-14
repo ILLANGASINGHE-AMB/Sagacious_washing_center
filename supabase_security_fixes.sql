@@ -31,19 +31,23 @@ RETURNS text AS $$
 $$ LANGUAGE sql VOLATILE;
 
 -- ------------------------------------------------------------
--- 3. FIX ISSUE #1 & #5: Row Level Security (RLS) & Role Enforcement
+-- 3. FIX ISSUE #1 & #5: Row Level Security (RLS) & Full Access Policies
 -- ------------------------------------------------------------
--- Enable RLS on core tables
+-- Enable RLS on all tables
 ALTER TABLE IF EXISTS public.orders ENABLE ROW LEVEL SECURITY;
 ALTER TABLE IF EXISTS public.order_items ENABLE ROW LEVEL SECURITY;
 ALTER TABLE IF EXISTS public.customers ENABLE ROW LEVEL SECURITY;
+ALTER TABLE IF EXISTS public.drivers ENABLE ROW LEVEL SECURITY;
 ALTER TABLE IF EXISTS public.invoices ENABLE ROW LEVEL SECURITY;
 ALTER TABLE IF EXISTS public.payments ENABLE ROW LEVEL SECURITY;
 ALTER TABLE IF EXISTS public.deductions ENABLE ROW LEVEL SECURITY;
 ALTER TABLE IF EXISTS public.items ENABLE ROW LEVEL SECURITY;
-ALTER TABLE IF EXISTS public.drivers ENABLE ROW LEVEL SECURITY;
 ALTER TABLE IF EXISTS public.settings ENABLE ROW LEVEL SECURITY;
 ALTER TABLE IF EXISTS public.users ENABLE ROW LEVEL SECURITY;
+ALTER TABLE IF EXISTS public.chemicals ENABLE ROW LEVEL SECURITY;
+ALTER TABLE IF EXISTS public.chemical_ledger ENABLE ROW LEVEL SECURITY;
+ALTER TABLE IF EXISTS public.general_expenses ENABLE ROW LEVEL SECURITY;
+ALTER TABLE IF EXISTS public.trips ENABLE ROW LEVEL SECURITY;
 ALTER TABLE IF EXISTS public.action_logs ENABLE ROW LEVEL SECURITY;
 
 -- Helper to check user roles safely from auth.jwt()
@@ -56,7 +60,7 @@ RETURNS text AS $$
   );
 $$ LANGUAGE sql STABLE;
 
--- Drop existing permissive policies
+-- Drop old conflicting policies to avoid duplicate name errors
 DO $$
 DECLARE
   rec RECORD;
@@ -64,60 +68,102 @@ BEGIN
   FOR rec IN 
     SELECT tablename, policyname 
     FROM pg_policies 
-    WHERE schemaname = 'public' AND policyname LIKE '%anon%'
+    WHERE schemaname = 'public'
   LOOP
     EXECUTE format('DROP POLICY IF EXISTS %I ON public.%I', rec.policyname, rec.tablename);
   END LOOP;
 END $$;
 
--- Policy definitions for authenticated users & roles (safeguarded by table existence)
+-- Policy definitions for all core and optional tables
 DO $$
 BEGIN
-  -- Orders
+  -- 1. Orders
   IF to_regclass('public.orders') IS NOT NULL THEN
-    IF NOT EXISTS (SELECT 1 FROM pg_policies WHERE policyname = 'Authenticated users can read orders') THEN
-      CREATE POLICY "Authenticated users can read orders" ON public.orders FOR SELECT USING (auth.role() = 'authenticated' OR auth.role() = 'anon');
-    END IF;
-    IF NOT EXISTS (SELECT 1 FROM pg_policies WHERE policyname = 'Authenticated users can manage orders') THEN
-      CREATE POLICY "Authenticated users can manage orders" ON public.orders FOR ALL USING (auth.role() = 'authenticated' OR auth.role() = 'anon');
-    END IF;
+    CREATE POLICY "Allow read orders" ON public.orders FOR SELECT USING (true);
+    CREATE POLICY "Allow write orders" ON public.orders FOR ALL USING (true) WITH CHECK (true);
   END IF;
 
-  -- Customers
+  -- 2. Order Items
+  IF to_regclass('public.order_items') IS NOT NULL THEN
+    CREATE POLICY "Allow read order_items" ON public.order_items FOR SELECT USING (true);
+    CREATE POLICY "Allow write order_items" ON public.order_items FOR ALL USING (true) WITH CHECK (true);
+  END IF;
+
+  -- 3. Customers
   IF to_regclass('public.customers') IS NOT NULL THEN
-    IF NOT EXISTS (SELECT 1 FROM pg_policies WHERE policyname = 'Allow read customers') THEN
-      CREATE POLICY "Allow read customers" ON public.customers FOR SELECT USING (true);
-    END IF;
-    IF NOT EXISTS (SELECT 1 FROM pg_policies WHERE policyname = 'Allow write customers') THEN
-      CREATE POLICY "Allow write customers" ON public.customers FOR ALL USING (auth.role() = 'authenticated' OR auth.role() = 'anon');
-    END IF;
+    CREATE POLICY "Allow read customers" ON public.customers FOR SELECT USING (true);
+    CREATE POLICY "Allow write customers" ON public.customers FOR ALL USING (true) WITH CHECK (true);
   END IF;
 
-  -- Invoices
+  -- 4. Drivers
+  IF to_regclass('public.drivers') IS NOT NULL THEN
+    CREATE POLICY "Allow read drivers" ON public.drivers FOR SELECT USING (true);
+    CREATE POLICY "Allow write drivers" ON public.drivers FOR ALL USING (true) WITH CHECK (true);
+  END IF;
+
+  -- 5. Invoices
   IF to_regclass('public.invoices') IS NOT NULL THEN
-    IF NOT EXISTS (SELECT 1 FROM pg_policies WHERE policyname = 'Allow read invoices') THEN
-      CREATE POLICY "Allow read invoices" ON public.invoices FOR SELECT USING (true);
-    END IF;
-    IF NOT EXISTS (SELECT 1 FROM pg_policies WHERE policyname = 'Allow write invoices') THEN
-      CREATE POLICY "Allow write invoices" ON public.invoices FOR ALL USING (auth.role() = 'authenticated' OR auth.role() = 'anon');
-    END IF;
+    CREATE POLICY "Allow read invoices" ON public.invoices FOR SELECT USING (true);
+    CREATE POLICY "Allow write invoices" ON public.invoices FOR ALL USING (true) WITH CHECK (true);
   END IF;
 
-  -- Items
+  -- 6. Payments
+  IF to_regclass('public.payments') IS NOT NULL THEN
+    CREATE POLICY "Allow read payments" ON public.payments FOR SELECT USING (true);
+    CREATE POLICY "Allow write payments" ON public.payments FOR ALL USING (true) WITH CHECK (true);
+  END IF;
+
+  -- 7. Deductions
+  IF to_regclass('public.deductions') IS NOT NULL THEN
+    CREATE POLICY "Allow read deductions" ON public.deductions FOR SELECT USING (true);
+    CREATE POLICY "Allow write deductions" ON public.deductions FOR ALL USING (true) WITH CHECK (true);
+  END IF;
+
+  -- 8. Items
   IF to_regclass('public.items') IS NOT NULL THEN
-    IF NOT EXISTS (SELECT 1 FROM pg_policies WHERE policyname = 'Allow read items') THEN
-      CREATE POLICY "Allow read items" ON public.items FOR SELECT USING (true);
-    END IF;
-    IF NOT EXISTS (SELECT 1 FROM pg_policies WHERE policyname = 'Allow write items') THEN
-      CREATE POLICY "Allow write items" ON public.items FOR ALL USING (auth.role() = 'authenticated' OR auth.role() = 'anon');
-    END IF;
+    CREATE POLICY "Allow read items" ON public.items FOR SELECT USING (true);
+    CREATE POLICY "Allow write items" ON public.items FOR ALL USING (true) WITH CHECK (true);
   END IF;
 
-  -- Action logs (if created)
+  -- 9. Settings
+  IF to_regclass('public.settings') IS NOT NULL THEN
+    CREATE POLICY "Allow read settings" ON public.settings FOR SELECT USING (true);
+    CREATE POLICY "Allow write settings" ON public.settings FOR ALL USING (true) WITH CHECK (true);
+  END IF;
+
+  -- 10. Users
+  IF to_regclass('public.users') IS NOT NULL THEN
+    CREATE POLICY "Allow read users" ON public.users FOR SELECT USING (true);
+    CREATE POLICY "Allow write users" ON public.users FOR ALL USING (true) WITH CHECK (true);
+  END IF;
+
+  -- 11. Chemicals
+  IF to_regclass('public.chemicals') IS NOT NULL THEN
+    CREATE POLICY "Allow read chemicals" ON public.chemicals FOR SELECT USING (true);
+    CREATE POLICY "Allow write chemicals" ON public.chemicals FOR ALL USING (true) WITH CHECK (true);
+  END IF;
+
+  -- 12. Chemical Ledger
+  IF to_regclass('public.chemical_ledger') IS NOT NULL THEN
+    CREATE POLICY "Allow read chemical_ledger" ON public.chemical_ledger FOR SELECT USING (true);
+    CREATE POLICY "Allow write chemical_ledger" ON public.chemical_ledger FOR ALL USING (true) WITH CHECK (true);
+  END IF;
+
+  -- 13. General Expenses
+  IF to_regclass('public.general_expenses') IS NOT NULL THEN
+    CREATE POLICY "Allow read general_expenses" ON public.general_expenses FOR SELECT USING (true);
+    CREATE POLICY "Allow write general_expenses" ON public.general_expenses FOR ALL USING (true) WITH CHECK (true);
+  END IF;
+
+  -- 14. Trips
+  IF to_regclass('public.trips') IS NOT NULL THEN
+    CREATE POLICY "Allow read trips" ON public.trips FOR SELECT USING (true);
+    CREATE POLICY "Allow write trips" ON public.trips FOR ALL USING (true) WITH CHECK (true);
+  END IF;
+
+  -- 15. Action Logs
   IF to_regclass('public.action_logs') IS NOT NULL THEN
-    IF NOT EXISTS (SELECT 1 FROM pg_policies WHERE policyname = 'Allow write action_logs') THEN
-      CREATE POLICY "Allow write action_logs" ON public.action_logs FOR ALL USING (true);
-    END IF;
+    CREATE POLICY "Allow read action_logs" ON public.action_logs FOR SELECT USING (true);
+    CREATE POLICY "Allow write action_logs" ON public.action_logs FOR ALL USING (true) WITH CHECK (true);
   END IF;
 END $$;
-
