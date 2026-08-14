@@ -113,18 +113,30 @@ async function generateCustomerBillingReport() {
   const [orders,customers,invoices,payments] = await Promise.all([DB.getOrders(),DB.getCustomers(),DB.getInvoices(),DB.getPayments()]);
   const invMap = Object.fromEntries(invoices.map(i=>[i.order_id,i]));
   const payMap = {};
-  payments.forEach(p=>{ payMap[p.invoice_id]=(payMap[p.invoice_id]||0)+p.amount; });
+  payments.forEach(p => { 
+    if (!payMap[p.invoice_id]) payMap[p.invoice_id] = [];
+    payMap[p.invoice_id].push(p);
+  });
 
   const custSummary = {};
-  customers.forEach(c=>{ custSummary[c.id]={name:c.hotel_name,total:0,paid:0,balance:0,orders:0}; });
-  orders.forEach(o=>{
-    if(!custSummary[o.customer_id])return;
+  customers.forEach(c => { custSummary[c.id] = { name: c.hotel_name, total: 0, paid: 0, balance: 0, orders: 0 }; });
+  orders.forEach(o => {
+    if (!custSummary[o.customer_id]) return;
     custSummary[o.customer_id].orders++;
-    custSummary[o.customer_id].total+=o.total_amount||0;
-    const inv=invMap[o.id];
-    if(inv){ const paid=(payMap[inv.id]||0)+(inv.advance_payment||0); custSummary[o.customer_id].paid+=paid; }
+    const inv = invMap[o.id];
+    if (inv) {
+      const pList = payMap[inv.id] || [];
+      const fin = Financials.computeInvoiceFinancials(inv, [], pList);
+      custSummary[o.customer_id].total += fin.netPayableTotal;
+      custSummary[o.customer_id].paid += fin.totalPaid;
+      custSummary[o.customer_id].balance += fin.balance;
+    } else {
+      const ordFin = Financials.computeOrderFinancials(o, []);
+      custSummary[o.customer_id].total += ordFin.grandTotal;
+      custSummary[o.customer_id].paid += ordFin.advancePayment;
+      custSummary[o.customer_id].balance += ordFin.balance;
+    }
   });
-  Object.values(custSummary).forEach(s=>{s.balance=s.total-s.paid;});
 
   const rows = Object.values(custSummary).map(s=>`<tr>
     <td>${s.name}</td><td>${s.orders}</td>

@@ -219,20 +219,17 @@ async function _refreshInvoicesTable() {
   const dateTypeSel = document.getElementById('inv-date-type-sel');
   if (dateTypeSel && dateTypeSel.value !== invoiceDateType) dateTypeSel.value = invoiceDateType;
 
-  // Filter logic
+  // Filter logic with canonical financial calculation
   let filtered = invoices.map(inv => {
     const pList = invPayments[inv.id] || [];
-    const amountPaid = pList.reduce((s, p) => s + (p.amount || 0), 0) + (inv.advance_payment || 0);
-    const balance = Math.max(0, inv.total_amount - (inv.deduction_amount || 0) - amountPaid);
+    const fin = Financials.computeInvoiceFinancials(inv, [], pList);
     const latestPayment = pList.length > 0 ? pList[pList.length - 1] : null;
-
-    let computedStatus = balance <= 0 ? 'Paid' : 'Unpaid';
 
     return {
       ...inv,
-      computedPaid: amountPaid,
-      computedBalance: balance,
-      computedStatus: computedStatus,
+      computedPaid: fin.totalPaid,
+      computedBalance: fin.balance,
+      computedStatus: fin.status,
       latestPayment: latestPayment
     };
   });
@@ -616,11 +613,16 @@ async function viewInvoice(id) {
   const logoData = await DB.getSetting('logo_data');
   const isCredit = inv.invoice_type === 'Credit';
 
-  const totalPaid = payments.reduce((s, p) => s + (p.amount || 0), 0) + (inv.advance_payment || 0);
-  const balance = Math.max(0, inv.total_amount - totalPaid);
-  const discount = inv.discount_amount || 0;
-  const deliveryCharge = inv.delivery_charge || 0;
-  const itemsSubtotal = (inv.subtotal_before_discount != null ? inv.subtotal_before_discount : inv.total_amount);
+  const fin = Financials.computeInvoiceFinancials(inv, items, payments);
+  const totalPaid = fin.totalPaid;
+  const balance = fin.balance;
+  const discount = fin.discountAmount;
+  const deliveryCharge = fin.deliveryCharge;
+  const extraPayment = fin.extraPayment;
+  const itemsSubtotal = fin.itemsSubtotal;
+  const grandTotal = fin.grossInvoiceTotal;
+  const deduction = fin.deductionAmount;
+  const finalTotal = fin.netPayableTotal;
 
   const _svcColor = { 'Dry Clean': '#7c3aed', 'Wash & Press': '#0369a1', 'Wash & Dry': '#16a34a' };
   
@@ -740,20 +742,34 @@ async function viewInvoice(id) {
             <span style="color:#64748b;">Items Subtotal</span>
             <span style="font-weight:600;">${formatCurrency(itemsSubtotal)}</span>
           </div>
-          ${deliveryCharge > 0 ? `
-            <div style="display:flex;justify-content:space-between;padding:10px 0;border-bottom:1px solid #f1f5f9;font-size:0.9em;">
-              <span style="color:#64748b;">Delivery Cost</span>
-              <span>${formatCurrency(deliveryCharge)}</span>
-            </div>` : ''}
           ${discount > 0 ? `
             <div style="display:flex;justify-content:space-between;padding:10px 0;border-bottom:1px solid #f1f5f9;font-size:0.9em;">
               <span style="color:#64748b;">Discount ${inv.discount_rate ? `(${inv.discount_rate}%)` : ''}</span>
               <span style="color:#16a34a;font-weight:600;">− ${formatCurrency(discount)}</span>
             </div>` : ''}
-          <div style="display:flex;justify-content:space-between;padding:14px 0;border-top:2px solid #1a4d8f;border-bottom:2px solid #1a4d8f;font-size:1em;font-weight:800;color:#1e293b;">
+          ${deliveryCharge > 0 ? `
+            <div style="display:flex;justify-content:space-between;padding:10px 0;border-bottom:1px solid #f1f5f9;font-size:0.9em;">
+              <span style="color:#64748b;">Delivery Cost</span>
+              <span>+ ${formatCurrency(deliveryCharge)}</span>
+            </div>` : ''}
+          ${extraPayment > 0 ? `
+            <div style="display:flex;justify-content:space-between;padding:10px 0;border-bottom:1px solid #f1f5f9;font-size:0.9em;">
+              <span style="color:#64748b;">Extra Payment</span>
+              <span>+ ${formatCurrency(extraPayment)}</span>
+            </div>` : ''}
+          <div style="display:flex;justify-content:space-between;padding:12px 0;border-top:2px solid #1a4d8f;border-bottom:2px solid #1a4d8f;font-size:1em;font-weight:800;color:#1e293b;">
             <span>Grand Total</span>
             <span>${formatCurrency(grandTotal)}</span>
           </div>
+          ${deduction > 0 ? `
+            <div style="display:flex;justify-content:space-between;padding:10px 0;border-bottom:1px solid #f1f5f9;font-size:0.9em;color:#e11d48;font-weight:600;">
+              <span>Deductions / Damage</span>
+              <span>− ${formatCurrency(deduction)}</span>
+            </div>
+            <div style="display:flex;justify-content:space-between;padding:10px 0;border-bottom:1px solid #e2e8f0;font-size:0.95em;font-weight:700;color:#1e40af;">
+              <span>Final Total Bill</span>
+              <span>${formatCurrency(finalTotal)}</span>
+            </div>` : ''}
           ${inv.advance_payment > 0 ? `
             <div style="display:flex;justify-content:space-between;padding:10px 0;border-bottom:1px solid #f1f5f9;font-size:0.9em;">
               <span style="color:#16a34a;">Advance Payment</span>
@@ -854,19 +870,16 @@ async function printInvoice(id) {
   const logoData = await DB.getSetting('logo_data');
   const isCredit = inv.invoice_type === 'Credit';
 
-  const totalPaid = payments.reduce((s, p) => s + (p.amount || 0), 0) + (inv.advance_payment || 0);
-  const discount = inv.discount_amount || 0;
-  const deliveryCharge = inv.delivery_charge || 0;
-  const extraPayment = inv.extra_payment || 0;
-  const calcSubtotal = items.reduce((s, i) => s + (i.subtotal || (i.price * i.quantity) || 0), 0);
-  const itemsSubtotal = (inv.subtotal_before_discount != null && inv.subtotal_before_discount > 0)
-    ? inv.subtotal_before_discount
-    : (calcSubtotal > 0 ? calcSubtotal : (inv.total_amount || 0));
-  const discountedItems = itemsSubtotal - discount;
-  const grandTotal = discountedItems + deliveryCharge + extraPayment;
-  const deduction = inv.deduction_amount || 0;
-  const finalTotal = grandTotal - deduction;
-  const balance = Math.max(0, finalTotal - totalPaid);
+  const fin = Financials.computeInvoiceFinancials(inv, items, payments);
+  const totalPaid = fin.totalPaid;
+  const discount = fin.discountAmount;
+  const deliveryCharge = fin.deliveryCharge;
+  const extraPayment = fin.extraPayment;
+  const itemsSubtotal = fin.itemsSubtotal;
+  const grandTotal = fin.grossInvoiceTotal;
+  const deduction = fin.deductionAmount;
+  const finalTotal = fin.netPayableTotal;
+  const balance = fin.balance;
 
   const logoHTML = logoData
     ? `<img src="${logoData}" style="height:64px;width:64px;object-fit:cover;border-radius:12px;"/>`
@@ -1169,8 +1182,9 @@ async function showInvoiceForOrder(orderId) {
 async function showPaymentModal(invoiceId) {
   const inv = await DB.getInvoice(invoiceId); if (!inv) return;
   const payments = await DB.getPaymentsByInvoice(invoiceId);
-  const totalPaid = payments.reduce((s, p) => s + p.amount, 0) + (inv.advance_payment || 0);
-  const balance = Math.max(0, inv.total_amount - (inv.deduction_amount || 0) - totalPaid);
+  const fin = Financials.computeInvoiceFinancials(inv, [], payments);
+  const totalPaid = fin.totalPaid;
+  const balance = fin.balance;
   const methodOpts = PAYMENT_METHODS.map(m => `<option value="${m}">${m}</option>`).join('');
 
   createModal('payment-modal', 'Record Payment', `

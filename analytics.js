@@ -8,7 +8,8 @@ let analyticsFilterState = {
   endDate: '',
   customerId: 'all',
   itemId: 'all',
-  paymentStatus: 'all'
+  paymentStatus: 'all',
+  chemCostMode: 'cogs' // 'cogs' (Usage/Consumed) or 'purchase' (Cash Outflow)
 };
 
 async function renderAnalytics() {
@@ -40,7 +41,7 @@ async function renderAnalytics() {
 
     <!-- FILTER & CONTROL TOOLBAR -->
     <div class="card" style="margin-bottom:20px;padding:16px 20px;background:var(--card-bg);border:1px solid var(--border);border-radius:12px;">
-      <div style="display:grid;grid-template-columns:repeat(auto-fit,minmax(180px,1fr));gap:14px;align-items:end;">
+      <div style="display:grid;grid-template-columns:repeat(auto-fit,minmax(160px,1fr));gap:14px;align-items:end;">
         
         <!-- Time Grain -->
         <div class="form-group" style="margin:0;">
@@ -93,6 +94,15 @@ async function renderAnalytics() {
           <select id="an-item" class="form-input form-select" onchange="onAnalyticsFilterChange()" style="font-size:0.85em;padding:8px 10px;">
             <option value="all">All Catalog Items</option>
             ${catalogItems.map(it => `<option value="${it.id}" ${String(analyticsFilterState.itemId)===String(it.id)?'selected':''}>${it.item_name} (${it.item_id})</option>`).join('')}
+          </select>
+        </div>
+
+        <!-- Chemical Costing Model -->
+        <div class="form-group" style="margin:0;">
+          <label class="form-label" style="font-size:0.78em;font-weight:700;text-transform:uppercase;color:var(--text-muted);"><i class="fas fa-flask"></i> Chemical Costing</label>
+          <select id="an-chem-cost" class="form-input form-select" onchange="onAnalyticsFilterChange()" style="font-size:0.85em;padding:8px 10px;">
+            <option value="cogs" ${analyticsFilterState.chemCostMode==='cogs'?'selected':''}>Usage (COGS)</option>
+            <option value="purchase" ${analyticsFilterState.chemCostMode==='purchase'?'selected':''}>Purchases (Cash Outflow)</option>
           </select>
         </div>
 
@@ -276,6 +286,7 @@ async function onAnalyticsFilterChange() {
   analyticsFilterState.customerId = document.getElementById('an-customer').value;
   analyticsFilterState.itemId = document.getElementById('an-item').value;
   analyticsFilterState.paymentStatus = document.getElementById('an-status').value;
+  analyticsFilterState.chemCostMode = document.getElementById('an-chem-cost')?.value || 'cogs';
 
   const trendLbl = document.getElementById('an-trend-label');
   if (trendLbl) {
@@ -298,7 +309,7 @@ async function refreshAnalyticsView() {
   // Show loading state
   const kpiEl = document.getElementById('an-kpi-cards');
   const insEl = document.getElementById('an-insights-grid');
-  if (kpiEl) kpiEl.innerHTML = `<div style="grid-column:1/-1;text-align:center;padding:20px;color:var(--text-muted);"><i class="fas fa-spinner fa-spin" style="font-size:1.5em;"></i><div style="margin-top:8px;font-size:0.85em;">Calculating analytics...</div></div>`;
+  if (kpiEl) kpiEl.innerHTML = `<div style="grid-column:1/-1;text-align:center;padding:20px;color:var(--text-muted);"><i class="fas fa-spinner fa-spin" style="font-size:1.5em;"></i><div style="margin-top:8px;font-size:0.85em;">Calculating financial analytics...</div></div>`;
 
   try {
     const data = await calculateAnalyticsData(analyticsFilterState);
@@ -321,7 +332,7 @@ async function refreshAnalyticsView() {
 // DATA CALCULATION ENGINE & PRECISE FORMULAS
 // ─────────────────────────────────────────────
 async function calculateAnalyticsData(filters) {
-  const [orders, allOrderItems, customers, catalogItems, generalExpenses, chemicalLedger, trips, fuelConfig] = await Promise.all([
+  const [orders, allOrderItems, customers, catalogItems, generalExpenses, chemicalLedger, trips, fuelConfig, invoices, payments] = await Promise.all([
     DB.getOrders(),
     DB.getAllOrderItems(),
     DB.getCustomers(),
@@ -329,11 +340,19 @@ async function calculateAnalyticsData(filters) {
     DB.getGeneralExpenses(),
     DB.getChemicalLedger(),
     DB.getTrips(),
-    DB.getFuelPriceSettings()
+    DB.getFuelPriceSettings(),
+    DB.getInvoices(),
+    DB.getPayments()
   ]);
 
   const cMap = Object.fromEntries((customers || []).map(c => [c.id, c]));
   const itemMap = Object.fromEntries((catalogItems || []).map(it => [it.id, it]));
+  const invMap = Object.fromEntries((invoices || []).map(i => [i.order_id, i]));
+  const payMap = {};
+  (payments || []).forEach(p => {
+    if (!payMap[p.invoice_id]) payMap[p.invoice_id] = [];
+    payMap[p.invoice_id].push(p);
+  });
 
   const start = filters.startDate ? new Date(filters.startDate + 'T00:00:00') : new Date('2000-01-01');
   const end = filters.endDate ? new Date(filters.endDate + 'T23:59:59') : new Date('2099-12-31');
@@ -365,17 +384,7 @@ async function calculateAnalyticsData(filters) {
   const orderIdsSet = new Set(filteredOrders.map(o => o.id));
   const filteredOrderItems = (allOrderItems || []).filter(oi => orderIdsSet.has(oi.order_id));
 
-  // 3. Filter Expenses (General + Chemical Purchases + Transport Fuel Costs)
-  const filteredGeneralExpenses = (generalExpenses || []).filter(e => {
-    const eDate = new Date(e.expense_date || e.created_at);
-    return !isNaN(eDate) && eDate >= start && eDate <= end;
-  });
-
-  const filteredChemicalPurchases = (chemicalLedger || []).filter(l => {
-    const lDate = new Date(l.date || l.created_at);
-    return !isNaN(lDate) && l.type === 'IN' && lDate >= start && lDate <= end;
-  });
-
+  // 3. Filter Transport Fuel Costs
   const filteredCompletedTrips = (trips || []).filter(t => {
     if (t.status !== 'Completed' || !t.distance_km) return false;
     const dateStr = t.start_date || (t.created_at ? String(t.created_at).slice(0, 10) : '');
@@ -383,7 +392,6 @@ async function calculateAnalyticsData(filters) {
     return !isNaN(tDate) && tDate >= start && tDate <= end;
   });
 
-  // Calculate Transport Fuel Costs for filtered period
   let totalTransportFuelExpenses = 0;
   filteredCompletedTrips.forEach(t => {
     const dateStr = t.start_date || (t.created_at ? String(t.created_at).slice(0, 10) : '');
@@ -396,22 +404,56 @@ async function calculateAnalyticsData(filters) {
     totalTransportFuelExpenses += tripCost;
   });
 
-  // Gross Revenue formula
+  // 4. Gross Revenue & Net Booked Revenue (Deducting Invoice Deductions)
   const grossRevenue = filteredOrders.reduce((sum, o) => sum + (parseFloat(o.total_amount) || 0), 0);
+  let totalDeductions = 0;
+  filteredOrders.forEach(o => {
+    const inv = invMap[o.id];
+    if (inv && inv.deduction_amount) {
+      totalDeductions += parseFloat(inv.deduction_amount) || 0;
+    }
+  });
+  const netBookedRevenue = Math.max(0, grossRevenue - totalDeductions);
 
-  // Total Expenses formula: General expenses + Chemical purchases + Transport fuel costs
-  const totalGeneralExpenses = filteredGeneralExpenses.reduce((sum, e) => sum + (parseFloat(e.monthly_averaged_amount || e.amount) || 0), 0);
-  const totalChemicalExpenses = filteredChemicalPurchases.reduce((sum, c) => sum + (parseFloat(c.total_amount) || 0), 0);
+  // 5. Cash Inflow (Cash Collected in period)
+  const advanceCollected = filteredOrders.reduce((sum, o) => sum + (parseFloat(o.advance_payment) || 0), 0);
+  const periodPayments = (payments || []).filter(p => {
+    const pDate = new Date(p.date || p.created_at);
+    return !isNaN(pDate) && pDate >= start && pDate <= end;
+  }).reduce((sum, p) => sum + (parseFloat(p.amount) || 0), 0);
+  const cashCollected = advanceCollected + periodPayments;
+
+  // 6. Outstanding Receivables
+  let uncollectedReceivables = 0;
+  let unpaidInvoicesCount = 0;
+  (invoices || []).forEach(inv => {
+    const pList = payMap[inv.id] || [];
+    const fin = Financials.computeInvoiceFinancials(inv, [], pList);
+    if (!fin.isPaid) {
+      uncollectedReceivables += fin.balance;
+      unpaidInvoicesCount++;
+    }
+  });
+
+  // 7. Amortized General Expenses (Issue #4 Multi-month)
+  const amortizedGen = Financials.computeAmortizedExpenses(generalExpenses || [], start, end);
+  const totalGeneralExpenses = amortizedGen.totalAmortized;
+
+  // 8. Chemical Expenses (Issue #4 COGS vs Purchases)
+  const chemCostMode = filters.chemCostMode || 'cogs';
+  const chemCalc = Financials.computeChemicalExpenses(chemicalLedger || [], start, end, chemCostMode);
+  const totalChemicalExpenses = chemCalc.activeCost;
+
+  // Total Expenses & Net Profit
   const totalExpenses = totalGeneralExpenses + totalChemicalExpenses + totalTransportFuelExpenses;
-
-  // Net Profit & Profit Margin %
-  const netProfit = grossRevenue - totalExpenses;
-  const profitMargin = grossRevenue > 0 ? (netProfit / grossRevenue) * 100 : 0;
-  const costRatio = grossRevenue > 0 ? (totalExpenses / grossRevenue) * 100 : 0;
+  const netProfit = netBookedRevenue - totalExpenses;
+  const profitMargin = netBookedRevenue > 0 ? (netProfit / netBookedRevenue) * 100 : 0;
+  const costRatio = netBookedRevenue > 0 ? (totalExpenses / netBookedRevenue) * 100 : 0;
+  const cashFlowRatio = netBookedRevenue > 0 ? (cashCollected / netBookedRevenue) * 100 : 0;
 
   // Order Metrics
   const orderCount = filteredOrders.length;
-  const avgOrderValue = orderCount > 0 ? grossRevenue / orderCount : 0;
+  const avgOrderValue = orderCount > 0 ? netBookedRevenue / orderCount : 0;
 
   // Day of Week Distribution (Mon = 1, Sun = 0)
   const dayOfWeekNames = ['Sunday', 'Monday', 'Tuesday', 'Wednesday', 'Thursday', 'Friday', 'Saturday'];
@@ -475,26 +517,41 @@ async function calculateAnalyticsData(filters) {
   // Expense Categories Breakdown
   const expenseCatMap = {};
   if (totalChemicalExpenses > 0) {
-    expenseCatMap['Chemical Inventory'] = totalChemicalExpenses;
+    expenseCatMap[chemCostMode === 'cogs' ? 'Chemical Usage (COGS)' : 'Chemical Purchases'] = totalChemicalExpenses;
   }
   if (totalTransportFuelExpenses > 0) {
     expenseCatMap['Transport Fuel Cost'] = totalTransportFuelExpenses;
   }
-  filteredGeneralExpenses.forEach(e => {
-    const cat = e.expense_category || e.expense_name || 'General Operations';
-    const amt = parseFloat(e.monthly_averaged_amount || e.amount) || 0;
+  Object.entries(amortizedGen.breakdownByCategory).forEach(([cat, amt]) => {
     expenseCatMap[cat] = (expenseCatMap[cat] || 0) + amt;
   });
 
-  // Time Bucket Grouping (Daily, Weekly, Monthly, Yearly)
+  // Time Bucket Grouping
+  const filteredGeneralExpenses = (generalExpenses || []).filter(e => {
+    const eDate = new Date(e.expense_date || e.created_at);
+    return !isNaN(eDate) && eDate >= start && eDate <= end;
+  });
+  const filteredChemicalPurchases = (chemicalLedger || []).filter(l => {
+    const lDate = new Date(l.date || l.created_at);
+    return !isNaN(lDate) && l.type === 'IN' && lDate >= start && lDate <= end;
+  });
   const timeBuckets = groupDataByTimeGrain(filteredOrders, filteredGeneralExpenses, filteredChemicalPurchases, filteredCompletedTrips, fuelConfig, filters.grain, start, end);
 
   return {
     grossRevenue,
+    totalDeductions,
+    netBookedRevenue,
+    cashCollected,
+    cashFlowRatio,
+    uncollectedReceivables,
+    unpaidInvoicesCount,
     totalExpenses,
     totalGeneralExpenses,
     totalChemicalExpenses,
     totalTransportFuelExpenses,
+    chemCostMode,
+    chemModeLabel: chemCostMode === 'cogs' ? 'Usage (COGS)' : 'Cash Outflow',
+    hasFixedOverhead: Object.keys(amortizedGen.breakdownByCategory).length > 0,
     netProfit,
     profitMargin,
     costRatio,
@@ -559,10 +616,10 @@ function groupDataByTimeGrain(orders, genExpenses, chemPurchases, completedTrips
     buckets[key].expenses += (parseFloat(c.total_amount) || 0);
   });
 
-  (completedTrips || []).forEach(t => {
+  completedTrips.forEach(t => {
     const dateStr = t.start_date || (t.created_at ? String(t.created_at).slice(0, 10) : '');
-    const d = new Date(dateStr + 'T00:00:00');
-    const key = getBucketKey(d);
+    const tDate = dateStr ? new Date(dateStr + 'T00:00:00') : new Date();
+    const key = getBucketKey(tDate);
     if (!buckets[key]) buckets[key] = { key, revenue: 0, expenses: 0, orders: 0 };
 
     const mKey = dateStr ? dateStr.slice(0, 7) : '';
@@ -590,10 +647,11 @@ function renderKPICards(d) {
   const profitColor = d.netProfit >= 0 ? '#10b981' : '#ef4444';
 
   container.innerHTML = `
-    ${anStatCard("Gross Revenue", formatCurrency(d.grossRevenue), "fa-coins", "#3b82f6", "#dbeafe", `${d.orderCount} total orders`)}
-    ${anStatCard("Total Expenses", formatCurrency(d.totalExpenses), "fa-receipt", "#ef4444", "#fee2e2", `Cost ratio: ${d.costRatio.toFixed(1)}%`)}
-    ${anStatCard("Net Operating Profit", formatCurrency(d.netProfit), "fa-scale-balanced", profitColor, d.netProfit >= 0 ? "#dcfce7" : "#fee2e2", `Margin: ${d.profitMargin.toFixed(1)}%`, marginColor)}
-    ${anStatCard("Average Order (AOV)", formatCurrency(d.avgOrderValue), "fa-basket-shopping", "#8b5cf6", "#f3e8ff", "Revenue per batch")}
+    ${anStatCard("Booked Sales (Accrual)", formatCurrency(d.netBookedRevenue), "fa-coins", "#3b82f6", "#dbeafe", `Gross: ${formatCurrency(d.grossRevenue)} (less ${formatCurrency(d.totalDeductions)} deductions)`)}
+    ${anStatCard("Cash Collected", formatCurrency(d.cashCollected), "fa-wallet", "#10b981", "#dcfce7", `${d.cashFlowRatio.toFixed(1)}% realized vs booked sales`)}
+    ${anStatCard("Total Expenses", formatCurrency(d.totalExpenses), "fa-receipt", "#ef4444", "#fee2e2", `Cost ratio: ${d.costRatio.toFixed(1)}% (${d.chemModeLabel})`)}
+    ${anStatCard("Net Operating Profit", formatCurrency(d.netProfit), "fa-scale-balanced", profitColor, d.netProfit >= 0 ? "#dcfce7" : "#fee2e2", `Margin: ${d.profitMargin.toFixed(1)}% ${!d.hasFixedOverhead ? '⚠️ (No OPEX entered)' : ''}`, marginColor)}
+    ${anStatCard("Uncollected Receivables", formatCurrency(d.uncollectedReceivables), "fa-clock", "#f59e0b", "#fef3c7", `Across ${d.unpaidInvoicesCount} unpaid invoices`)}
   `;
 }
 
