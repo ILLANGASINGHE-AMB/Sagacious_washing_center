@@ -188,23 +188,9 @@ const DB = {
     return rows[0] || null;
   },
   async ensureDefaultUsers() {
-    try {
-      const driverUser = await _q(_sb.from('users').select('id').ilike('username', 'driver').limit(1));
-      if (!driverUser || driverUser.length === 0) {
-        await _q(_sb.from('users').insert([
-          { username: 'driver', password: 'd8590', role: 'driver', display_name: 'Driver User' }
-        ]));
-      }
-    } catch(e) {}
-
-    const rows = await _q(_sb.from('users').select('id').limit(1)).catch(()=>[]);
-    if (rows.length === 0) {
-      await _q(_sb.from('users').insert([
-        { username: 'admin', password: 'admin', role: 'admin', display_name: 'Administrator' },
-        { username: 'user', password: 'user', role: 'user', display_name: 'Staff User' },
-        { username: 'driver', password: 'd8590', role: 'driver', display_name: 'Driver User' }
-      ])).catch(()=>{});
-    }
+    // Database users are seeded directly in Supabase table.
+    // Hardcoded client-side password fallbacks have been removed for security.
+    return true;
   },
   async validateLogin(username, password) {
     try {

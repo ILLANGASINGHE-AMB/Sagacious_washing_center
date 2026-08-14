@@ -5,8 +5,8 @@ Here's the updated audit status for every issue across all review documents, che
 🔴 Critical Issues
 Issue	Status	Notes
 #1 DB has no real access control (RLS open)	⚠️ Partial	supabase_security_fixes.sql enables RLS on all tables.
-#2 Plaintext passwords in users table	⚠️ Mitigated	exportAll(true) now strips password fields before any export/cloud backup. validateLogin fails closed.
-#3 Hardcoded fallback login credentials	✅ Fixed	validateLogin fails closed with no hardcoded fallback logins.
+#2 Plaintext passwords in users table	⚠️ Mitigated	exportAll(true) strips passwords before export/cloud backup; all hardcoded plaintext password fallback strings removed from client JS & HTML source code.
+#3 Hardcoded fallback login credentials	✅ Fixed	validateLogin fails closed with no hardcoded fallback logins; ensureDefaultUsers() arrays removed from db.js; login hints removed from index.html.
 #4 Gemini API key exposed to browser	✅ Fixed	netlify/functions/gemini.js implemented correctly — key from process.env.GEMINI_API_KEY, HTTPS-only POST proxy.
 #5 Client-side-only role checks	⚠️ Mitigated	Role-based navigation enforced in UI.
 Additional #1 Cloud upload sends plaintext passwords to any URL	✅ Fixed	exportAll(true) strips passwords from backup payload; uploadToCloud() and importFromCloud() enforce HTTPS protocol URLs.
