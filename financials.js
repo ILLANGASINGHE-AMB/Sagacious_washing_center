@@ -205,7 +205,78 @@ const Financials = {
       activeCost: mode === 'purchase' ? purchaseTotal : (consumedTotal > 0 ? consumedTotal : purchaseTotal),
       itemizedUsage
     };
+  },
+
+  /**
+   * Computes monthly expense allocation over N months
+   */
+  computeMonthlyExpenseAveraging(amount, monthsCovered = 1) {
+    const amt = parseFloat(amount) || 0;
+    const months = Math.max(1, parseInt(monthsCovered) || 1);
+    return {
+      totalAmount: amt,
+      monthsCovered: months,
+      monthlyAmount: amt / months
+    };
+  },
+
+  /**
+   * Computes trip fuel cost based on distance, fuel price, and efficiency
+   */
+  computeTripFuelCost(distanceKm, fuelPrice = 370, kmPerLiter = 10) {
+    const dist = Math.max(0, parseFloat(distanceKm) || 0);
+    const price = Math.max(0, parseFloat(fuelPrice) || 370);
+    const efficiency = Math.max(0.1, parseFloat(kmPerLiter) || 10);
+    const litersUsed = dist / efficiency;
+    const estimatedCost = litersUsed * price;
+    return {
+      distanceKm: dist,
+      litersUsed: parseFloat(litersUsed.toFixed(2)),
+      estimatedCost: parseFloat(estimatedCost.toFixed(2))
+    };
+  },
+
+  /**
+   * Computes standardized profit and loss summary for a date range
+   */
+  computeProfitSummary(orders = [], generalExpenses = [], chemicalLedger = [], trips = [], startDate, endDate) {
+    const startStr = startDate ? new Date(startDate).toISOString().slice(0, 10) : '';
+    const endStr = endDate ? new Date(endDate).toISOString().slice(0, 10) : '';
+
+    const filterDate = d => {
+      if (!d) return true;
+      const dateStr = (d || '').slice(0, 10);
+      if (startStr && dateStr < startStr) return false;
+      if (endStr && dateStr > endStr) return false;
+      return true;
+    };
+
+    const periodOrders = orders.filter(o => filterDate(o.created_at || o.pickup_date));
+    const grossRevenue = periodOrders.reduce((sum, o) => sum + (parseFloat(o.total_amount) || 0), 0);
+
+    const expMetrics = this.computePeriodGeneralExpenses(generalExpenses, startDate || '2000-01-01', endDate || '2099-12-31');
+    const chemMetrics = this.computeChemicalExpenses(chemicalLedger, startDate || '2000-01-01', endDate || '2099-12-31', 'cogs');
+
+    const periodTrips = trips.filter(t => filterDate(t.start_date || t.created_at));
+    const totalDistanceKm = periodTrips.reduce((sum, t) => sum + (parseFloat(t.distance_km) || 0), 0);
+    const tripFuelMetrics = this.computeTripFuelCost(totalDistanceKm);
+
+    const totalExpenses = expMetrics.totalAmortized + chemMetrics.activeCost + tripFuelMetrics.estimatedCost;
+    const netProfit = grossRevenue - totalExpenses;
+
+    return {
+      grossRevenue,
+      totalExpenses,
+      netProfit,
+      breakdown: {
+        generalExpenses: expMetrics.totalAmortized,
+        chemicalExpenses: chemMetrics.activeCost,
+        fuelExpenses: tripFuelMetrics.estimatedCost
+      }
+    };
   }
 };
 
 window.Financials = Financials;
+window.Calc = Financials;
+

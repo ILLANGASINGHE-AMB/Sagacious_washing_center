@@ -581,22 +581,9 @@ function exportInvoices(type) {
           `).join('')}
         </tbody>
       </table>
-      <div style="margin-top:40px;display:flex;justify-content:space-between;align-items:flex-end;">
-        <div style="text-align:center;min-width:180px;">
-          <div style="height:50px;border-bottom:1.5px solid #1e293b;margin-bottom:6px;"></div>
-          <div style="font-size:0.85em;font-weight:700;color:#1e293b;text-transform:uppercase;letter-spacing:0.5px;">Issued By:-</div>
-        </div>
-        <div style="text-align:center;min-width:180px;">
-          <div style="height:50px;border-bottom:1.5px solid #1e293b;margin-bottom:6px;"></div>
-          <div style="font-size:0.85em;font-weight:700;color:#1e293b;text-transform:uppercase;letter-spacing:0.5px;">Checked By:-</div>
-        </div>
       </div>
-      <script>window.print();<\/script>
-      </body></html>`;
-    const w = window.open('', '_blank');
-    if (!w) return toast('Please allow pop-ups to export PDF', 'warning');
-    w.document.write(printHTML);
-    w.document.close();
+    </div>`;
+    Print.openPrintWindow(printHTML, `Invoice_${inv.invoice_number}`);
   }
 }
 
@@ -1098,15 +1085,8 @@ async function printInvoice(id) {
           <div style="font-size:0.85em;font-weight:700;color:#1e293b;text-transform:uppercase;letter-spacing:0.5px;">Checked By:-</div>
         </div>
       </div>
-      </div>
-    </div>
-    <script>document.fonts.ready.then(()=>window.print());<\/script>
-    </body></html>`;
-
-  const w = window.open('', '_blank');
-  if (!w) return toast('Please allow pop-ups to print', 'warning');
-  w.document.write(printHTML);
-  w.document.close();
+    </div>`;
+    Print.openPrintWindow(printHTML, `Order_Print_${order.batch_id}`);
   } finally {
     hideProcessingOverlay();
   }
