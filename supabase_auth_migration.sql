@@ -179,148 +179,13 @@ END $$;
 REVOKE ALL ON public.users FROM anon, authenticated;
 
 -- ------------------------------------------------------------
--- 4. Public QR delivery-confirmation flow (confirm.html).
---    This page is intentionally used by customers with no login —
---    they reach it via a one-time, cryptographically random link
---    (qr_token, already hardened to gen_random_uuid() by the prior
---    security migration). Because orders/customers/invoices/payments
---    are now locked to `authenticated` above, that anonymous flow
---    needs its own narrow doors. Each function below is SECURITY
---    DEFINER (runs with elevated privilege) but independently
---    re-validates the token against the specific row it touches —
---    so knowing a valid token only ever grants access to that one
---    order, never to the tables at large.
+-- 4. QR delivery-confirmation feature — removed by request.
+--    (confirm.html and its DB.getOrderByToken/markOrderReceivedByQR
+--    helpers have been deleted from the app; nothing else in the
+--    codebase referenced them. orders/customers/order_items/invoices/
+--    payments stay locked to `authenticated` only above, with no
+--    anonymous-access exceptions.)
 -- ------------------------------------------------------------
-
-CREATE OR REPLACE FUNCTION public.qr_get_order(p_token uuid)
-RETURNS SETOF public.orders
-LANGUAGE sql SECURITY DEFINER SET search_path = public AS $$
-  SELECT * FROM public.orders WHERE qr_token = p_token LIMIT 1;
-$$;
-
-CREATE OR REPLACE FUNCTION public.qr_get_customer_name(p_token uuid)
-RETURNS text
-LANGUAGE sql SECURITY DEFINER SET search_path = public AS $$
-  SELECT c.hotel_name FROM public.customers c
-  JOIN public.orders o ON o.customer_id = c.id
-  WHERE o.qr_token = p_token LIMIT 1;
-$$;
-
-CREATE OR REPLACE FUNCTION public.qr_get_order_items(p_token uuid)
-RETURNS SETOF public.order_items
-LANGUAGE sql SECURITY DEFINER SET search_path = public AS $$
-  SELECT oi.* FROM public.order_items oi
-  JOIN public.orders o ON o.id = oi.order_id
-  WHERE o.qr_token = p_token;
-$$;
-
-CREATE OR REPLACE FUNCTION public.qr_get_invoice(p_token uuid)
-RETURNS SETOF public.invoices
-LANGUAGE sql SECURITY DEFINER SET search_path = public AS $$
-  SELECT i.* FROM public.invoices i
-  JOIN public.orders o ON o.id = i.order_id
-  WHERE o.qr_token = p_token LIMIT 1;
-$$;
-
--- Marks the order's existing invoice as fully paid. Re-checks the invoice
--- actually belongs to the order matching the token before touching it.
-CREATE OR REPLACE FUNCTION public.qr_mark_invoice_paid(p_token uuid, p_invoice_id bigint)
-RETURNS void
-LANGUAGE plpgsql SECURITY DEFINER SET search_path = public AS $$
-BEGIN
-  UPDATE public.invoices SET balance = 0, paid_status = 'Paid', payment_date = now()
-  WHERE id = p_invoice_id
-    AND order_id = (SELECT id FROM public.orders WHERE qr_token = p_token LIMIT 1);
-END;
-$$;
-
--- Inserts a payment row against an invoice, only if that invoice belongs
--- to the order matching the supplied token.
-CREATE OR REPLACE FUNCTION public.qr_insert_payment(p_token uuid, p_invoice_id bigint, p_amount numeric, p_method text, p_notes text)
-RETURNS void
-LANGUAGE plpgsql SECURITY DEFINER SET search_path = public AS $$
-DECLARE
-  v_order_id bigint;
-BEGIN
-  SELECT id INTO v_order_id FROM public.orders WHERE qr_token = p_token LIMIT 1;
-  IF v_order_id IS NULL THEN
-    RAISE EXCEPTION 'Invalid or expired QR token.';
-  END IF;
-  IF NOT EXISTS (SELECT 1 FROM public.invoices WHERE id = p_invoice_id AND order_id = v_order_id) THEN
-    RAISE EXCEPTION 'Invoice does not belong to this order.';
-  END IF;
-  INSERT INTO public.payments (invoice_id, amount, method, notes, date)
-  VALUES (p_invoice_id, p_amount, p_method, p_notes, now());
-END;
-$$;
-
--- Creates a brand-new invoice for the order matching the token. order_id
--- is always derived server-side from the token, never trusted from the
--- client payload, so a forged order_id in p_invoice can never attach the
--- new invoice to someone else's order.
-CREATE OR REPLACE FUNCTION public.qr_insert_invoice(p_token uuid, p_invoice jsonb)
-RETURNS bigint
-LANGUAGE plpgsql SECURITY DEFINER SET search_path = public AS $$
-DECLARE
-  v_order_id bigint;
-  v_new_id bigint;
-  v_invoice_number text;
-BEGIN
-  SELECT id INTO v_order_id FROM public.orders WHERE qr_token = p_token LIMIT 1;
-  IF v_order_id IS NULL THEN
-    RAISE EXCEPTION 'Invalid or expired QR token.';
-  END IF;
-
-  v_invoice_number := public.next_invoice_number(COALESCE(p_invoice->>'invoice_number_prefix', 'INV-'));
-
-  INSERT INTO public.invoices (
-    order_id, invoice_number, issue_date, delivery_date, invoice_type,
-    total_amount, advance_payment, extra_payment, balance, paid_status,
-    payment_date, discount_rate, discount_amount, delivery_charge,
-    subtotal_before_discount
-  ) VALUES (
-    v_order_id,
-    v_invoice_number,
-    now(),
-    (p_invoice->>'delivery_date')::timestamptz,
-    'Standard',
-    COALESCE((p_invoice->>'total_amount')::numeric, 0),
-    COALESCE((p_invoice->>'advance_payment')::numeric, 0),
-    COALESCE((p_invoice->>'extra_payment')::numeric, 0),
-    0,
-    'Paid',
-    now(),
-    COALESCE((p_invoice->>'discount_rate')::numeric, 0),
-    COALESCE((p_invoice->>'discount_amount')::numeric, 0),
-    COALESCE((p_invoice->>'delivery_charge')::numeric, 0),
-    COALESCE((p_invoice->>'subtotal_before_discount')::numeric, 0)
-  ) RETURNING id INTO v_new_id;
-
-  RETURN v_new_id;
-END;
-$$;
-
--- Marks the order itself as Paid. Only reachable for the exact order the
--- token belongs to.
-CREATE OR REPLACE FUNCTION public.qr_mark_order_paid(p_token uuid)
-RETURNS void
-LANGUAGE plpgsql SECURITY DEFINER SET search_path = public AS $$
-BEGIN
-  UPDATE public.orders SET status = 'Paid', payment_date = now() WHERE qr_token = p_token;
-  IF NOT FOUND THEN
-    RAISE EXCEPTION 'Invalid or expired QR token.';
-  END IF;
-END;
-$$;
-
-GRANT EXECUTE ON FUNCTION public.qr_get_order(uuid) TO anon, authenticated;
-GRANT EXECUTE ON FUNCTION public.qr_get_customer_name(uuid) TO anon, authenticated;
-GRANT EXECUTE ON FUNCTION public.qr_get_order_items(uuid) TO anon, authenticated;
-GRANT EXECUTE ON FUNCTION public.qr_get_invoice(uuid) TO anon, authenticated;
-GRANT EXECUTE ON FUNCTION public.qr_mark_invoice_paid(uuid, bigint) TO anon, authenticated;
-GRANT EXECUTE ON FUNCTION public.qr_insert_payment(uuid, bigint, numeric, text, text) TO anon, authenticated;
-GRANT EXECUTE ON FUNCTION public.qr_insert_invoice(uuid, jsonb) TO anon, authenticated;
-GRANT EXECUTE ON FUNCTION public.qr_mark_order_paid(uuid) TO anon, authenticated;
 
 -- ============================================================
 -- DEPLOY NOTES — read before running
@@ -342,7 +207,10 @@ GRANT EXECUTE ON FUNCTION public.qr_mark_order_paid(uuid) TO anon, authenticated
 --    Not included here automatically — keep your old records until
 --    you've verified the new login flow works for every staff member.
 --
--- 4. Test the confirm.html QR flow against a real order after
---    deploying — it now depends on the qr_* functions above instead
---    of direct table access.
+-- 4. If you paste this whole script into the Supabase SQL Editor and
+--    click Run, Postgres treats it as ONE implicit transaction — if
+--    any statement errors, everything from the same run rolls back,
+--    including statements that looked like they succeeded first. If
+--    you ever see an error partway through, assume none of it took
+--    effect and re-run the corrected script in full.
 -- ============================================================

@@ -45,17 +45,22 @@ In Supabase Dashboard → **SQL Editor**:
    `next_invoice_number` sequences this migration depends on).
 2. `supabase_auth_migration.sql` — the new migration in this bundle. This
    drops every existing RLS policy and replaces it with the
-   authenticated/admin-scoped versions, and adds the `qr_*` functions the
-   public delivery-confirmation page now uses.
+   authenticated/admin-scoped versions.
 
-Do **not** skip straight to step 2 without step 1 — `qr_insert_invoice`
-calls `next_invoice_number()`, which won't exist yet otherwise.
+Do **not** skip straight to step 2 without step 1.
+
+Note: if you paste the whole file into the SQL Editor and click Run,
+Postgres treats it as one implicit transaction — an error partway through
+rolls back everything in that run, including statements that looked like
+they'd already succeeded. If you ever hit an error, assume nothing took
+effect and re-run the corrected script in full rather than just the fixed
+part.
 
 ## 4. Redeploy the site
 
 Push this bundle (or trigger a new Netlify deploy) so `package.json`
 installs `@supabase/supabase-js` for the new function, and the updated
-`db.js` / `app.js` / `index.html` / `settings.js` / `confirm.html` ship.
+`db.js` / `app.js` / `index.html` / `settings.js` ship.
 
 ## 5. Create your first admin account
 
@@ -114,8 +119,6 @@ didn't have email addresses. Set new passwords for everyone.
 
 - Log in as each role (admin / user / driver) and confirm the sidebar and
   permissions look right.
-- Open `confirm.html?token=<a real qr_token from an order>` and confirm the
-  delivery-confirmation flow still works end-to-end for an unpaid order.
 - Once you're confident nothing still depends on the old table, drop it:
   ```sql
   DROP TABLE IF EXISTS public.users;

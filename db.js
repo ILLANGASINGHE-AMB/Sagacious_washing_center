@@ -520,94 +520,9 @@ const DB = {
     await _q(_sb.from('deductions').delete().eq('id', id));
   },
 
-  // ── QR Delivery Confirmation ───────────────
-  // orders/customers/invoices/payments now require an authenticated session
-  // under RLS, but this page is deliberately used by customers with no login
-  // at all — they only have a one-time, cryptographically random link. Every
-  // call below goes through a SECURITY DEFINER Postgres function
-  // (supabase_auth_migration.sql) that independently re-checks the token
-  // against the specific row it touches, so the anon key can call these
-  // without regaining broad table access.
-  async getOrderByToken(token) {
-    const rows = await _q(_sb.rpc('qr_get_order', { p_token: token }));
-    const r = rows[0] || null;
-    if (r) { r.status = (r.status === 'Paid' ? 'Paid' : r.status); }
-    return r;
-  },
-  async getCustomerNameByToken(token) {
-    const { data, error } = await _sb.rpc('qr_get_customer_name', { p_token: token });
-    if (error) { console.error('Supabase error:', error); throw error; }
-    return data;
-  },
-  async getOrderItemsByToken(token) {
-    return _q(_sb.rpc('qr_get_order_items', { p_token: token }));
-  },
-  async markOrderReceivedByQR(token) {
-    // 1. Find the order by token
-    const order = await DB.getOrderByToken(token);
-    if (!order) throw new Error('Invalid or expired QR token.');
-    if (order.status === 'Paid') return { already_paid: true, order };
-
-    const now = new Date().toISOString();
-
-    // 2. Find or create the invoice (mirrors processFullPayment in app.js)
-    const invRows = await _q(_sb.rpc('qr_get_invoice', { p_token: token }));
-    let inv = invRows[0] || null;
-
-    if (inv) {
-      // Invoice exists — mark it paid
-      await _q(_sb.rpc('qr_mark_invoice_paid', { p_token: token, p_invoice_id: inv.id }));
-      // Record a payment entry
-      await _q(_sb.rpc('qr_insert_payment', {
-        p_token: token,
-        p_invoice_id: inv.id,
-        p_amount: Math.max(0, (inv.balance || 0)),
-        p_method: 'Cash on Delivery',
-        p_notes: 'Confirmed via QR delivery scan'
-      }));
-    } else {
-      // No invoice yet — create one (mirrors saveNewOrder Paid path).
-      // The invoice number itself comes from the atomic next_invoice_number()
-      // sequence server-side — no client-side max-scan race condition here.
-      const mm = String(new Date().getMonth() + 1).padStart(2, '0');
-      const yy = String(new Date().getFullYear()).slice(-2);
-      const prefix = `INV-${mm}${yy}-`;
-
-      const orderItemRows = await DB.getOrderItemsByToken(token);
-      const itemsSubtotal = (orderItemRows || []).reduce((s, i) => s + (i.subtotal || 0), 0);
-
-      const createdInvId = await _q(_sb.rpc('qr_insert_invoice', {
-        p_token: token,
-        p_invoice: {
-          invoice_number_prefix:    prefix,
-          delivery_date:            order.delivery_date,
-          total_amount:             order.total_amount,
-          advance_payment:          order.advance_payment || 0,
-          extra_payment:            order.extra_payment || 0,
-          discount_rate:            order.discount_rate || 0,
-          discount_amount:          order.discount_amount || 0,
-          delivery_charge:          order.delivery_charge || 0,
-          subtotal_before_discount: itemsSubtotal
-        }
-      }));
-
-      const balanceDue = Math.max(0, (order.total_amount || 0) - (order.advance_payment || 0));
-      if (balanceDue > 0) {
-        await _q(_sb.rpc('qr_insert_payment', {
-          p_token: token,
-          p_invoice_id: createdInvId,
-          p_amount: balanceDue,
-          p_method: 'Cash on Delivery',
-          p_notes: 'Confirmed via QR delivery scan'
-        }));
-      }
-    }
-
-    // 3. Update order to Paid
-    await _q(_sb.rpc('qr_mark_order_paid', { p_token: token }));
-
-    return { already_paid: false, order };
-  },
+  // QR delivery-confirmation feature removed by request (confirm.html and
+  // its getOrderByToken/markOrderReceivedByQR helpers deleted — nothing
+  // else in the app referenced them).
 
   async seedDemoData() {
     // Login accounts are no longer seeded here — create the first admin

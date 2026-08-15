@@ -72,7 +72,6 @@ Sagacious_washing_center/
 ├── ui.js             # UI components, modals, toasts & formatters
 ├── gemini.js         # SAGA AI chat assistant integration
 ├── keyboard.js       # POS keyboard shortcuts handler
-├── confirm.html      # Delivery confirmation page
 ├── quotation.md      # Quotation document layout specification
 ├── netlify.toml      # Netlify deployment & build configuration
 └── inject-env.js     # Build script for Netlify environment variables
