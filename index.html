@@ -67,6 +67,10 @@
       transition: width 0.3s;
       position: fixed; top: 0; left: 0; bottom: 0; z-index: 100;
       box-shadow: 4px 0 24px rgba(0,0,0,0.18);
+      /* top:0 + bottom:0 already clamps this to exactly the viewport height —
+         `overflow:hidden` makes sure nothing (see nav min-height fix below)
+         can ever visually spill past that and get clipped below the fold. */
+      overflow: hidden;
     }
     #sidebar.collapsed { width: 64px; }
     .sidebar-logo {
@@ -87,7 +91,19 @@
       line-height: 1.3; white-space: nowrap;
     }
     .sidebar-logo .logo-sub { color: var(--accent); font-size: 10px; font-weight: 500; letter-spacing: 1px; text-transform: uppercase; }
-    nav.sidebar-nav { flex: 1; padding: 12px 0; overflow-y: auto; }
+    /* min-height:0 is the fix: flex items default to a CONTENT-based minimum
+       height that overrides flex-shrink/overflow, so without it this nav
+       list refused to shrink below its full, unscrolled height on shorter
+       screens — pushing the sidebar-footer (Logout) below the fold instead
+       of scrolling just the nav links internally like `flex:1;
+       overflow-y:auto` was meant to. */
+    nav.sidebar-nav { flex: 1; min-height: 0; padding: 12px 0; overflow-y: auto; }
+    /* Slim, unobtrusive scrollbar for the nav list, since it's now the one
+       thing inside the sidebar that can actually scroll. */
+    nav.sidebar-nav::-webkit-scrollbar { width: 5px; }
+    nav.sidebar-nav::-webkit-scrollbar-track { background: transparent; }
+    nav.sidebar-nav::-webkit-scrollbar-thumb { background: rgba(255,255,255,0.18); border-radius: 4px; }
+    nav.sidebar-nav::-webkit-scrollbar-thumb:hover { background: rgba(255,255,255,0.3); }
     nav.sidebar-nav a {
       display: flex; align-items: center; gap: 12px;
       padding: 11px 18px; color: rgba(255,255,255,0.65);
