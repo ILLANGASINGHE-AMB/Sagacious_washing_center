@@ -191,16 +191,12 @@
         document.getElementById('order-batch-id').textContent = currentOrder.batch_id || '—';
         document.getElementById('order-total-amount').textContent = formatLKR(currentOrder.total_amount);
 
-        // Fetch customer name
-        if (currentOrder.customer_id) {
-          const cust = await DB.getCustomer(currentOrder.customer_id);
-          document.getElementById('order-cust-name').textContent = cust ? cust.hotel_name : 'Valued Customer';
-        } else {
-          document.getElementById('order-cust-name').textContent = 'Valued Customer';
-        }
+        // Fetch customer name (token-scoped lookup — this page has no login)
+        const custName = await DB.getCustomerNameByToken(currentToken);
+        document.getElementById('order-cust-name').textContent = custName || 'Valued Customer';
 
-        // Fetch order items
-        const items = await DB.getOrderItems(currentOrder.id);
+        // Fetch order items (token-scoped lookup — this page has no login)
+        const items = await DB.getOrderItemsByToken(currentToken);
         const itemsContainer = document.getElementById('order-items-list');
         if (items && items.length > 0) {
           itemsContainer.innerHTML = items.map(item => `

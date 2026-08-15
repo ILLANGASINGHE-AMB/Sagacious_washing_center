@@ -171,36 +171,78 @@ const DB = {
     return rows[0] || null;
   },
 
-  // ── Users ─────────────────────────────────
-  async getUsers() { return _q(_sb.from('users').select('*').order('username')); },
-  async addUser(data) {
-    const rows = await _q(_sb.from('users').insert(data).select());
-    return rows[0].id;
+  // ── Auth (real Supabase Auth — replaces the old plaintext `users` table login) ──
+  // The `users` table is no longer used for authentication. Login, sessions, and
+  // password storage/hashing are all handled by Supabase Auth itself. Role and
+  // display info live in each auth user's user_metadata, set via the
+  // netlify/functions/admin-users.js server-side function (the only place with
+  // permission to create/edit/delete accounts — never done from the browser).
+  async signIn(email, password) {
+    const { data, error } = await _sb.auth.signInWithPassword({ email, password });
+    if (error) throw error;
+    return data.session;
   },
-  async updateUser(id, data) { await _q(_sb.from('users').update(data).eq('id', id)); },
-  async deleteUser(id) { await _q(_sb.from('users').delete().eq('id', id)); },
+  async signOut() {
+    await _sb.auth.signOut();
+  },
+  async getSession() {
+    const { data, error } = await _sb.auth.getSession();
+    if (error) { console.error('getSession error:', error); return null; }
+    return data.session;
+  },
+  onAuthStateChange(callback) {
+    return _sb.auth.onAuthStateChange((event, session) => callback(event, session));
+  },
+  sessionToCurrentUser(session) {
+    if (!session || !session.user) return null;
+    const u = session.user;
+    const meta = u.user_metadata || {};
+    return {
+      id: u.id,
+      email: u.email,
+      username: meta.username || u.email,
+      role: meta.role || 'user',
+      display_name: meta.display_name || meta.username || u.email
+    };
+  },
+
+  // ── User management — proxied through the admin-only Netlify function.
+  //    These calls all require the caller's current session to belong to an
+  //    admin (enforced server-side; the function checks the access token).
+  async _callAdminUsersFn(action, payload) {
+    const session = await DB.getSession();
+    const headers = { 'Content-Type': 'application/json' };
+    if (session?.access_token) headers['Authorization'] = `Bearer ${session.access_token}`;
+    const res = await fetch('/.netlify/functions/admin-users', {
+      method: 'POST',
+      headers,
+      body: JSON.stringify({ action, payload })
+    });
+    const body = await res.json().catch(() => ({}));
+    if (!res.ok) throw new Error(body.error || `Admin user request failed (HTTP ${res.status})`);
+    return body;
+  },
+  async getUsers() {
+    const { users } = await DB._callAdminUsersFn('list');
+    return users || [];
+  },
   async getUser(id) {
-    const rows = await _q(_sb.from('users').select('*').eq('id', id).limit(1));
-    return rows[0] || null;
+    const users = await DB.getUsers();
+    return users.find(u => String(u.id) === String(id)) || null;
   },
   async getUserByUsername(username) {
-    const rows = await _q(_sb.from('users').select('*').ilike('username', username).limit(1));
-    return rows[0] || null;
+    const users = await DB.getUsers();
+    return users.find(u => (u.username || '').toLowerCase() === String(username).toLowerCase()) || null;
   },
-  async ensureDefaultUsers() {
-    // Database users are seeded directly in Supabase table.
-    // Hardcoded client-side password fallbacks have been removed for security.
-    return true;
+  async addUser({ email, password, username, display_name, role }) {
+    const result = await DB._callAdminUsersFn('create', { email, password, username, display_name, role });
+    return result.id;
   },
-  async validateLogin(username, password) {
-    try {
-      const rows = await _q(_sb.from('users').select('*').ilike('username', username).eq('password', password).limit(1));
-      if (rows && rows[0]) return rows[0];
-    } catch(e) {
-      console.error('Login validation error:', e);
-    }
-    // Fail closed: No hardcoded fallback logins
-    return null;
+  async updateUser(id, data) {
+    await DB._callAdminUsersFn('update', { id, ...data });
+  },
+  async deleteUser(id) {
+    await DB._callAdminUsersFn('delete', { id });
   },
 
   // ── ID Generators — Atomic RPC Sequence with fallback ──
@@ -248,26 +290,25 @@ const DB = {
   },
 
   // ── Export / Import ───────────────────────
-  async exportAll(stripPasswords = true) {
-    const [customers, drivers, orders, order_items, invoices, payments, settings, items, deductions, rawUsers, chemicals, chemical_ledger, general_expenses, trips] = await Promise.all([
+  async exportAll() {
+    // Note: login accounts are no longer exported here. They live in Supabase
+    // Auth (not a regular table the anon/authenticated client can read), and
+    // are managed exclusively through Settings > User Management, which calls
+    // the admin-only Netlify function. This avoids ever putting credentials
+    // in a downloadable backup file.
+    const [customers, drivers, orders, order_items, invoices, payments, settings, items, deductions, chemicals, chemical_ledger, general_expenses, trips] = await Promise.all([
       DB.getCustomers(), DB.getDrivers(), DB.getOrders(),
       _q(_sb.from('order_items').select('*')),
       DB.getInvoices(), DB.getPayments(),
       _q(_sb.from('settings').select('*')),
       DB.getItems(),
       _q(_sb.from('deductions').select('*')),
-      _q(_sb.from('users').select('*')),
       DB.getChemicals(),
       DB.getChemicalLedger(),
       DB.getGeneralExpenses(),
       DB.getTrips()
     ]);
-    const users = (rawUsers || []).map(u => {
-      const copy = { ...u };
-      if (stripPasswords) delete copy.password;
-      return copy;
-    });
-    return { customers, drivers, orders, order_items, invoices, payments, settings, items, deductions, users, chemicals, chemical_ledger, general_expenses, trips, exported_at: new Date().toISOString() };
+    return { customers, drivers, orders, order_items, invoices, payments, settings, items, deductions, chemicals, chemical_ledger, general_expenses, trips, exported_at: new Date().toISOString() };
   },
   async addOrderItemsBatch(dataArray) {
     if (!dataArray || dataArray.length === 0) return [];
@@ -305,8 +346,10 @@ const DB = {
     await _q(_sb.from('customers').delete().neq('id', 0));
     await _q(_sb.from('drivers').delete().neq('id', 0));
     await _q(_sb.from('items').delete().neq('id', 0));
-    await _q(_sb.from('users').delete().neq('id', 0));
     await _q(_sb.from('settings').delete().neq('key', 'DOES_NOT_EXIST'));
+    // Note: the legacy `users` table is no longer touched here — it's RLS-locked
+    // post-migration and login accounts live in Supabase Auth now, managed only
+    // via Settings > User Management (admin-users.js), never via backup/restore.
 
     // 2. Mapping dictionaries
     const customerMap = {};
@@ -320,15 +363,9 @@ const DB = {
       await _q(_sb.from('settings').insert(data.settings));
     }
 
-    // 4. Users
-    if (data.users?.length) {
-      const usersToInsert = data.users.map(r => {
-        const copy = { ...r };
-        delete copy.id;
-        return copy;
-      });
-      await _q(_sb.from('users').insert(usersToInsert));
-    }
+    // 4. Users — intentionally skipped. Older backup files may still contain a
+    //    `users` array from before the Supabase Auth migration; it's ignored on
+    //    purpose since that table no longer governs login and is RLS-locked.
 
     // 5. Items
     if (data.items?.length) {
@@ -477,99 +514,98 @@ const DB = {
   },
 
   // ── QR Delivery Confirmation ───────────────
+  // orders/customers/invoices/payments now require an authenticated session
+  // under RLS, but this page is deliberately used by customers with no login
+  // at all — they only have a one-time, cryptographically random link. Every
+  // call below goes through a SECURITY DEFINER Postgres function
+  // (supabase_auth_migration.sql) that independently re-checks the token
+  // against the specific row it touches, so the anon key can call these
+  // without regaining broad table access.
   async getOrderByToken(token) {
-    const rows = await _q(_sb.from('orders').select('*').eq('qr_token', token).limit(1));
+    const rows = await _q(_sb.rpc('qr_get_order', { p_token: token }));
     const r = rows[0] || null;
     if (r) { r.status = (r.status === 'Paid' ? 'Paid' : r.status); }
     return r;
   },
+  async getCustomerNameByToken(token) {
+    const { data, error } = await _sb.rpc('qr_get_customer_name', { p_token: token });
+    if (error) { console.error('Supabase error:', error); throw error; }
+    return data;
+  },
+  async getOrderItemsByToken(token) {
+    return _q(_sb.rpc('qr_get_order_items', { p_token: token }));
+  },
   async markOrderReceivedByQR(token) {
     // 1. Find the order by token
-    const rows = await _q(_sb.from('orders').select('*').eq('qr_token', token).limit(1));
-    const order = rows[0] || null;
+    const order = await DB.getOrderByToken(token);
     if (!order) throw new Error('Invalid or expired QR token.');
     if (order.status === 'Paid') return { already_paid: true, order };
 
     const now = new Date().toISOString();
 
     // 2. Find or create the invoice (mirrors processFullPayment in app.js)
-    const invRows = await _q(_sb.from('invoices').select('*').eq('order_id', order.id).limit(1));
+    const invRows = await _q(_sb.rpc('qr_get_invoice', { p_token: token }));
     let inv = invRows[0] || null;
 
     if (inv) {
       // Invoice exists — mark it paid
-      await _q(_sb.from('invoices').update({
-        balance: 0,
-        paid_status: 'Paid',
-        payment_date: now
-      }).eq('id', inv.id));
+      await _q(_sb.rpc('qr_mark_invoice_paid', { p_token: token, p_invoice_id: inv.id }));
       // Record a payment entry
-      await _q(_sb.from('payments').insert({
-        invoice_id: inv.id,
-        amount: Math.max(0, (inv.balance || 0)),
-        method: 'Cash on Delivery',
-        notes: 'Confirmed via QR delivery scan',
-        date: now
+      await _q(_sb.rpc('qr_insert_payment', {
+        p_token: token,
+        p_invoice_id: inv.id,
+        p_amount: Math.max(0, (inv.balance || 0)),
+        p_method: 'Cash on Delivery',
+        p_notes: 'Confirmed via QR delivery scan'
       }));
     } else {
-      // No invoice yet — create one (mirrors saveNewOrder Paid path)
+      // No invoice yet — create one (mirrors saveNewOrder Paid path).
+      // The invoice number itself comes from the atomic next_invoice_number()
+      // sequence server-side — no client-side max-scan race condition here.
       const mm = String(new Date().getMonth() + 1).padStart(2, '0');
       const yy = String(new Date().getFullYear()).slice(-2);
       const prefix = `INV-${mm}${yy}-`;
-      const invNumRows = await _q(_sb.from('invoices').select('invoice_number').like('invoice_number', `${prefix}%`));
-      let maxSeq = 0;
-      (invNumRows || []).forEach(r => {
-        const parts = (r.invoice_number || '').split('-');
-        const n = parseInt(parts[parts.length - 1]) || 0;
-        if (n > maxSeq) maxSeq = n;
-      });
-      const invNum = `${prefix}${String(maxSeq + 1).padStart(4, '0')}`;
 
-      const orderItemRows = await _q(_sb.from('order_items').select('*').eq('order_id', order.id));
+      const orderItemRows = await DB.getOrderItemsByToken(token);
       const itemsSubtotal = (orderItemRows || []).reduce((s, i) => s + (i.subtotal || 0), 0);
 
-      const newInvId = await _q(_sb.from('invoices').insert({
-        order_id:                 order.id,
-        invoice_number:           invNum,
-        issue_date:               now,
-        delivery_date:            order.delivery_date,
-        invoice_type:             'Standard',
-        total_amount:             order.total_amount,
-        advance_payment:          order.advance_payment || 0,
-        extra_payment:            order.extra_payment || 0,
-        balance:                  0,
-        paid_status:              'Paid',
-        payment_date:             now,
-        discount_rate:            order.discount_rate || 0,
-        discount_amount:          order.discount_amount || 0,
-        delivery_charge:          order.delivery_charge || 0,
-        subtotal_before_discount: itemsSubtotal
-      }).select());
+      const createdInvId = await _q(_sb.rpc('qr_insert_invoice', {
+        p_token: token,
+        p_invoice: {
+          invoice_number_prefix:    prefix,
+          delivery_date:            order.delivery_date,
+          total_amount:             order.total_amount,
+          advance_payment:          order.advance_payment || 0,
+          extra_payment:            order.extra_payment || 0,
+          discount_rate:            order.discount_rate || 0,
+          discount_amount:          order.discount_amount || 0,
+          delivery_charge:          order.delivery_charge || 0,
+          subtotal_before_discount: itemsSubtotal
+        }
+      }));
 
-      const createdInvId = newInvId[0].id;
       const balanceDue = Math.max(0, (order.total_amount || 0) - (order.advance_payment || 0));
       if (balanceDue > 0) {
-        await _q(_sb.from('payments').insert({
-          invoice_id: createdInvId,
-          amount:     balanceDue,
-          method:     'Cash on Delivery',
-          notes:      'Confirmed via QR delivery scan',
-          date:       now
+        await _q(_sb.rpc('qr_insert_payment', {
+          p_token: token,
+          p_invoice_id: createdInvId,
+          p_amount: balanceDue,
+          p_method: 'Cash on Delivery',
+          p_notes: 'Confirmed via QR delivery scan'
         }));
       }
     }
 
     // 3. Update order to Paid
-    await _q(_sb.from('orders').update({
-      status:       'Paid',
-      payment_date: now
-    }).eq('id', order.id));
+    await _q(_sb.rpc('qr_mark_order_paid', { p_token: token }));
 
     return { already_paid: false, order };
   },
 
   async seedDemoData() {
-    await DB.ensureDefaultUsers();
+    // Login accounts are no longer seeded here — create the first admin
+    // account via Settings > User Management (or the one-time bootstrap
+    // flow described in AUTH_MIGRATION_GUIDE.md) instead.
     const existing = await DB.getSetting('company_name');
     if (!existing) {
       const defaults = [

@@ -1,0 +1,3 @@
+// Auto-generated configuration file
+window.SUPABASE_URL = "https://mzxpdirmsegsgkrunerk.supabase.co";
+window.SUPABASE_ANON_KEY = "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6Im16eHBkaXJtc2Vnc2drcnVuZXJrIiwicm9sZSI6ImFub24iLCJpYXQiOjE3ODM0ODIyMDYsImV4cCI6MjA5OTA1ODIwNn0.8qwcNal0BrNaLd7FBg-Om_ZMLbPi_VA_dxFnha-Ma4E";

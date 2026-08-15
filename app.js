@@ -15,42 +15,57 @@ window.addEventListener('beforeunload', (e) => {
 });
 
 // ─────────────────────────────────────────────
-// AUTH — role-based login
+// AUTH — real Supabase Auth login (role-based)
 // ─────────────────────────────────────────────
 async function doLogin() {
-  const username = document.getElementById('login-user').value.trim();
+  const email = document.getElementById('login-user').value.trim();
   const password = document.getElementById('login-pass').value;
-  if (!username || !password) return toast('Enter username and password', 'error');
+  if (!email || !password) return toast('Enter email and password', 'error');
 
   try {
-    // Ensure default users exist (in case DB is fresh or migrated)
-    await DB.ensureDefaultUsers();
-
-    const user = await DB.validateLogin(username, password);
-    if (!user) return toast('Invalid username or password', 'error');
-
-    currentUser = { id: user.id, username: user.username, role: user.role, display_name: user.display_name || user.username };
-    document.getElementById('login-screen').style.display = 'none';
-    document.getElementById('app').style.display = 'flex';
-
-    await DB.logAction('User Login', `User "${currentUser.display_name}" logged in successfully`, { username: user.username, role: user.role }, 'User');
-
-    // Update topbar role chip
-    const roleNames = { admin: 'Admin', user: 'User', driver: 'Driver' };
-    const avatar = document.getElementById('topbar-avatar');
-    if (avatar) {
-      const roleText = roleNames[currentUser.role] || 'User';
-      avatar.textContent = roleText;
-      avatar.title       = `${currentUser.display_name} (${roleText})`;
-    }
-    updateRoleChip();
-    initApp();
-    setTimeout(initGlobalSearch,300);
+    const session = await DB.signIn(email, password);
+    if (!session) return toast('Invalid email or password', 'error');
+    await enterAppWithSession(session);
   } catch (err) {
     console.error('Login error:', err);
-    toast('Database error: ' + (err.message || err), 'error');
+    toast(err.message || 'Invalid email or password', 'error');
   }
 }
+
+// Shared by both the login button and automatic session restore on page load
+async function enterAppWithSession(session) {
+  currentUser = DB.sessionToCurrentUser(session);
+  if (!currentUser) return false;
+
+  document.getElementById('login-screen').style.display = 'none';
+  document.getElementById('app').style.display = 'flex';
+
+  await DB.logAction('User Login', `User "${currentUser.display_name}" logged in successfully`, { username: currentUser.username, role: currentUser.role }, 'User');
+
+  const roleNames = { admin: 'Admin', user: 'User', driver: 'Driver' };
+  const avatar = document.getElementById('topbar-avatar');
+  if (avatar) {
+    const roleText = roleNames[currentUser.role] || 'User';
+    avatar.textContent = roleText;
+    avatar.title       = `${currentUser.display_name} (${roleText})`;
+  }
+  updateRoleChip();
+  initApp();
+  setTimeout(initGlobalSearch, 300);
+  return true;
+}
+
+// On page load, Supabase Auth may already have a valid persisted session
+// (it keeps its own storage independent of anything this app writes) — skip
+// straight to the app instead of forcing a re-login every visit.
+(async function restoreSessionOnLoad() {
+  try {
+    const session = await DB.getSession();
+    if (session) await enterAppWithSession(session);
+  } catch (e) {
+    console.warn('Session restore failed:', e);
+  }
+})();
 
 document.getElementById('login-pass').addEventListener('keydown', e => { if (e.key === 'Enter') doLogin(); });
 
@@ -121,6 +136,7 @@ function doLogout() {
     if (currentUser) {
       await DB.logAction('User Logout', `User "${currentUser.display_name}" logged out`, { username: currentUser.username }, 'User');
     }
+    await DB.signOut();
     currentUser = null;
     document.getElementById('login-user').value = '';
     document.getElementById('login-pass').value = '';

@@ -1,6 +1,7 @@
 [build]
   command = "node inject-env.js"
   publish = "."
+  functions = "netlify/functions"
 
 [[redirects]]
   from = "/*"

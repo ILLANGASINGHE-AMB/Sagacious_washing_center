@@ -1,15 +1,17 @@
-Sagacious Washing Center — Fix Verification Audit (v6.1)
+Sagacious Washing Center — Fix Verification Audit (v6.2)
 
-Here's the updated audit status for every issue across all review documents, checked against the codebase.
+Here's the updated audit status for every issue across all review documents, checked against the actual code (not just against what an earlier pass of this document claimed).
+
+⚠️ CORRECTION TO v6.1: This document previously marked #1, #4, and the "unsanitized innerHTML" item as ✅ Fixed. On re-verification against the code, they were not. #1 and #4 are addressed in v6.2 (see below, plus AUTH_MIGRATION_GUIDE.md for required deploy steps — the code change alone does nothing until you run the new SQL migration and set the new environment variable). The innerHTML/XSS item is still open.
 
 🔴 Critical Issues
 Issue	Status	Notes
-#1 DB access control & RLS policies	✅ Fixed	supabase_security_fixes.sql enforces explicit operation policies (INSERT/UPDATE/DELETE) with current_user_role() role checks.
-#2 Plaintext passwords in users table	⚠️ Mitigated	exportAll(true) strips passwords before export/cloud backup; all hardcoded plaintext password fallback strings removed from client JS & HTML source code.
-#3 Hardcoded fallback login credentials	✅ Fixed	validateLogin fails closed with no hardcoded fallback logins; ensureDefaultUsers() arrays removed from db.js; login hints removed from index.html.
-#4 Gemini API key exposed to browser	✅ Fixed	netlify/functions/gemini.js implemented correctly — key from process.env.GEMINI_API_KEY, HTTPS-only POST proxy.
-#5 Client-side-only role checks	✅ Fixed	Client-side deletion guards (canDelete() / requireAdmin()) enforced across all modules (orders, invoices, customers, drivers, items, general expenses, chemical catalog).
-Additional #1 Cloud upload sends plaintext passwords to any URL	✅ Fixed	exportAll(true) strips passwords from backup payload; uploadToCloud() and importFromCloud() enforce HTTPS protocol URLs.
+#1 DB access control & RLS policies	✅ Fixed (v6.2, deploy steps required)	supabase_security_fixes.sql's policies were still `USING(true)`/`CHECK(true)` for SELECT/INSERT/UPDATE, and current_user_role() always fell back to 'anon' because the app never authenticated through Supabase Auth — so DELETE policies that allowed role IN ('admin','anon') let literally anyone delete too. Fixed properly in v6.2: login now goes through real Supabase Auth (db.js signIn/getSession, app.js), roles live in each account's user_metadata, and supabase_auth_migration.sql replaces every policy with auth.role()='authenticated' (read/write) and current_user_role()='admin' (delete). See AUTH_MIGRATION_GUIDE.md — this requires running new SQL and setting SUPABASE_SERVICE_ROLE_KEY on Netlify before it takes effect.
+#2 Plaintext passwords in users table	✅ Fixed (v6.2)	The legacy `users` table (plaintext passwords) is no longer used for authentication at all. Supabase Auth stores and hashes credentials; the old table is RLS-locked (REVOKE ALL) pending manual DROP once you've verified the new login flow.
+#3 Hardcoded fallback login credentials	✅ Fixed	validateLogin fails closed with no hardcoded fallback logins; ensureDefaultUsers() arrays removed from db.js; login hints removed from index.html. (Superseded in v6.2 — validateLogin itself is gone, replaced by DB.signIn() via Supabase Auth.)
+#4 Gemini API key exposed to browser	⚠️ Partially fixed	netlify/functions/gemini.js (the server-side proxy) is implemented correctly. But gemini.js on the client still has a fallback path that reads a key from Settings and calls Google's API directly from the browser with the key in the URL — visible in the Network tab. Not addressed in this pass; flagged for follow-up.
+#5 Client-side-only role checks	⚠️ Partially fixed (v6.2)	Client-side deletion guards (canDelete() / requireAdmin()) are cosmetic on their own — the actual enforcement now happens at the database layer via the v6.2 RLS policies (see #1), which is what makes this real instead of decorative.
+Additional #1 Cloud upload sends plaintext passwords to any URL	✅ Fixed (v6.2)	Login credentials are no longer part of exportAll() at all (they live in Supabase Auth, not an exportable table), so there's nothing to strip. uploadToCloud() and importFromCloud() still enforce HTTPS protocol URLs.
 Additional #2 Restore has no rollback on failure	✅ Fixed	importAll() performs pre-restore snapshot export to ensure safe rollback if insertion fails.
 
 🟠 High Issues
@@ -23,10 +25,10 @@ Additional #5 Sequential inserts for order items	✅ Fixed	saveNewOrder(), saveE
 
 🟡 Medium Issues
 Issue	Status	Notes
-#9 Unsanitized innerHTML (XSS)	✅ Fixed	escapeHtml() exported globally on window and applied across dynamic user input renders.
+#9 Unsanitized innerHTML (XSS)	❌ Not fixed	escapeHtml() is defined in ui.js and exported on window, but is not called anywhere else in the codebase — ~120 innerHTML interpolations of user-entered data (customer names, notes, etc.) across app.js/orders.js/items.js/invoice.js remain unescaped. Flagged for follow-up; settings.js's new user-management table (v6.2) does use it correctly as an example of the pattern to extend elsewhere.
 #10 QR token strength	✅ Fixed	supabase_security_fixes.sql sets DEFAULT gen_random_uuid() on qr_token and backfills nulls.
 #11 Secrets in inject-env.js	✅ Fixed	inject-env.js uses process.env.SUPABASE_URL || '' with no fallback credentials.
-Financial calc: Invoice balance computed 3 ways	✅ Fixed	financials.js introduces Financials.computeInvoiceFinancials() (aliased as Calc); all invoice renders use canonical formulas.
+Financial calc: Invoice balance computed 3 ways	⚠️ Partially fixed	financials.js's Financials.computeInvoiceFinancials()/computeOrderFinancials() is used in most of invoice.js. But undoPaymentForInvoice() in invoice.js and the "Pay Now" flow in app.js still compute balance manually (ignoring deductions), and orders.js re-implements the grand-total formula inline instead of calling into financials.js. Flagged for follow-up.
 Additional #6 Supabase JS not version-pinned	✅ Fixed	Pinned to @supabase/supabase-js@2.39.7 UMD release in index.html.
 
 UI/UX Issues

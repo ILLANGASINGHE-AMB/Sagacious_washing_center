@@ -258,23 +258,24 @@ async function loadUsersTable() {
   el.innerHTML = `
     <div class="table-wrap">
       <table>
-        <thead><tr><th>Username</th><th>Display Name</th><th>Role</th><th>Actions</th></tr></thead>
+        <thead><tr><th>Username</th><th>Email</th><th>Display Name</th><th>Role</th><th>Actions</th></tr></thead>
         <tbody>
           ${users.map(u => `<tr>
-            <td><strong>${u.username}</strong></td>
-            <td>${u.display_name || '—'}</td>
+            <td><strong>${escapeHtml(u.username)}</strong></td>
+            <td>${escapeHtml(u.email || '—')}</td>
+            <td>${escapeHtml(u.display_name || '—')}</td>
             <td>
               <span class="badge ${u.role==='admin'?'badge-yellow':'badge-blue'}" style="text-transform:capitalize;">
-                ${u.role==='admin'?'<i class="fas fa-crown" style="font-size:0.85em;margin-right:3px;"></i>':''} ${u.role}
+                ${u.role==='admin'?'<i class="fas fa-crown" style="font-size:0.85em;margin-right:3px;"></i>':''} ${escapeHtml(u.role)}
               </span>
             </td>
             <td><div style="display:flex;gap:6px;">
-              <button class="btn btn-primary btn-sm" onclick="showEditUserModal(${u.id})"><i class="fas fa-edit"></i></button>
-              ${u.username !== currentUser?.username
-                ? `<button class="btn btn-danger btn-sm" onclick="deleteUserConfirm(${u.id},'${u.username}')"><i class="fas fa-trash"></i></button>`
+              <button class="btn btn-primary btn-sm" onclick="showEditUserModal('${u.id}')"><i class="fas fa-edit"></i></button>
+              ${u.id !== currentUser?.id
+                ? `<button class="btn btn-danger btn-sm" onclick="deleteUserConfirm('${u.id}','${escapeHtml(u.username)}')"><i class="fas fa-trash"></i></button>`
                 : `<button class="btn btn-secondary btn-sm" disabled title="Cannot delete current user"><i class="fas fa-lock"></i></button>`}
             </div></td>
-          </tr>`).join('') || `<tr><td colspan="4" style="text-align:center;color:var(--text-muted);padding:20px;">No users</td></tr>`}
+          </tr>`).join('') || `<tr><td colspan="5" style="text-align:center;color:var(--text-muted);padding:20px;">No users</td></tr>`}
         </tbody>
       </table>
     </div>`;
@@ -282,16 +283,19 @@ async function loadUsersTable() {
 
 function showAddUserModal() {
   createModal('add-user-modal', 'Add User', `
+    <div class="form-group"><label class="form-label">Email * <span style="color:var(--text-muted);font-weight:400;">(used to sign in)</span></label>
+      <input type="email" class="form-input" id="u-email" placeholder="e.g. john@company.com"/></div>
     <div class="form-group"><label class="form-label">Username *</label>
       <input class="form-input" id="u-username" placeholder="e.g. john"/></div>
     <div class="form-group"><label class="form-label">Display Name</label>
       <input class="form-input" id="u-display" placeholder="e.g. John Silva"/></div>
-    <div class="form-group"><label class="form-label">Password *</label>
+    <div class="form-group"><label class="form-label">Password * <span style="color:var(--text-muted);font-weight:400;">(min 6 characters)</span></label>
       <input type="password" class="form-input" id="u-pass" placeholder="Set password"/></div>
     <div class="form-group"><label class="form-label">Role</label>
       <select class="form-input form-select" id="u-role">
         <option value="user">User — Standard access</option>
         <option value="admin">Admin — Full access</option>
+        <option value="driver">Driver — Transport access</option>
       </select></div>
     <div style="display:flex;gap:10px;justify-content:flex-end;margin-top:10px;">
       <button class="btn btn-secondary" onclick="hideModal('add-user-modal')">Cancel</button>
@@ -301,74 +305,91 @@ function showAddUserModal() {
 }
 
 async function saveNewUser() {
-  const username     = document.getElementById('u-username').value.trim().toLowerCase();
+  const email        = document.getElementById('u-email').value.trim().toLowerCase();
+  const username      = document.getElementById('u-username').value.trim().toLowerCase();
   const display_name = document.getElementById('u-display').value.trim();
-  const password     = document.getElementById('u-pass').value;
-  const role         = document.getElementById('u-role').value;
+  const password      = document.getElementById('u-pass').value;
+  const role          = document.getElementById('u-role').value;
+  if (!email) return toast('Email required', 'error');
   if (!username) return toast('Username required', 'error');
-  if (!password) return toast('Password required', 'error');
-  const existing = await DB.getUserByUsername(username);
-  if (existing) return toast(`Username "${username}" already taken`, 'error');
-  await DB.addUser({ username, display_name: display_name || username, password, role });
-  await DB.logAction('User Added', `Added system user "${username}" (Role: ${role})`, { username, role, display_name }, 'User');
-  hideModal('add-user-modal');
-  toast('User added!');
-  loadUsersTable();
+  if (!password || password.length < 6) return toast('Password must be at least 6 characters', 'error');
+  try {
+    await DB.addUser({ email, username, display_name: display_name || username, password, role });
+    await DB.logAction('User Added', `Added system user "${username}" (Role: ${role})`, { username, role, display_name }, 'User');
+    hideModal('add-user-modal');
+    toast('User added!');
+    loadUsersTable();
+  } catch (err) {
+    toast('Failed to add user: ' + (err.message || err), 'error');
+  }
 }
 
 async function showEditUserModal(id) {
   const u = await DB.getUser(id); if (!u) return;
-  createModal('edit-user-modal', `Edit User: ${u.username}`, `
+  createModal('edit-user-modal', `Edit User: ${escapeHtml(u.username)}`, `
+    <div class="form-group"><label class="form-label">Email * <span style="color:var(--text-muted);font-weight:400;">(used to sign in)</span></label>
+      <input type="email" class="form-input" id="eu-email" value="${escapeHtml(u.email||'')}"/></div>
     <div class="form-group"><label class="form-label">Username *</label>
-      <input class="form-input" id="eu-username" value="${u.username||''}"/></div>
+      <input class="form-input" id="eu-username" value="${escapeHtml(u.username||'')}"/></div>
     <div class="form-group"><label class="form-label">Display Name</label>
-      <input class="form-input" id="eu-display" value="${u.display_name||''}"/></div>
+      <input class="form-input" id="eu-display" value="${escapeHtml(u.display_name||'')}"/></div>
     <div class="form-group"><label class="form-label">New Password <span style="color:var(--text-muted);font-weight:400;">(leave blank to keep)</span></label>
       <input type="password" class="form-input" id="eu-pass" placeholder="Enter new password or leave blank"/></div>
     <div class="form-group"><label class="form-label">Role</label>
       <select class="form-input form-select" id="eu-role">
-        <option value="user"  ${u.role==='user' ?'selected':''}>User — Standard access</option>
-        <option value="admin" ${u.role==='admin'?'selected':''}>Admin — Full access</option>
+        <option value="user"   ${u.role==='user'  ?'selected':''}>User — Standard access</option>
+        <option value="admin"  ${u.role==='admin' ?'selected':''}>Admin — Full access</option>
+        <option value="driver" ${u.role==='driver'?'selected':''}>Driver — Transport access</option>
       </select></div>
     <div style="display:flex;gap:10px;justify-content:flex-end;margin-top:10px;">
       <button class="btn btn-secondary" onclick="hideModal('edit-user-modal')">Cancel</button>
-      <button class="btn btn-primary" onclick="saveEditUser(${id})"><i class="fas fa-save"></i> Save</button>
+      <button class="btn btn-primary" onclick="saveEditUser('${id}')"><i class="fas fa-save"></i> Save</button>
     </div>`);
   showModal('edit-user-modal');
 }
 
 async function saveEditUser(id) {
-  const username     = document.getElementById('eu-username').value.trim().toLowerCase();
+  const email        = document.getElementById('eu-email').value.trim().toLowerCase();
+  const username      = document.getElementById('eu-username').value.trim().toLowerCase();
   const display_name = document.getElementById('eu-display').value.trim();
-  const password     = document.getElementById('eu-pass').value;
-  const role         = document.getElementById('eu-role').value;
+  const password      = document.getElementById('eu-pass').value;
+  const role          = document.getElementById('eu-role').value;
+  if (!email) return toast('Email required', 'error');
   if (!username) return toast('Username required', 'error');
 
-  const existing = await DB.getUserByUsername(username);
-  if (existing && String(existing.id) !== String(id)) return toast(`Username "${username}" already taken`, 'error');
-
-  const updateData = { username, display_name: display_name || username, role };
-  if (password) updateData.password = password;
-  await DB.updateUser(id, updateData);
-  await DB.logAction('User Updated', `Updated system user "${username}"`, { username, role }, 'User');
-  
-  // Refresh current user if self
-  if (currentUser && currentUser.id === id) {
-    currentUser.display_name = updateData.display_name;
-    currentUser.role = updateData.role;
-    updateRoleChip();
+  const updateData = { email, username, display_name: display_name || username, role };
+  if (password) {
+    if (password.length < 6) return toast('Password must be at least 6 characters', 'error');
+    updateData.password = password;
   }
-  hideModal('edit-user-modal');
-  toast('User updated!');
-  loadUsersTable();
+  try {
+    await DB.updateUser(id, updateData);
+    await DB.logAction('User Updated', `Updated system user "${username}"`, { username, role }, 'User');
+
+    // Refresh current user if self
+    if (currentUser && String(currentUser.id) === String(id)) {
+      currentUser.display_name = updateData.display_name;
+      currentUser.role = updateData.role;
+      updateRoleChip();
+    }
+    hideModal('edit-user-modal');
+    toast('User updated!');
+    loadUsersTable();
+  } catch (err) {
+    toast('Failed to update user: ' + (err.message || err), 'error');
+  }
 }
 
 async function deleteUserConfirm(id, username) {
   confirmDialog(`Delete user "${username}"?`, async () => {
-    await DB.deleteUser(id);
-    await DB.logAction('User Deleted', `Deleted system user "${username}"`, { username }, 'User');
-    toast('User deleted');
-    loadUsersTable();
+    try {
+      await DB.deleteUser(id);
+      await DB.logAction('User Deleted', `Deleted system user "${username}"`, { username }, 'User');
+      toast('User deleted');
+      loadUsersTable();
+    } catch (err) {
+      toast('Failed to delete user: ' + (err.message || err), 'error');
+    }
   });
 }
 
@@ -484,7 +505,7 @@ async function uploadToCloud() {
   if (!endpoint.toLowerCase().startsWith('https://')) {
     return toast('Cloud endpoint must use secure HTTPS protocol', 'error');
   }
-  const data = await DB.exportAll(true); // Strip passwords
+  const data = await DB.exportAll(); // Login accounts are never included — see db.js exportAll()
   try {
     const res = await fetch(endpoint, { method:'POST', headers:{'Content-Type':'application/json'}, body:JSON.stringify(data) });
     if (res.ok) toast('Database uploaded to cloud!'); else toast('Upload failed: '+res.statusText,'error');
