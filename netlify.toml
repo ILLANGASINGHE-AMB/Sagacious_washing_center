@@ -3,6 +3,17 @@
   publish = "."
   functions = "netlify/functions"
 
+[build.environment]
+  # SUPABASE_URL and SUPABASE_ANON_KEY are DESIGNED to be public — they ship
+  # in config.js for the browser to talk to Supabase directly. Security comes
+  # from RLS policies (see supabase_auth_migration.sql), not from hiding this
+  # key. Telling Netlify's secrets scanner to ignore just these two prevents
+  # false-positive build failures without weakening the scan for anything
+  # that actually must stay secret: SUPABASE_SERVICE_ROLE_KEY and
+  # GEMINI_API_KEY are deliberately NOT listed here, so the build will still
+  # fail loudly if either of those ever ends up in a client-facing file.
+  SECRETS_SCAN_OMIT_KEYS = "SUPABASE_URL,SUPABASE_ANON_KEY"
+
 [[redirects]]
   from = "/*"
   to = "/index.html"

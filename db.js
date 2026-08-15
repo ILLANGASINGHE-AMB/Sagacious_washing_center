@@ -1,6 +1,13 @@
 // db.js - Supabase Database
-const SUPABASE_URL = window.SUPABASE_URL || 'https://mzxpdirmsegsgkrunerk.supabase.co';
-const SUPABASE_ANON_KEY = window.SUPABASE_ANON_KEY || 'eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6Im16eHBkaXJtc2Vnc2drcnVuZXJrIiwicm9sZSI6ImFub24iLCJpYXQiOjE3ODM0ODIyMDYsImV4cCI6MjA5OTA1ODIwNn0.8qwcNal0BrNaLd7FBg-Om_ZMLbPi_VA_dxFnha-Ma4E';
+// No hardcoded fallback values here on purpose — this file is committed to
+// git, so anything hardcoded here is a permanent secret leak. The real
+// values only ever come from config.js, which inject-env.js generates fresh
+// at build time from Netlify's environment variables.
+const SUPABASE_URL = window.SUPABASE_URL || '';
+const SUPABASE_ANON_KEY = window.SUPABASE_ANON_KEY || '';
+if (!SUPABASE_URL || !SUPABASE_ANON_KEY) {
+  console.error('SUPABASE_URL / SUPABASE_ANON_KEY are missing. config.js was not generated correctly at build time — check Netlify env vars.');
+}
 const { createClient } = supabase;
 const _sb = createClient(SUPABASE_URL, SUPABASE_ANON_KEY);
 
