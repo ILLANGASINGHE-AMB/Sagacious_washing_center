@@ -414,13 +414,26 @@
       100% { left:100%; }
     }
 
-    /* Smooth fade+lift for whichever screen the boot loader reveals (app or login) */
-    #login-screen.screen-fade-in, #app.screen-fade-in {
+    /* Smooth fade+lift when the boot loader reveals the login screen.
+       (#login-screen has no position:fixed descendants, so a transform here is safe.) */
+    #login-screen.screen-fade-in {
       animation: screenFadeIn 0.45s ease both;
     }
     @keyframes screenFadeIn {
       from { opacity:0; transform:translateY(6px); }
       to   { opacity:1; transform:translateY(0); }
+    }
+    /* Opacity-only fade when the boot loader reveals the app shell.
+       IMPORTANT: #sidebar is position:fixed and lives inside #app — any `transform`
+       applied to #app (even briefly, via a CSS animation) creates a new containing
+       block for that fixed sidebar, which then scrolls with #app's content instead
+       of staying pinned to the viewport. Do not add translateY/scale/etc. here. */
+    #app.screen-fade-in {
+      animation: screenFadeInOpacity 0.35s ease both;
+    }
+    @keyframes screenFadeInOpacity {
+      from { opacity:0; }
+      to   { opacity:1; }
     }
 
     /* Login */
