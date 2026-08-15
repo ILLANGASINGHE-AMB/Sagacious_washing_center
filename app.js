@@ -22,14 +22,44 @@ async function doLogin() {
   const password = document.getElementById('login-pass').value;
   if (!email || !password) return toast('Enter email and password', 'error');
 
+  // Give the button an immediate loading state — signing in is a network
+  // round-trip, and previously nothing indicated progress on click, which
+  // read as unresponsive/laggy for however long that request took.
+  const btn = document.querySelector('#login-screen .btn-signin');
+  const originalBtnHtml = btn ? btn.innerHTML : '';
+  if (btn) {
+    btn.disabled = true;
+    btn.innerHTML = '<i class="fas fa-spinner fa-spin"></i> Signing in...';
+  }
+
   try {
     const session = await DB.signIn(email, password);
-    if (!session) return toast('Invalid email or password', 'error');
+    if (!session) { toast('Invalid email or password', 'error'); return; }
     await enterAppWithSession(session);
   } catch (err) {
     console.error('Login error:', err);
     toast(err.message || 'Invalid email or password', 'error');
+  } finally {
+    // Only restore the button if login didn't succeed — on success
+    // enterAppWithSession() has already hidden #login-screen, so there's
+    // nothing left to restore the button on.
+    if (btn && document.getElementById('login-screen').style.display !== 'none') {
+      btn.disabled = false;
+      btn.innerHTML = originalBtnHtml;
+    }
   }
+}
+
+// Fades the boot loader out instead of an instant display:none cut, then
+// removes it from layout once the CSS transition finishes (with a fallback
+// timeout in case transitionend doesn't fire for any reason).
+function hideBootLoader() {
+  const bootLoader = document.getElementById('auth-boot-loader');
+  if (!bootLoader || bootLoader.style.display === 'none') return;
+  bootLoader.classList.add('boot-fade-out');
+  const finish = () => { bootLoader.style.display = 'none'; };
+  bootLoader.addEventListener('transitionend', finish, { once: true });
+  setTimeout(finish, 500);
 }
 
 // Shared by both the login button and automatic session restore on page load
@@ -38,7 +68,10 @@ async function enterAppWithSession(session) {
   if (!currentUser) return false;
 
   document.getElementById('login-screen').style.display = 'none';
-  document.getElementById('app').style.display = 'flex';
+  const appEl = document.getElementById('app');
+  appEl.style.display = 'flex';
+  appEl.classList.add('screen-fade-in');
+  hideBootLoader();
 
   await DB.logAction('User Login', `User "${currentUser.display_name}" logged in successfully`, { username: currentUser.username, role: currentUser.role }, 'User');
 
@@ -66,12 +99,16 @@ async function enterAppWithSession(session) {
   } catch (e) {
     console.warn('Session restore failed:', e);
   } finally {
-    const bootLoader = document.getElementById('auth-boot-loader');
-    if (bootLoader) bootLoader.style.display = 'none';
-    // enterAppWithSession() already reveals #app on success; only need to
-    // reveal the login form ourselves on the "no session" / error path,
-    // since it starts hidden to avoid flashing it at every logged-in user.
-    if (!loggedIn) document.getElementById('login-screen').style.display = 'flex';
+    // enterAppWithSession() already fades the boot loader out and reveals
+    // #app on success; only need to handle the "no session" / error path
+    // here, since #login-screen starts hidden to avoid flashing it at
+    // every logged-in user.
+    if (!loggedIn) {
+      hideBootLoader();
+      const loginEl = document.getElementById('login-screen');
+      loginEl.style.display = 'flex';
+      loginEl.classList.add('screen-fade-in');
+    }
   }
 })();
 
