@@ -492,7 +492,11 @@ async function calculateAnalyticsData(filters) {
     const code = catItem ? (catItem.item_id || `ITM-${catItem.id}`) : (oi.item_id || (oi.catalog_item_id ? `ITM-${oi.catalog_item_id}` : 'MISC'));
     const name = oi.item_name || (catItem ? catItem.item_name : 'Laundry Service');
 
-    const qty = parseInt(oi.quantity, 10) || 1;
+    // NOT `parseInt(...) || 1` — that treats a genuine 0 quantity (e.g. a voided/returned
+    // line) as 1, silently inflating Qty Sold. Only fall back to 1 when the field is
+    // actually missing or unparseable.
+    const parsedQty = parseInt(oi.quantity, 10);
+    const qty = isNaN(parsedQty) ? 1 : parsedQty;
     let rev = 0;
     if (oi.subtotal !== undefined && oi.subtotal !== null && !isNaN(parseFloat(oi.subtotal))) {
       rev = parseFloat(oi.subtotal);
@@ -687,7 +691,7 @@ function renderKPICards(d) {
     ${anStatCard("Cash Collected", formatCurrency(d.cashCollected), "fa-wallet", "#10b981", "#dcfce7", `${d.cashFlowRatio.toFixed(1)}% realized vs booked sales`)}
     ${anStatCard("Total Expenses", formatCurrency(d.totalExpenses), "fa-receipt", "#ef4444", "#fee2e2", `Cost ratio: ${d.costRatio.toFixed(1)}% (${d.chemModeLabel})`)}
     ${anStatCard("Net Operating Profit", formatCurrency(d.netProfit), "fa-scale-balanced", profitColor, d.netProfit >= 0 ? "#dcfce7" : "#fee2e2", `Margin: ${d.profitMargin.toFixed(1)}% ${!d.hasFixedOverhead ? '⚠️ (No OPEX entered)' : ''}`, marginColor)}
-    ${anStatCard("Uncollected Receivables", formatCurrency(d.uncollectedReceivables), "fa-clock", "#f59e0b", "#fef3c7", `Across ${d.unpaidInvoicesCount} unpaid invoices`)}
+    ${anStatCard("Uncollected Receivables (All-Time)", formatCurrency(d.uncollectedReceivables), "fa-clock", "#f59e0b", "#fef3c7", `Across ${d.unpaidInvoicesCount} unpaid invoices — NOT scoped to the date filter above`)}
   `;
 }
 
@@ -959,7 +963,12 @@ function renderTables(d) {
 
   if (custTfoot && d.customerStatsList.length > 0) {
     const totalOrders = d.customerStatsList.reduce((s, c) => s + c.orders, 0);
-    const totalCustRev = d.grossRevenue;
+    // Sums to the same number as d.grossRevenue today (every order's full total_amount is
+    // attributed to exactly one customer bucket), but computed directly from the visible
+    // rows rather than relying on that equivalence — the Item Breakdown footer used to take
+    // the same shortcut and it silently went wrong once item-level and order-level revenue
+    // diverged. Keeping this self-consistent avoids the same failure mode here.
+    const totalCustRev = d.customerStatsList.reduce((s, c) => s + (c.revenue || 0), 0);
     custTfoot.innerHTML = `
       <tr>
         <td style="padding:10px 16px;">Total (${d.customerStatsList.length} Clients)</td>
@@ -1020,10 +1029,21 @@ function exportAnalyticsData(type) {
   const filename = `analytics_report_${d.startDateStr}_to_${d.endDateStr}`;
 
   if (type === 'csv') {
+    // Deductions and Net Booked Revenue are included so the chain
+    // Gross Revenue - Deductions = Net Booked Revenue - Operating Expenses = Net Profit
+    // is fully reconcilable from the exported file alone. Previously the export only had
+    // Gross Revenue and Net Profit, and Net Profit is actually computed from the smaller
+    // (deduction-adjusted) Net Booked Revenue — so anyone checking "Gross - Expenses" by
+    // hand against the export would land on a number that doesn't match Net Profit whenever
+    // any deductions existed in the period.
     const csvRows = [
       ['Metric', 'Value'],
       ['Date Range', `${d.startDateStr} to ${d.endDateStr}`],
       ['Gross Revenue (LKR)', d.grossRevenue],
+      ['Deductions (LKR)', d.totalDeductions],
+      ['Net Booked Revenue (LKR)', d.netBookedRevenue],
+      ['Cash Collected (LKR)', d.cashCollected],
+      ['Uncollected Receivables — All-Time (LKR)', d.uncollectedReceivables],
       ['Operating Expenses (LKR)', d.totalExpenses],
       ['Net Operating Profit (LKR)', d.netProfit],
       ['Profit Margin (%)', d.profitMargin.toFixed(2)],
@@ -1054,6 +1074,10 @@ function exportAnalyticsData(type) {
     const summarySheet = XLSX.utils.json_to_sheet([
       { Metric: 'Date Range', Value: `${d.startDateStr} to ${d.endDateStr}` },
       { Metric: 'Gross Revenue (LKR)', Value: d.grossRevenue },
+      { Metric: 'Deductions (LKR)', Value: d.totalDeductions },
+      { Metric: 'Net Booked Revenue (LKR)', Value: d.netBookedRevenue },
+      { Metric: 'Cash Collected (LKR)', Value: d.cashCollected },
+      { Metric: 'Uncollected Receivables — All-Time (LKR)', Value: d.uncollectedReceivables },
       { Metric: 'Operating Expenses (LKR)', Value: d.totalExpenses },
       { Metric: 'Net Operating Profit (LKR)', Value: d.netProfit },
       { Metric: 'Profit Margin (%)', Value: d.profitMargin.toFixed(2) },
