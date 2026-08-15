@@ -318,13 +318,13 @@ const ExpensesModule = {
               ${exp.notes ? `<div class="text-[10px] text-slate-400 font-normal mt-0.5">${exp.notes}</div>` : ''}
             </td>
             <td class="px-4 py-3 text-xs text-right font-bold text-slate-800 dark:text-white whitespace-nowrap">
-              LKR ${parseFloat(exp.amount || 0).toLocaleString('en-US', { minimumFractionDigits: 2 })}
+              LKR ${parseFloat(exp.amount || 0).toLocaleString('en-US', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}
             </td>
             <td class="px-4 py-3 text-xs text-center font-medium text-slate-600 dark:text-slate-400">
               ${isMultiMonth ? `<span class="px-2 py-0.5 bg-indigo-100 dark:bg-indigo-900/40 text-indigo-700 dark:text-indigo-300 rounded-full font-bold text-[11px]">${exp.months_covered} mos</span>` : '<span class="text-slate-400">1 mo</span>'}
             </td>
             <td class="px-4 py-3 text-xs text-right font-semibold text-indigo-600 dark:text-indigo-400 whitespace-nowrap">
-              LKR ${parseFloat(exp.monthly_averaged_amount || exp.amount || 0).toLocaleString('en-US', { minimumFractionDigits: 2 })} /mo
+              LKR ${parseFloat(exp.monthly_averaged_amount || exp.amount || 0).toLocaleString('en-US', { minimumFractionDigits: 2, maximumFractionDigits: 2 })} /mo
             </td>
             <td class="px-4 py-3 text-xs text-center">
               <span class="px-2 py-0.5 bg-slate-100 dark:bg-slate-700 text-slate-600 dark:text-slate-300 rounded text-[11px]">${exp.payment_method || 'Cash'}</span>
@@ -349,7 +349,7 @@ const ExpensesModule = {
             <div>
               <div class="text-xs font-semibold text-slate-400 uppercase tracking-wider">Total Outflow (Cash View)</div>
               <div class="text-xl font-extrabold text-slate-800 dark:text-white mt-1">
-                LKR ${totalCash.toLocaleString('en-US', { minimumFractionDigits: 2 })}
+                LKR ${totalCash.toLocaleString('en-US', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}
               </div>
             </div>
             <div class="w-10 h-10 rounded-xl bg-indigo-50 dark:bg-indigo-950/40 text-indigo-600 dark:text-indigo-400 flex items-center justify-center text-lg">
@@ -361,7 +361,7 @@ const ExpensesModule = {
             <div>
               <div class="text-xs font-semibold text-indigo-600 dark:text-indigo-400 uppercase tracking-wider">Monthly Averaged Outlay</div>
               <div class="text-xl font-extrabold text-indigo-600 dark:text-indigo-400 mt-1">
-                LKR ${totalAveraged.toLocaleString('en-US', { minimumFractionDigits: 2 })} / mo
+                LKR ${totalAveraged.toLocaleString('en-US', { minimumFractionDigits: 2, maximumFractionDigits: 2 })} / mo
               </div>
               <div class="text-[10px] text-slate-400 mt-0.5">Expenses active this month only</div>
             </div>
@@ -669,7 +669,7 @@ const ExpensesModule = {
             <div class="bg-white/10 backdrop-blur-md p-4 rounded-xl border border-white/10">
               <div class="text-xs font-semibold text-indigo-200 uppercase">Monthly Billed (Accrual)</div>
               <div class="text-xl font-black text-emerald-400 mt-1">
-                LKR ${monthlyIncome.toLocaleString('en-US', { minimumFractionDigits: 2 })}
+                LKR ${monthlyIncome.toLocaleString('en-US', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}
               </div>
               <div class="text-[10px] text-indigo-300 mt-0.5">Matches Dashboard</div>
             </div>
@@ -677,7 +677,7 @@ const ExpensesModule = {
             <div class="bg-white/10 backdrop-blur-md p-4 rounded-xl border border-white/10">
               <div class="text-xs font-semibold text-indigo-200 uppercase">Monthly Cash Collected</div>
               <div class="text-xl font-black text-teal-300 mt-1">
-                LKR ${monthlyCollected.toLocaleString('en-US', { minimumFractionDigits: 2 })}
+                LKR ${monthlyCollected.toLocaleString('en-US', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}
               </div>
               <div class="text-[10px] text-indigo-300 mt-0.5">Actually received this month</div>
             </div>
@@ -685,7 +685,7 @@ const ExpensesModule = {
             <div class="bg-white/10 backdrop-blur-md p-4 rounded-xl border border-white/10">
               <div class="text-xs font-semibold text-indigo-200 uppercase">Total Billed (All-Time)</div>
               <div class="text-xl font-black text-cyan-400 mt-1">
-                LKR ${totalIncome.toLocaleString('en-US', { minimumFractionDigits: 2 })}
+                LKR ${totalIncome.toLocaleString('en-US', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}
               </div>
               <div class="text-[10px] text-indigo-300 mt-0.5">Matches Dashboard</div>
             </div>
@@ -693,7 +693,7 @@ const ExpensesModule = {
             <div class="bg-white/10 backdrop-blur-md p-4 rounded-xl border border-white/10">
               <div class="text-xs font-semibold text-indigo-200 uppercase">Total Cash Expenses</div>
               <div class="text-xl font-black ${totalCashOutlay > 0 ? 'text-rose-400' : 'text-slate-300'} mt-1">
-                LKR ${totalCashOutlay.toLocaleString('en-US', { minimumFractionDigits: 2 })}
+                LKR ${totalCashOutlay.toLocaleString('en-US', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}
               </div>
               <div class="text-[10px] text-indigo-300 mt-0.5">Incl. Chemical, Operational & Full Fuel</div>
             </div>
@@ -701,7 +701,7 @@ const ExpensesModule = {
             <div class="bg-white/10 backdrop-blur-md p-4 rounded-xl border border-white/10">
               <div class="text-xs font-semibold text-indigo-200 uppercase">Monthly Net Profit</div>
               <div class="text-xl font-black ${monthlyNetProfit >= 0 ? 'text-emerald-300' : 'text-rose-300'} mt-1">
-                LKR ${monthlyNetProfit.toLocaleString('en-US', { minimumFractionDigits: 2 })}
+                LKR ${monthlyNetProfit.toLocaleString('en-US', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}
               </div>
               <div class="text-[10px] text-indigo-300 mt-0.5">Billed - (This Month's Amortized Ops + Chem COGS + Fuel)</div>
             </div>
@@ -717,7 +717,7 @@ const ExpensesModule = {
             </h3>
             <div class="flex justify-between items-center py-2 border-b border-slate-100 dark:border-slate-700 text-xs">
               <span class="text-slate-500">Total Chemical Purchases (IN)</span>
-              <span class="font-bold text-slate-800 dark:text-white">LKR ${totalChemPurchases.toLocaleString('en-US', { minimumFractionDigits: 2 })}</span>
+              <span class="font-bold text-slate-800 dark:text-white">LKR ${totalChemPurchases.toLocaleString('en-US', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}</span>
             </div>
             <div class="flex justify-between items-center py-2 text-xs">
               <span class="text-slate-500">Stock Movements Count</span>
@@ -732,11 +732,11 @@ const ExpensesModule = {
             </h3>
             <div class="flex justify-between items-center py-2 border-b border-slate-100 dark:border-slate-700 text-xs">
               <span class="text-slate-500">Actual Outflow (Cash View)</span>
-              <span class="font-bold text-slate-800 dark:text-white">LKR ${totalGeneralExpenses.toLocaleString('en-US', { minimumFractionDigits: 2 })}</span>
+              <span class="font-bold text-slate-800 dark:text-white">LKR ${totalGeneralExpenses.toLocaleString('en-US', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}</span>
             </div>
             <div class="flex justify-between items-center py-2 text-xs">
               <span class="text-slate-500">Monthly Averaged Outlay</span>
-              <span class="font-bold text-indigo-600 dark:text-indigo-400">LKR ${totalAveragedGeneral.toLocaleString('en-US', { minimumFractionDigits: 2 })} / mo</span>
+              <span class="font-bold text-indigo-600 dark:text-indigo-400">LKR ${totalAveragedGeneral.toLocaleString('en-US', { minimumFractionDigits: 2, maximumFractionDigits: 2 })} / mo</span>
             </div>
           </div>
 
@@ -753,7 +753,7 @@ const ExpensesModule = {
               <div class="p-3 bg-purple-50/60 dark:bg-purple-950/30 rounded-xl border border-purple-100 dark:border-purple-900/40">
                 <div class="text-[11px] font-semibold text-slate-500 dark:text-slate-400">Current Month Fuel Cost</div>
                 <div class="text-lg font-extrabold text-purple-700 dark:text-purple-300 mt-1 font-mono">
-                  LKR ${curMonthlyFuelCost.toLocaleString('en-US', { minimumFractionDigits: 2 })}
+                  LKR ${curMonthlyFuelCost.toLocaleString('en-US', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}
                 </div>
                 <div class="text-[10px] text-slate-400 mt-0.5">${curMonthDist.toFixed(1)} KM @ LKR ${curRatePerKm.toFixed(2)}/KM</div>
               </div>
@@ -761,7 +761,7 @@ const ExpensesModule = {
               <div class="p-3 bg-purple-50/60 dark:bg-purple-950/30 rounded-xl border border-purple-100 dark:border-purple-900/40">
                 <div class="text-[11px] font-semibold text-slate-500 dark:text-slate-400">Full Cost (Sum of Monthly Fuel)</div>
                 <div class="text-lg font-extrabold text-purple-800 dark:text-purple-200 mt-1 font-mono">
-                  LKR ${fullFuelCostLKR.toLocaleString('en-US', { minimumFractionDigits: 2 })}
+                  LKR ${fullFuelCostLKR.toLocaleString('en-US', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}
                 </div>
                 <div class="text-[10px] text-slate-400 mt-0.5">Sum of all monthly fuel outlays</div>
               </div>
@@ -769,7 +769,7 @@ const ExpensesModule = {
               <div class="p-3 bg-purple-50/60 dark:bg-purple-950/30 rounded-xl border border-purple-100 dark:border-purple-900/40">
                 <div class="text-[11px] font-semibold text-slate-500 dark:text-slate-400">Vehicle Repairs & Tyres</div>
                 <div class="text-lg font-extrabold text-slate-800 dark:text-white mt-1 font-mono">
-                  LKR ${manualTransportExpenses.toLocaleString('en-US', { minimumFractionDigits: 2 })}
+                  LKR ${manualTransportExpenses.toLocaleString('en-US', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}
                 </div>
                 <div class="text-[10px] text-slate-400 mt-0.5">Category: Transport Cost</div>
               </div>
@@ -777,7 +777,7 @@ const ExpensesModule = {
               <div class="p-3 bg-purple-600 text-white rounded-xl shadow-sm">
                 <div class="text-[11px] font-semibold text-purple-200 uppercase">Total Transport Outlay</div>
                 <div class="text-lg font-black mt-1 font-mono">
-                  LKR ${totalTransportCost.toLocaleString('en-US', { minimumFractionDigits: 2 })}
+                  LKR ${totalTransportCost.toLocaleString('en-US', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}
                 </div>
                 <div class="text-[10px] text-purple-200 mt-0.5">Fuel + Vehicle Maintenance</div>
               </div>

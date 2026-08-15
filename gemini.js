@@ -176,9 +176,9 @@ All currency values are in Sri Lankan Rupees (LKR).
 
 ### SYSTEM OVERVIEW STATS
 - Total Orders Count: ${orders.length}
-- Total Billing Amount: LKR ${totalBilled.toLocaleString('en-LK', { minimumFractionDigits: 2 })}
-- Total Payments Received: LKR ${totalPaid.toLocaleString('en-LK', { minimumFractionDigits: 2 })}
-- Unpaid Balance: LKR ${(totalBilled - totalPaid).toLocaleString('en-LK', { minimumFractionDigits: 2 })}
+- Total Billing Amount: LKR ${totalBilled.toLocaleString('en-LK', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}
+- Total Payments Received: LKR ${totalPaid.toLocaleString('en-LK', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}
+- Unpaid Balance: LKR ${(totalBilled - totalPaid).toLocaleString('en-LK', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}
 
 ### SYSTEM ORDER STATES
 ${Object.entries(statusCount).map(([status, count]) => `- ${status}: ${count}`).join('\n')}

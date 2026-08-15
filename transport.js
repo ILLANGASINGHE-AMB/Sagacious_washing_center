@@ -194,7 +194,7 @@ const TransportModule = {
             </div>
 
             <div class="text-[10px] font-semibold text-purple-700 dark:text-purple-300 mt-1 font-mono">
-              Monthly Fuel Cost: LKR ${selectedMonthData.fuelCost.toLocaleString('en-US', { minimumFractionDigits: 2 })}
+              Monthly Fuel Cost: LKR ${selectedMonthData.fuelCost.toLocaleString('en-US', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}
             </div>
           </div>
         </div>
@@ -1065,7 +1065,7 @@ const TransportModule = {
               LKR ${ratePerKm.toFixed(2)}/KM
             </td>
             <td class="px-4 py-3 text-xs text-right font-extrabold text-emerald-600 dark:text-emerald-400 font-mono">
-              LKR ${mFuelCost.toLocaleString('en-US', { minimumFractionDigits: 2 })}
+              LKR ${mFuelCost.toLocaleString('en-US', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}
             </td>
           </tr>
         `;
@@ -1105,7 +1105,7 @@ const TransportModule = {
                 <tr class="bg-purple-50/70 dark:bg-purple-950/40 border-t-2 border-purple-200 dark:border-purple-800/50 font-bold">
                   <td colspan="4" class="px-4 py-3 text-xs text-purple-900 dark:text-purple-200 uppercase font-extrabold">Full Cost (Sum of Monthly Fuel Costs)</td>
                   <td class="px-4 py-3 text-xs text-right text-purple-700 dark:text-purple-300 font-extrabold font-mono text-sm">
-                    LKR ${totalFullCostLKR.toLocaleString('en-US', { minimumFractionDigits: 2 })}
+                    LKR ${totalFullCostLKR.toLocaleString('en-US', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}
                   </td>
                 </tr>
               </tfoot>
