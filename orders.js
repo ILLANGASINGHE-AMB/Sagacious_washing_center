@@ -19,8 +19,8 @@ async function renderOrders() {
   _ordersCustomers=customers; _ordersDrivers=drivers;
   const hasFilter = ordersStatusFilter||ordersDriverFilter||ordersCustFilter;
   const statusOpts = ORDER_STATUSES.map(s=>`<option value="${s}" ${s===ordersStatusFilter?'selected':''}>${s}</option>`).join('');
-  const driverOpts = drivers.map(d=>`<option value="${d.id}" ${String(d.id)===ordersDriverFilter?'selected':''}>${d.name}</option>`).join('');
-  const custOpts   = customers.map(c=>`<option value="${c.id}" ${String(c.id)===ordersCustFilter?'selected':''}>${c.hotel_name}</option>`).join('');
+  const driverOpts = drivers.map(d=>`<option value="${d.id}" ${String(d.id)===ordersDriverFilter?'selected':''}>${escapeHtml(d.name)}</option>`).join('');
+  const custOpts   = customers.map(c=>`<option value="${c.id}" ${String(c.id)===ordersCustFilter?'selected':''}>${escapeHtml(c.hotel_name)}</option>`).join('');
 
   document.getElementById('content').innerHTML = `
     <div class="section-header">
@@ -132,7 +132,7 @@ async function _refreshOrdersTable() {
         const inv=invMap[o.id];
         return `<tr>
           <td><strong>${o.batch_id||'—'}</strong></td>
-          <td>${custName}</td>
+          <td>${escapeHtml(custName)}</td>
           <td>${formatDate(o.pickup_date)}</td>
           <td>${statusBadge(o.status)}</td>
           <td>${o.status === 'Paid' ? (o.payment_date ? formatDate(o.payment_date) : '—') : '—'}</td>
@@ -654,8 +654,8 @@ function _renderItemList(dropdown,items){
         const prices = getItemPricesForCurrentCustomer(i);
         return `<div style="padding:10px 14px;cursor:pointer;font-size:0.88em;display:flex;justify-content:space-between;align-items:center;border-bottom:1px solid var(--border);"
             onmousedown="window._pickerClicking=true"
-            onmouseup="window._pickerClicking=false;selectItemFromDropdown(event,'${i.id}','${i.item_id} — ${i.item_name.replace(/'/g,"\\'")}',${prices.dry_clean},${prices.wash_press},${prices.wash_dry})">
-            <span><strong style="font-family:monospace;font-size:0.85em;">${i.item_id}</strong> &nbsp;${i.item_name}</span>
+            onmouseup="window._pickerClicking=false;selectItemFromDropdown(event,'${i.id}','${escapeHtml(i.item_id.replace(/'/g,"\\'"))} — ${escapeHtml(i.item_name.replace(/'/g,"\\'"))}',${prices.dry_clean},${prices.wash_press},${prices.wash_dry})">
+            <span><strong style="font-family:monospace;font-size:0.85em;">${escapeHtml(i.item_id)}</strong> &nbsp;${escapeHtml(i.item_name)}</span>
             <span style="color:var(--text-muted);font-size:0.78em;display:flex;gap:6px;">
               <span style="color:#7c3aed;">DC:${prices.dry_clean}</span>
               <span style="color:#0369a1;">WP:${prices.wash_press}</span>
@@ -764,7 +764,7 @@ async function saveQuickAddItem(context = 'new-order') {
   if (!item_name) return toast('Item Name is required', 'error');
 
   const existing = await DB.getItemByCode(item_id);
-  if (existing) return toast(`Item ID "${item_id}" already exists in catalogue`, 'error');
+  if (existing) return toast(`Item ID "${escapeHtml(item_id)}" already exists in catalogue`, 'error');
 
   const newItemObj = { item_id, item_name, dry_clean_price, wash_press_price, wash_dry_price, description };
   const dbId = await DB.addItem(newItemObj);
@@ -798,7 +798,7 @@ async function saveQuickAddItem(context = 'new-order') {
     }
   }
 
-  toast(`Item "${item_name}" saved to catalogue & added to order!`);
+  toast(`Item "${escapeHtml(item_name)}" saved to catalogue & added to order!`);
 }
 
 async function addOrderItemRow(){
@@ -986,7 +986,7 @@ async function showEditOrderModal(id){
   const ro=!isAdmin();
   const itemRows=existingItems.map(item=>{
     const cat=allCatalog.find(c=>c.id===item.catalog_item_id);
-    const label=cat?`${cat.item_id} — ${cat.item_name}`:item.item_name;
+    const label=escapeHtml(cat?`${cat.item_id} — ${cat.item_name}`:item.item_name);
     const dryCleanP  = cat ? (cat.dry_clean_price||0)   : 0;
     const washPressP = cat ? (cat.wash_press_price||0)  : 0;
     const washDryP   = cat ? (cat.wash_dry_price||0)    : 0;
@@ -1011,7 +1011,7 @@ async function showEditOrderModal(id){
   createModal('edit-order-modal',`Edit Order: ${order.batch_id}`,`
     <div style="display:grid;grid-template-columns:1fr 1fr;gap:14px;">
       <div class="form-group" style="grid-column: span 2;"><label class="form-label">Customer</label>
-        ${ro?`<input class="form-input" value="${customers.find(c=>c.id===order.customer_id)?.hotel_name||'—'}" disabled/>`:pickerHTML('eo-cust','Type customer name...')}
+        ${ro?`<input class="form-input" value="${escapeHtml(customers.find(c=>c.id===order.customer_id)?.hotel_name||'—')}" disabled/>`:pickerHTML('eo-cust','Type customer name...')}
       </div>
       <div class="form-group"><label class="form-label">Pickup Date</label>
         <input type="date" class="form-input" id="eo-pickup" value="${order.pickup_date||''}" ${ro?'disabled':''}/></div>
@@ -1232,15 +1232,15 @@ async function viewOrderDetails(id){
     'Wash & Dry':   'badge-green'
   };
   const itemsHTML=items.map(i=>`<tr>
-    <td>${i.item_name}</td><td>${i.quantity}</td>
+    <td>${escapeHtml(i.item_name)}</td><td>${i.quantity}</td>
     <td><span class="badge ${svcBadgeClass[i.service_type]||'badge-gray'}">${i.service_type||'—'}</span></td>
     <td>${formatCurrency(i.price)}</td><td><strong>${formatCurrency(i.subtotal)}</strong></td>
   </tr>`).join('');
   const sigHTML=order.signature?`<div style="margin-top:12px;"><div class="form-label" style="margin-bottom:6px;">Customer Signature</div><img src="${order.signature}" style="border:1px solid var(--border);border-radius:8px;max-width:300px;"/></div>`:'';
   createModal('view-order-modal',`Order: ${order.batch_id}`,`
     <div style="display:grid;grid-template-columns:1fr 1fr;gap:16px;margin-bottom:16px;">
-      <div><div class="form-label">Customer</div><div style="font-weight:600;">${cust?.hotel_name || getOrderCustomerName(order) || '—'}</div></div>
-      <div><div class="form-label">Driver</div><div>${drv?.name||'Unassigned'}</div></div>
+      <div><div class="form-label">Customer</div><div style="font-weight:600;">${escapeHtml(cust?.hotel_name || getOrderCustomerName(order) || '—')}</div></div>
+      <div><div class="form-label">Driver</div><div>${escapeHtml(drv?.name||'Unassigned')}</div></div>
       <div><div class="form-label">Status</div>${statusBadge(order.status)}</div>
       <div><div class="form-label">Batch ID</div><div style="font-family:monospace;font-weight:700;">${order.batch_id}</div></div>
       <div><div class="form-label">Pickup Date</div><div>${formatDate(order.pickup_date)}</div></div>

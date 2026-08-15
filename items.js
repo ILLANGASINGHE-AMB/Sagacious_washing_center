@@ -108,9 +108,9 @@ async function _refreshItemsTable() {
   tbody.innerHTML = items.length===0
     ? `<tr><td colspan="7" style="text-align:center;padding:40px;color:var(--text-muted);"><div style="font-size:2.2em;margin-bottom:8px;">🧺</div>No items found</td></tr>`
     : items.map(item=>`<tr>
-        <td><span style="font-family:monospace;font-weight:700;font-size:0.9em;background:var(--bg);padding:4px 10px;border-radius:6px;border:1px solid var(--border);letter-spacing:1px;">${item.item_id}</span></td>
-        <td><strong>${item.item_name}</strong></td>
-        <td style="color:var(--text-muted);font-size:0.88em;">${item.description||'—'}</td>
+        <td><span style="font-family:monospace;font-weight:700;font-size:0.9em;background:var(--bg);padding:4px 10px;border-radius:6px;border:1px solid var(--border);letter-spacing:1px;">${escapeHtml(item.item_id)}</span></td>
+        <td><strong>${escapeHtml(item.item_name)}</strong></td>
+        <td style="color:var(--text-muted);font-size:0.88em;">${escapeHtml(item.description||'—')}</td>
         <td style="text-align:right;"><span class="badge badge-purple">${formatCurrency(item.dry_clean_price||0)}</span></td>
         <td style="text-align:right;"><span class="badge badge-cyan">${formatCurrency(item.wash_press_price||0)}</span></td>
         <td style="text-align:right;"><span class="badge badge-green">${formatCurrency(item.wash_dry_price||0)}</span></td>
@@ -183,11 +183,11 @@ async function saveNewItem() {
   if(!item_id)   return toast('Item ID is required','error');
   if(!item_name) return toast('Item name is required','error');
   const existing = await DB.getItemByCode(item_id);
-  if(existing) return toast(`Item ID "${item_id}" already exists`,'error');
+  if(existing) return toast(`Item ID "${escapeHtml(item_id)}" already exists`,'error');
   await DB.addItem({item_id, item_name, dry_clean_price, wash_press_price, wash_dry_price, description});
   await DB.logAction('Add Item', `Added catalog item "${item_name}" (${item_id})`, { code: item_id, name: item_name, dry_clean_price, wash_press_price, wash_dry_price }, 'Item');
   hideModal('add-item-modal');
-  toast(`Item "${item_name}" added!`);
+  toast(`Item "${escapeHtml(item_name)}" added!`);
   renderItems();
 }
 
@@ -197,19 +197,19 @@ async function saveNewItem() {
 async function showEditItemModal(id) {
   if(!canEditItems()) return;
   const item = await DB.getItem(id); if(!item) return;
-  createModal('edit-item-modal',`Edit Item: ${item.item_id}`,`
+  createModal('edit-item-modal',`Edit Item: ${escapeHtml(item.item_id)}`,`
     <div style="display:grid;grid-template-columns:1fr 1fr;gap:14px;">
       <div class="form-group">
         <label class="form-label">Item ID *</label>
-        <input class="form-input" id="eit-id" value="${item.item_id||''}" style="text-transform:uppercase;" oninput="this.value=this.value.toUpperCase()"/>
+        <input class="form-input" id="eit-id" value="${escapeHtml(item.item_id||'')}" style="text-transform:uppercase;" oninput="this.value=this.value.toUpperCase()"/>
       </div>
       <div class="form-group">
         <label class="form-label">Item Name *</label>
-        <input class="form-input" id="eit-name" value="${item.item_name||''}"/>
+        <input class="form-input" id="eit-name" value="${escapeHtml(item.item_name||'')}"/>
       </div>
       <div class="form-group" style="grid-column:1/-1;">
         <label class="form-label">Description</label>
-        <input class="form-input" id="eit-desc" value="${item.description||''}"/>
+        <input class="form-input" id="eit-desc" value="${escapeHtml(item.description||'')}"/>
       </div>
       <div class="form-group" style="grid-column:1/-1;">
         <label class="form-label" style="font-weight:700;margin-bottom:10px;">Service Prices (LKR)</label>
@@ -248,7 +248,7 @@ async function saveEditItem(id) {
   if(!item_id)   return toast('Item ID is required','error');
   if(!item_name) return toast('Item name is required','error');
   const existing = await DB.getItemByCode(item_id);
-  if(existing && existing.id!==id) return toast(`Item ID "${item_id}" already in use`,'error');
+  if(existing && existing.id!==id) return toast(`Item ID "${escapeHtml(item_id)}" already in use`,'error');
   await DB.updateItem(id,{item_id, item_name, dry_clean_price, wash_press_price, wash_dry_price, description});
   await DB.logAction('Edit Item', `Updated catalog item "${item_name}" (${item_id})`, { code: item_id, name: item_name, dry_clean_price, wash_press_price, wash_dry_price }, 'Item');
   hideModal('edit-item-modal');
@@ -259,7 +259,7 @@ async function saveEditItem(id) {
 async function deleteItemConfirm(id) {
   if(!requireAdmin()) return;
   const item=await DB.getItem(id);
-  confirmDialog(`Delete item "${item?.item_name}"?`, async()=>{
+  confirmDialog(`Delete item "${escapeHtml(item?.item_name)}"?`, async()=>{
     await DB.deleteItem(id);
     await DB.logAction('Delete Item', `Deleted catalog item "${item?.item_name}" (${item?.item_id})`, { code: item?.item_id, name: item?.item_name }, 'Item');
     toast('Item deleted'); renderItems();
@@ -286,7 +286,7 @@ async function printItemsCatalog() {
     const fmt=v=>Number(v||0).toLocaleString('en-LK',{minimumFractionDigits:2});
     const buildRows=items=>items.map((item,idx)=>`
       <tr style="background:${idx%2===0?'#fff':'#f8fafc'};">
-        <td style="padding:6px 8px;border-bottom:1px solid #e5e7eb;font-size:0.82em;font-weight:600;">${item.item_name}</td>
+        <td style="padding:6px 8px;border-bottom:1px solid #e5e7eb;font-size:0.82em;font-weight:600;">${escapeHtml(item.item_name)}</td>
         <td style="padding:6px 8px;border-bottom:1px solid #e5e7eb;text-align:right;font-size:0.82em;color:#7c3aed;">${fmt(item.dry_clean_price)}</td>
         <td style="padding:6px 8px;border-bottom:1px solid #e5e7eb;text-align:right;font-size:0.82em;color:#0369a1;">${fmt(item.wash_press_price)}</td>
         <td style="padding:6px 8px;border-bottom:1px solid #e5e7eb;text-align:right;font-size:0.82em;color:#16a34a;">${fmt(item.wash_dry_price)}</td>
@@ -307,11 +307,11 @@ async function printItemsCatalog() {
     @media print{body{padding:0;}@page{margin:12mm 10mm;size:A4;}}</style></head><body>
     <div style="display:flex;justify-content:space-between;align-items:flex-start;margin-bottom:20px;padding-bottom:14px;border-bottom:2px solid #e2e8f0;">
       <div style="display:flex;align-items:center;gap:12px;">${logoHTML}
-        <div><div style="font-family:'Playfair Display',serif;font-size:1.3em;font-weight:700;color:#1a4d8f;">${company}</div>
+        <div><div style="font-family:'Playfair Display',serif;font-size:1.3em;font-weight:700;color:#1a4d8f;">${escapeHtml(company)}</div>
         <div style="font-size:0.78em;color:#64748b;margin-top:3px;">Laundry Management System</div></div>
       </div>
       <div style="text-align:right;font-size:0.8em;color:#64748b;line-height:1.7;">
-        ${phone?`<div>${phone}</div>`:''}${address?`<div>${address}</div>`:''}${email?`<div>${email}</div>`:''}
+        ${phone?`<div>${escapeHtml(phone)}</div>`:''}${address?`<div>${escapeHtml(address)}</div>`:''}${email?`<div>${escapeHtml(email)}</div>`:''}
       </div>
     </div>
     <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:12px;">
@@ -323,7 +323,7 @@ async function printItemsCatalog() {
       <table style="width:100%;border-collapse:collapse;border:1px solid #e2e8f0;">${thead}<tbody>${sorted.slice(half).length?buildRows(sorted.slice(half)):'<tr><td colspan="4" style="padding:16px;text-align:center;color:#94a3b8;">—</td></tr>'}</tbody></table>
     </div>
     <div style="margin-top:16px;padding-top:10px;border-top:1px solid #e2e8f0;display:flex;justify-content:space-between;font-size:0.72em;color:#94a3b8;">
-      <span>${company} — Items Catalog</span><span>Generated on ${printDate}</span>
+      <span>${escapeHtml(company)} — Items Catalog</span><span>Generated on ${printDate}</span>
     </div>
     <div style="margin-top:40px;display:flex;justify-content:space-between;align-items:flex-end;">
       <div style="text-align:center;min-width:180px;">
@@ -399,7 +399,7 @@ async function showDefaultTermsModal() {
   createModal('default-terms-modal', 'Default Terms & Conditions (Quotation Footer Notes)', `
     <div class="form-group">
       <label class="form-label">Default Terms and Conditions *</label>
-      <textarea class="form-input" id="dt-terms" rows="6" style="font-family:inherit;line-height:1.5;">${currentTerms}</textarea>
+      <textarea class="form-input" id="dt-terms" rows="6" style="font-family:inherit;line-height:1.5;">${escapeHtml(currentTerms)}</textarea>
       <span style="font-size:0.8em;color:var(--text-muted);margin-top:6px;display:block;">This text will be used as the default FOOTER NOTES when generating any new service quotation. Users can also edit it per quotation.</span>
     </div>
     <div style="display:flex;justify-content:flex-end;gap:10px;margin-top:16px;">
@@ -432,7 +432,7 @@ async function _refreshQuotationsHistoryTable() {
     <tr>
       <td><span style="font-weight:600;color:var(--text-muted);">${idx + 1}</span></td>
       <td><span style="font-family:monospace;font-weight:700;color:var(--primary);background:var(--bg);padding:3px 8px;border-radius:4px;border:1px solid var(--border);">${q.quote_id}</span></td>
-      <td><strong>${q.customer_name || 'General Client'}</strong></td>
+      <td><strong>${escapeHtml(q.customer_name || 'General Client')}</strong></td>
       <td>${q.issued_date || '—'}</td>
       <td>${q.valid_until || '—'}</td>
       <td style="text-align:right;">
@@ -543,7 +543,7 @@ async function showGenerateQuotationModal() {
   const initialQuoteId = await DB.generateQuotationId(todayStr);
 
   const custOptions = `<option value="">-- Custom Client / Any Client --</option>` +
-    sortedCust.map(c => `<option value="${c.id}">${c.hotel_name}${c.contact_person ? ' (' + c.contact_person + ')' : ''}</option>`).join('');
+    sortedCust.map(c => `<option value="${c.id}">${escapeHtml(c.hotel_name)}${c.contact_person ? ' (' + escapeHtml(c.contact_person) + ')' : ''}</option>`).join('');
 
   // Build items directly from catalog in items table
   const sortedCatalogItems = [...allCatalogItems].sort((a,b)=>(a.item_id||'').localeCompare(b.item_id||''));
@@ -625,7 +625,7 @@ async function showGenerateQuotationModal() {
     <!-- FOOTER NOTES EDITOR -->
     <div style="margin-top:16px;">
       <label class="form-label">Footer Notes &amp; Terms (Editable per quotation)</label>
-      <textarea class="form-input" id="gq-footer-notes" rows="3" style="font-family:inherit;font-size:0.88em;">${termsText}</textarea>
+      <textarea class="form-input" id="gq-footer-notes" rows="3" style="font-family:inherit;font-size:0.88em;">${escapeHtml(termsText)}</textarea>
     </div>
 
     <div style="display:flex;justify-content:flex-end;gap:10px;margin-top:20px;padding-top:14px;border-top:1px solid var(--border);">
@@ -700,7 +700,7 @@ function _renderQuotationModalItemRows() {
         <input type="checkbox" ${item.included ? 'checked' : ''} onchange="currentQuotationItems[${idx}].included=this.checked"/>
       </td>
       <td style="padding:6px;">
-        <input class="form-input" value="${item.name.replace(/"/g, '&quot;')}" style="padding:4px 8px;font-size:0.9em;" onchange="currentQuotationItems[${idx}].name=this.value"/>
+        <input class="form-input" value="${escapeHtml(item.name)}" style="padding:4px 8px;font-size:0.9em;" onchange="currentQuotationItems[${idx}].name=this.value"/>
       </td>
       <td style="padding:6px;text-align:right;">
         <input type="number" step="1" min="0" class="form-input" value="${item.dry_clean || ''}" placeholder="0" style="padding:4px 8px;text-align:right;font-size:0.9em;" onchange="currentQuotationItems[${idx}].dry_clean=parseFloat(this.value)||0"/>
@@ -803,7 +803,7 @@ async function renderQuotationView(quoteData) {
   const rowsHTML = (quoteData.items || []).map((item, idx) => `
     <tr style="background:${idx % 2 === 0 ? '#ffffff' : '#f8fafc'};">
       <td style="padding:7px 12px;border-bottom:1px solid #e2e8f0;font-size:0.88em;font-weight:600;text-align:center;color:#64748b;">${idx + 1}</td>
-      <td style="padding:7px 12px;border-bottom:1px solid #e2e8f0;font-size:0.88em;font-weight:600;color:#1e293b;">${item.name}</td>
+      <td style="padding:7px 12px;border-bottom:1px solid #e2e8f0;font-size:0.88em;font-weight:600;color:#1e293b;">${escapeHtml(item.name)}</td>
       <td style="padding:7px 12px;border-bottom:1px solid #e2e8f0;text-align:right;font-size:0.88em;font-weight:600;color:#7c3aed;">${item.dry_clean > 0 ? formatCurrency(item.dry_clean) : '—'}</td>
       <td style="padding:7px 12px;border-bottom:1px solid #e2e8f0;text-align:right;font-size:0.88em;font-weight:600;color:#0369a1;">${item.wash_press > 0 ? formatCurrency(item.wash_press) : '—'}</td>
       <td style="padding:7px 12px;border-bottom:1px solid #e2e8f0;text-align:right;font-size:0.88em;font-weight:600;color:#16a34a;">${item.wash_dry > 0 ? formatCurrency(item.wash_dry) : '—'}</td>
@@ -811,7 +811,7 @@ async function renderQuotationView(quoteData) {
   `).join('');
 
   const notesLines = (quoteData.footer_notes || '').split('\n').filter(l => l.trim() !== '');
-  const notesHTML = notesLines.map(line => `<li style="margin-bottom:4px;">${line.replace(/^-\s*/, '')}</li>`).join('');
+  const notesHTML = notesLines.map(line => `<li style="margin-bottom:4px;">${escapeHtml(line.replace(/^-\s*/, ''))}</li>`).join('');
 
   const quotationHTML = `
     <div id="quotation-print-area" style="position:relative;font-family:'DM Sans',sans-serif;background:#fff;color:#1e293b;max-width:780px;margin:0 auto;padding:36px 40px;border-radius:4px;box-shadow:0 4px 24px rgba(0,0,0,0.08);">
@@ -821,9 +821,9 @@ async function renderQuotationView(quoteData) {
         <div style="display:flex;align-items:center;gap:14px;">
           ${logoHTML}
           <div>
-            <div style="font-family:'Playfair Display',serif;font-size:1.55em;font-weight:700;color:#1a4d8f;line-height:1.2;">${company}</div>
-            ${address ? `<div style="font-size:0.82em;color:#64748b;margin-top:4px;">${address}</div>` : ''}
-            <div style="font-size:0.82em;color:#64748b;margin-top:2px;">${[phone, email].filter(Boolean).join(' | ')}</div>
+            <div style="font-family:'Playfair Display',serif;font-size:1.55em;font-weight:700;color:#1a4d8f;line-height:1.2;">${escapeHtml(company)}</div>
+            ${address ? `<div style="font-size:0.82em;color:#64748b;margin-top:4px;">${escapeHtml(address)}</div>` : ''}
+            <div style="font-size:0.82em;color:#64748b;margin-top:2px;">${[phone, email].filter(Boolean).map(escapeHtml).join(' | ')}</div>
           </div>
         </div>
       </div>
@@ -836,7 +836,7 @@ async function renderQuotationView(quoteData) {
       <!-- HEADER SECTION -->
       <div style="background:#f8fafc;border:1px solid #e2e8f0;border-radius:8px;padding:16px 20px;margin-bottom:24px;display:grid;grid-template-columns:1fr 1fr;gap:12px;font-size:0.9em;">
         <div>
-          <div style="margin-bottom:6px;"><strong style="color:#64748b;display:inline-block;width:130px;">Customer Name :</strong> <span style="font-weight:700;color:#1e293b;">${quoteData.customer_name || 'General Client'}</span></div>
+          <div style="margin-bottom:6px;"><strong style="color:#64748b;display:inline-block;width:130px;">Customer Name :</strong> <span style="font-weight:700;color:#1e293b;">${escapeHtml(quoteData.customer_name || 'General Client')}</span></div>
           <div><strong style="color:#64748b;display:inline-block;width:130px;">Issued Date :</strong> <span style="font-weight:600;color:#1e293b;">${quoteData.issued_date}</span></div>
         </div>
         <div>
@@ -876,13 +876,13 @@ async function renderQuotationView(quoteData) {
       <div style="display:flex;justify-content:space-between;align-items:flex-end;margin-top:40px;margin-bottom:20px;padding-top:10px;">
         <div>
           <div style="border-bottom:1.5px dotted #64748b;width:220px;margin-bottom:8px;"></div>
-          <div style="font-size:0.88em;font-weight:600;color:#1e293b;">${quoteData.issued_by || 'Manager - Sagacious Washing Center'}</div>
+          <div style="font-size:0.88em;font-weight:600;color:#1e293b;">${escapeHtml(quoteData.issued_by || 'Manager - Sagacious Washing Center')}</div>
         </div>
       </div>
 
       <!-- CLOSING LINE -->
       <div style="text-align:center;font-family:'Playfair Display',serif;font-size:1.05em;font-weight:700;color:#1a4d8f;margin-top:24px;padding-top:14px;border-top:1px solid #e2e8f0;">
-        Thank You for choosing ${company}!
+        Thank You for choosing ${escapeHtml(company)}!
       </div>
     </div>
   `;

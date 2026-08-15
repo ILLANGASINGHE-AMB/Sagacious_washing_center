@@ -38,7 +38,7 @@ async function renderInvoices() {
         <div class="search-wrap" style="flex:1;min-width:200px;margin:0;">
           <i class="fas fa-search"></i>
           <input class="form-input" id="inv-search-input" placeholder="Search invoice #, customer, order batch..."
-            value="${invoiceSearch}"
+            value="${escapeHtml(invoiceSearch)}"
             autocomplete="off" spellcheck="false"
             oninput="invoiceSearch=this.value;invoicePage=1;_refreshInvoicesTable()"/>
         </div>
@@ -387,9 +387,9 @@ async function _refreshInvoicesTable() {
 
         // Notes tooltip helper
         const notesText = inv.latestPayment && inv.latestPayment.notes ? inv.latestPayment.notes : '—';
-        const truncatedNotes = notesText.length > 20 
-          ? `<span title="${notesText}" style="cursor:help;border-bottom:1px dotted var(--text-muted);">${notesText.slice(0, 18)}...</span>` 
-          : notesText;
+        const truncatedNotes = notesText.length > 20
+          ? `<span title="${escapeHtml(notesText)}" style="cursor:help;border-bottom:1px dotted var(--text-muted);">${escapeHtml(notesText.slice(0, 18))}...</span>`
+          : escapeHtml(notesText);
 
         const balanceColor = inv.computedBalance === 0 ? 'var(--success)' : 'var(--danger)';
 
@@ -397,7 +397,7 @@ async function _refreshInvoicesTable() {
           <tr style="${overdue ? 'background:rgba(239, 68, 68, 0.04);' : ''} transition:background 0.2s;" class="hover-highlight-row">
             <td style="${overdue ? 'border-left: 4px solid var(--danger);' : ''}"><strong>${inv.invoice_number}</strong></td>
             <td>${o?.batch_id || '—'}</td>
-            <td>${o ? getOrderCustomerName(o, cMap) : '—'}</td>
+            <td>${escapeHtml(o ? getOrderCustomerName(o, cMap) : '—')}</td>
             <td>
               <div style="display:flex;flex-direction:column;align-items:flex-start;">
                 ${paidBadge}
@@ -568,8 +568,8 @@ function exportInvoices(type) {
         <tbody>
           ${exportDataList.map(row => `
             <tr>
-              <td><strong>${row["Invoice #"]}</strong></td>
-              <td>${row["Customer"]}</td>
+              <td><strong>${escapeHtml(row["Invoice #"])}</strong></td>
+              <td>${escapeHtml(row["Customer"])}</td>
               <td><span class="badge ${row["Type"] === 'Credit' ? 'badge-purple' : 'badge-blue'}">${row["Type"]}</span></td>
               <td>${row["Issue Date"]}</td>
               <td class="text-right"><strong>LKR ${row["Invoice Total"].toFixed(2)}</strong></td>
@@ -621,7 +621,7 @@ async function viewInvoice(id) {
   
   const itemsHTML = items.map(i => `
     <tr>
-      <td style="padding:8px 12px;border-bottom:1px solid #e5e7eb;">${i.item_name}</td>
+      <td style="padding:8px 12px;border-bottom:1px solid #e5e7eb;">${escapeHtml(i.item_name)}</td>
       <td style="padding:8px 12px;border-bottom:1px solid #e5e7eb;text-align:center;">${i.quantity}</td>
       <td style="padding:8px 12px;border-bottom:1px solid #e5e7eb;">
         <span style="font-size:0.82em;font-weight:600;padding:3px 8px;border-radius:5px;background:${_svcColor[i.service_type] || '#64748b'}18;color:${_svcColor[i.service_type] || '#64748b'};">${i.service_type || '—'}</span>
@@ -635,7 +635,7 @@ async function viewInvoice(id) {
       <td style="padding:6px 12px;border-bottom:1px solid #e5e7eb;">${formatDate(p.date)}</td>
       <td style="padding:6px 12px;border-bottom:1px solid #e5e7eb;">${p.method}</td>
       <td style="padding:6px 12px;border-bottom:1px solid #e5e7eb;text-align:right;color:#16a34a;font-weight:600;">${formatCurrency(p.amount)}</td>
-      <td style="padding:6px 12px;border-bottom:1px solid #e5e7eb;color:var(--text-muted);">${p.notes || '—'}</td>
+      <td style="padding:6px 12px;border-bottom:1px solid #e5e7eb;color:var(--text-muted);">${escapeHtml(p.notes || '—')}</td>
     </tr>`).join('');
 
   const paidStamp = balance <= 0 ? `
@@ -673,9 +673,9 @@ async function viewInvoice(id) {
         <div style="display:flex;align-items:center;gap:16px;">
           ${logoHTML}
           <div>
-            <div style="font-family:'Playfair Display',serif;font-size:1.65em;font-weight:700;color:#1a4d8f;line-height:1.15;">${settings.company_name}</div>
-            ${settings.address ? `<div style="font-size:0.83em;color:#64748b;margin-top:5px;">${settings.address}</div>` : ''}
-            <div style="font-size:0.83em;color:#64748b;margin-top:2px;">${[settings.phone, settings.email].filter(Boolean).join(' | ')}</div>
+            <div style="font-family:'Playfair Display',serif;font-size:1.65em;font-weight:700;color:#1a4d8f;line-height:1.15;">${escapeHtml(settings.company_name)}</div>
+            ${settings.address ? `<div style="font-size:0.83em;color:#64748b;margin-top:5px;">${escapeHtml(settings.address)}</div>` : ''}
+            <div style="font-size:0.83em;color:#64748b;margin-top:2px;">${[settings.phone, settings.email].filter(Boolean).map(escapeHtml).join(' | ')}</div>
           </div>
         </div>
         <div style="text-align:right;">
@@ -689,10 +689,10 @@ async function viewInvoice(id) {
       <div style="display:grid;grid-template-columns:1fr 1fr;gap:24px;margin-bottom:32px;">
         <div>
           <div style="font-size:0.72em;font-weight:700;text-transform:uppercase;letter-spacing:1px;color:#94a3b8;margin-bottom:10px;">Bill To</div>
-          <div style="font-weight:700;font-size:1.05em;color:#1e293b;">${customer?.hotel_name || (order ? getOrderCustomerName(order) : '—')}</div>
-          ${customer?.address ? `<div style="font-size:0.88em;color:#64748b;margin-top:3px;">${customer.address}</div>` : ''}
-          ${customer?.contact_person ? `<div style="font-size:0.88em;color:#64748b;">${customer.contact_person}</div>` : ''}
-          ${customer?.phone ? `<div style="font-size:0.88em;color:#64748b;">${customer.phone}</div>` : ''}
+          <div style="font-weight:700;font-size:1.05em;color:#1e293b;">${escapeHtml(customer?.hotel_name || (order ? getOrderCustomerName(order) : '—'))}</div>
+          ${customer?.address ? `<div style="font-size:0.88em;color:#64748b;margin-top:3px;">${escapeHtml(customer.address)}</div>` : ''}
+          ${customer?.contact_person ? `<div style="font-size:0.88em;color:#64748b;">${escapeHtml(customer.contact_person)}</div>` : ''}
+          ${customer?.phone ? `<div style="font-size:0.88em;color:#64748b;">${escapeHtml(customer.phone)}</div>` : ''}
         </div>
         <div>
           <div style="font-size:0.72em;font-weight:700;text-transform:uppercase;letter-spacing:1px;color:#94a3b8;margin-bottom:10px;">Order Info</div>
@@ -714,7 +714,7 @@ async function viewInvoice(id) {
         <tbody>
           ${items.map((i, idx) => `
             <tr style="border-bottom:1px solid #f1f5f9;${idx % 2 === 1 ? 'background:#fafafa;' : ''}">
-              <td style="padding:12px 0;font-size:0.92em;">${i.item_name}</td>
+              <td style="padding:12px 0;font-size:0.92em;">${escapeHtml(i.item_name)}</td>
               <td style="padding:12px 8px;text-align:center;font-size:0.92em;">${i.quantity}</td>
               <td style="padding:12px 8px;font-size:0.88em;">
                 <span style="font-weight:600;padding:3px 8px;border-radius:5px;background:${_svcColor[i.service_type] || '#64748b'}18;color:${_svcColor[i.service_type] || '#64748b'};">${i.service_type || '—'}</span>
@@ -793,7 +793,7 @@ async function viewInvoice(id) {
           </table>
         </div>` : ''}
 
-      ${settings.footer_message ? `<div style="margin-top:36px;text-align:center;font-size:0.88em;color:#94a3b8;font-style:italic;">${settings.footer_message}</div>` : ''}
+      ${settings.footer_message ? `<div style="margin-top:36px;text-align:center;font-size:0.88em;color:#94a3b8;font-style:italic;">${escapeHtml(settings.footer_message)}</div>` : ''}
     </div>`;
 
   createModal('view-invoice-modal', `${isCredit ? 'Credit Bill' : 'Invoice'}: ${inv.invoice_number}`, `
@@ -880,8 +880,8 @@ async function printInvoice(id) {
   const itemsHTML = items.map((i, idx) => `
     <tr style="${idx % 2 === 1 ? 'background:#fafafa;' : ''}">
       <td style="padding:10px 12px;border-bottom:1px solid #f1f5f9;">
-        ${i.item_name}
-        ${i.order_batch_id ? `<span style="display:block;font-size:0.75em;color:#64748b;margin-top:2px;">Order: ${i.order_batch_id}</span>` : ''}
+        ${escapeHtml(i.item_name)}
+        ${i.order_batch_id ? `<span style="display:block;font-size:0.75em;color:#64748b;margin-top:2px;">Order: ${escapeHtml(i.order_batch_id)}</span>` : ''}
       </td>
       <td style="padding:10px 12px;border-bottom:1px solid #f1f5f9;text-align:center;">${i.quantity}</td>
       <td style="padding:10px 12px;border-bottom:1px solid #f1f5f9;">
@@ -896,7 +896,7 @@ async function printInvoice(id) {
       <td style="padding:6px 12px;border-bottom:1px solid #f1f5f9;">${formatDate(p.date)}</td>
       <td style="padding:6px 12px;border-bottom:1px solid #f1f5f9;">${p.method}</td>
       <td style="padding:6px 12px;border-bottom:1px solid #f1f5f9;text-align:right;color:#16a34a;font-weight:600;">${formatCurrency(p.amount)}</td>
-      <td style="padding:6px 12px;border-bottom:1px solid #f1f5f9;color:var(--text-muted);">${p.notes || '—'}</td>
+      <td style="padding:6px 12px;border-bottom:1px solid #f1f5f9;color:var(--text-muted);">${escapeHtml(p.notes || '—')}</td>
     </tr>`).join('');
 
   const paidStamp = balance <= 0 ? `
@@ -969,9 +969,9 @@ async function printInvoice(id) {
         <div style="display:flex;align-items:center;gap:14px;">
           ${logoHTML}
           <div>
-            <div style="font-family:'Playfair Display',serif;font-size:1.5em;font-weight:700;color:#1a4d8f;">${settings.company_name}</div>
-            ${settings.address ? `<div style="font-size:0.85em;color:#64748b;margin-top:4px;">${settings.address}</div>` : ''}
-            <div style="font-size:0.85em;color:#64748b;">${[settings.phone, settings.email].filter(Boolean).join(' | ')}</div>
+            <div style="font-family:'Playfair Display',serif;font-size:1.5em;font-weight:700;color:#1a4d8f;">${escapeHtml(settings.company_name)}</div>
+            ${settings.address ? `<div style="font-size:0.85em;color:#64748b;margin-top:4px;">${escapeHtml(settings.address)}</div>` : ''}
+            <div style="font-size:0.85em;color:#64748b;">${[settings.phone, settings.email].filter(Boolean).map(escapeHtml).join(' | ')}</div>
           </div>
         </div>
         <div style="text-align:right;">
@@ -991,13 +991,13 @@ async function printInvoice(id) {
             if (inv.batch_invoice_details) {
               const batchDetails = JSON.parse(inv.batch_invoice_details || '[]');
               const customerNames = [...new Set(batchDetails.map(d => d.customerName))];
-              return `<div style="font-weight:700;font-size:1.05em;color:#1e293b;line-height:1.4;">${customerNames.join('<br/>')}</div>`;
+              return `<div style="font-weight:700;font-size:1.05em;color:#1e293b;line-height:1.4;">${customerNames.map(escapeHtml).join('<br/>')}</div>`;
             } else {
               return `
-                <div style="font-weight:700;font-size:1.05em;">${customer?.hotel_name || (order ? getOrderCustomerName(order) : '—')}</div>
-                <div style="color:#64748b;font-size:0.9em;margin-top:4px;">${customer?.address || ''}</div>
-                <div style="color:#64748b;font-size:0.9em;">${customer?.contact_person || ''}</div>
-                <div style="color:#64748b;font-size:0.9em;">${customer?.phone || ''}</div>
+                <div style="font-weight:700;font-size:1.05em;">${escapeHtml(customer?.hotel_name || (order ? getOrderCustomerName(order) : '—'))}</div>
+                <div style="color:#64748b;font-size:0.9em;margin-top:4px;">${escapeHtml(customer?.address || '')}</div>
+                <div style="color:#64748b;font-size:0.9em;">${escapeHtml(customer?.contact_person || '')}</div>
+                <div style="color:#64748b;font-size:0.9em;">${escapeHtml(customer?.phone || '')}</div>
               `;
             }
           })()}
@@ -1015,7 +1015,7 @@ async function printInvoice(id) {
             <tr style="${idx % 2 === 1 ? 'background:#fafafa;' : ''}">
               <td style="padding:10px 12px;border-bottom:1px solid #f1f5f9;font-family:monospace;font-weight:700;">${d.invoiceNumber}</td>
               <td style="padding:10px 12px;border-bottom:1px solid #f1f5f9;font-family:monospace;">${d.orderNumber}</td>
-              <td style="padding:10px 12px;border-bottom:1px solid #f1f5f9;">${d.customerName}</td>
+              <td style="padding:10px 12px;border-bottom:1px solid #f1f5f9;">${escapeHtml(d.customerName)}</td>
               <td style="padding:10px 12px;border-bottom:1px solid #f1f5f9;text-align:right;font-weight:700;color:#16a34a;">${formatCurrency(d.amount)}</td>
             </tr>
           `).join('');
@@ -1074,7 +1074,7 @@ async function printInvoice(id) {
           </table>
         </div>` : ''}
 
-      ${settings.footer_message ? `<div style="text-align:center;padding:16px;background:#f8fafc;border-radius:10px;font-size:0.9em;color:#64748b;font-style:italic;">${settings.footer_message}</div>` : ''}
+      ${settings.footer_message ? `<div style="text-align:center;padding:16px;background:#f8fafc;border-radius:10px;font-size:0.9em;color:#64748b;font-style:italic;">${escapeHtml(settings.footer_message)}</div>` : ''}
       <div style="margin-top:40px;display:flex;justify-content:space-between;align-items:flex-end;">
         <div style="text-align:center;min-width:180px;">
           <div style="height:50px;border-bottom:1.5px solid #1e293b;margin-bottom:6px;"></div>
@@ -1502,11 +1502,11 @@ async function _refreshDeductionsTable() {
         <tr style="border-bottom:1px solid var(--border);">
           <td>${formatDate(d.created_at)}</td>
           <td><strong>${d.invoice_number}</strong></td>
-          <td>${customerName}</td>
+          <td>${escapeHtml(customerName)}</td>
           <td style="text-align:right;"><strong>${formatCurrency(d.original_amount)}</strong></td>
           <td style="text-align:right;color:#ef4444;font-weight:700;">-${formatCurrency(d.deduction_amount)}</td>
           <td style="text-align:right;color:#16a34a;font-weight:700;">${formatCurrency(d.final_amount)}</td>
-          <td><span style="font-size:0.9em;color:var(--text-muted);">${d.reason || '—'}</span></td>
+          <td><span style="font-size:0.9em;color:var(--text-muted);">${escapeHtml(d.reason || '—')}</span></td>
           <td>
             <div style="display:flex;gap:6px;">
               <button class="btn btn-secondary btn-sm" onclick="printInvoice(${d.invoice_id})"><i class="fas fa-print"></i> Print</button>

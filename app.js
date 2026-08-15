@@ -353,7 +353,7 @@ async function renderDashboard() {
 
   contentEl.innerHTML = `
     <div style="margin-bottom:22px;">
-      <div style="font-size:0.85em;color:var(--text-muted);">Good ${getGreeting()}, <strong>${currentUser?.display_name || 'User'}</strong></div>
+      <div style="font-size:0.85em;color:var(--text-muted);">Good ${getGreeting()}, <strong>${escapeHtml(currentUser?.display_name || 'User')}</strong></div>
       <div style="font-family:'Playfair Display',serif;font-size:1.6em;font-weight:700;color:var(--text);">Welcome to Sagacious Washing Center</div>
     </div>
     <div style="display:grid;grid-template-columns:repeat(auto-fit,minmax(175px,1fr));gap:16px;margin-bottom:24px;">
@@ -487,7 +487,7 @@ async function renderRecentOrders(orders) {
         <tbody>
           ${recent.map(o => `<tr>
             <td style="font-family:monospace;font-weight:700;font-size:0.85em;">${o.batch_id}</td>
-            <td>${getOrderCustomerName(o, cMap)}</td>
+            <td>${escapeHtml(getOrderCustomerName(o, cMap))}</td>
             <td>${statusBadge(o.status)}</td>
             <td>${formatCurrency(o.total_amount)}</td>
           </tr>`).join('') || `<tr><td colspan="4" style="text-align:center;color:var(--text-muted);padding:20px;">No orders yet</td></tr>`}
@@ -514,7 +514,7 @@ async function renderUnpaidInvoices(invoices, passedOrders) {
             const o = oMap[inv.order_id];
             return `<tr>
               <td style="font-weight:700;">${inv.invoice_number}</td>
-              <td>${o ? getOrderCustomerName(o, cMap) : '—'}</td>
+              <td>${escapeHtml(o ? getOrderCustomerName(o, cMap) : '—')}</td>
               <td style="color:var(--danger);font-weight:700;">${formatCurrency(inv.balance)}</td>
             </tr>`;
           }).join('') || `<tr><td colspan="3" style="text-align:center;color:var(--text-muted);padding:20px;">All paid!</td></tr>`}
@@ -579,10 +579,10 @@ async function _refreshCustomersTable() {
   tbody.innerHTML = items.length===0
     ? `<tr><td colspan="6" style="text-align:center;padding:32px;color:var(--text-muted);">No customers</td></tr>`
     : items.map(c => `<tr>
-        <td><strong>${c.hotel_name}</strong></td>
-        <td>${c.contact_person||'—'}</td>
-        <td>${c.phone||'—'}</td>
-        <td>${c.email||'—'}</td>
+        <td><strong>${escapeHtml(c.hotel_name)}</strong></td>
+        <td>${escapeHtml(c.contact_person||'—')}</td>
+        <td>${escapeHtml(c.phone||'—')}</td>
+        <td>${escapeHtml(c.email||'—')}</td>
         <td>${formatDate(c.created_date)}</td>
         <td><div style="display:flex;gap:5px;">
           <button class="btn btn-sm" onclick="showCustomerProfileModal(${c.id})" title="Profile & Custom Prices" style="background:#8b5cf6; border-color:#7c3aed; color:#fff;"><i class="fas fa-tags"></i></button>
@@ -629,7 +629,7 @@ async function saveNewCustomer() {
   if (phone) {
     const all = await DB.getCustomers();
     const dup = all.find(c => c.phone && c.phone === phone);
-    if (dup) return toast(`Phone ${phone} is already used by "${dup.hotel_name}"`, 'error');
+    if (dup) return toast(`Phone ${phone} is already used by "${escapeHtml(dup.hotel_name)}"`, 'error');
   }
   const custId = await DB.addCustomer({hotel_name,contact_person:contact,phone,address,email});
   await DB.logAction(
@@ -645,15 +645,15 @@ async function showEditCustomerModal(id) {
   createModal('edit-cust-modal','Edit Customer',`
     <div style="display:grid;grid-template-columns:1fr 1fr;gap:14px;">
       <div class="form-group" style="grid-column:1/-1;"><label class="form-label">Hotel Name *</label>
-        <input class="form-input" id="ec-hotel" value="${c.hotel_name||''}" maxlength="100"/></div>
+        <input class="form-input" id="ec-hotel" value="${escapeHtml(c.hotel_name||'')}" maxlength="100"/></div>
       <div class="form-group"><label class="form-label">Contact Person</label>
-        <input class="form-input" id="ec-contact" value="${c.contact_person||''}" maxlength="80"/></div>
+        <input class="form-input" id="ec-contact" value="${escapeHtml(c.contact_person||'')}" maxlength="80"/></div>
       <div class="form-group"><label class="form-label">Phone <span style="color:var(--text-muted);font-size:0.82em;">(10 digits)</span></label>
-        <input class="form-input" id="ec-phone" value="${c.phone||''}" maxlength="10" pattern="[0-9]{10}" inputmode="numeric" oninput="this.value=this.value.replace(/\D/g,'').slice(0,10)"/></div>
+        <input class="form-input" id="ec-phone" value="${escapeHtml(c.phone||'')}" maxlength="10" pattern="[0-9]{10}" inputmode="numeric" oninput="this.value=this.value.replace(/\D/g,'').slice(0,10)"/></div>
       <div class="form-group" style="grid-column:1/-1;"><label class="form-label">Address</label>
-        <input class="form-input" id="ec-address" value="${c.address||''}" maxlength="200"/></div>
+        <input class="form-input" id="ec-address" value="${escapeHtml(c.address||'')}" maxlength="200"/></div>
       <div class="form-group" style="grid-column:1/-1;"><label class="form-label">Email</label>
-        <input class="form-input" id="ec-email" value="${c.email||''}" maxlength="100"/></div>
+        <input class="form-input" id="ec-email" value="${escapeHtml(c.email||'')}" maxlength="100"/></div>
     </div>
     <div style="display:flex;gap:10px;justify-content:flex-end;margin-top:8px;">
       <button class="btn btn-secondary" onclick="hideModal('edit-cust-modal')">Cancel</button>
@@ -675,7 +675,7 @@ async function saveEditCustomer(id) {
   if (phone) {
     const all = await DB.getCustomers();
     const dup = all.find(c => c.phone && c.phone === phone && String(c.id) !== String(id));
-    if (dup) return toast(`Phone ${phone} is already used by "${dup.hotel_name}"`, 'error');
+    if (dup) return toast(`Phone ${phone} is already used by "${escapeHtml(dup.hotel_name)}"`, 'error');
   }
 
   await DB.updateCustomer(id,{hotel_name,contact_person:contact,phone,address,email});
@@ -723,7 +723,7 @@ async function deleteCustomerConfirm(id) {
 }
 async function viewCustomerOrders(customerId) {
   const [customer, orders] = await Promise.all([DB.getCustomer(customerId), DB.getOrdersByCustomer(customerId)]);
-  createModal('cust-orders-modal',`Orders: ${customer?.hotel_name}`,`
+  createModal('cust-orders-modal',`Orders: ${escapeHtml(customer?.hotel_name)}`,`
     <div class="table-wrap"><table>
       <thead><tr><th>Batch ID</th><th>Status</th><th>Total</th><th>Date</th><th></th></tr></thead>
       <tbody>
@@ -766,13 +766,13 @@ async function printCustomerSalesSummary(customerId) {
     const rowsHTML = sortedOrders.map((o, idx) => `
       <tr style="${idx % 2 === 1 ? 'background:#fafafa;' : ''}">
         <td style="padding:10px 12px;border-bottom:1px solid #f1f5f9;">${formatDate(o.created_at)}</td>
-        <td style="padding:10px 12px;border-bottom:1px solid #f1f5f9;">${customer.hotel_name}</td>
+        <td style="padding:10px 12px;border-bottom:1px solid #f1f5f9;">${escapeHtml(customer.hotel_name)}</td>
         <td style="padding:10px 12px;border-bottom:1px solid #f1f5f9;font-weight:600;">${o.batch_id || '—'}</td>
         <td style="padding:10px 12px;border-bottom:1px solid #f1f5f9;text-align:right;font-weight:700;">${formatCurrency(o.total_amount || 0)}</td>
       </tr>
     `).join('');
 
-    const printHTML = `<!DOCTYPE html><html><head><meta charset="UTF-8"/><title>Sales Summary - ${customer.hotel_name}</title>
+    const printHTML = `<!DOCTYPE html><html><head><meta charset="UTF-8"/><title>Sales Summary - ${escapeHtml(customer.hotel_name)}</title>
       <link href="https://fonts.googleapis.com/css2?family=DM+Sans:wght@400;600;700&family=Playfair+Display:wght@600;700;800&display=swap" rel="stylesheet"/>
       <style>
         *{box-sizing:border-box;margin:0;padding:0;}
@@ -786,9 +786,9 @@ async function printCustomerSalesSummary(customerId) {
           <div style="display:flex;align-items:center;gap:14px;">
             ${logoHTML}
             <div>
-              <div style="font-family:'Playfair Display',serif;font-size:1.5em;font-weight:700;color:#1a4d8f;">${settings.company_name}</div>
-              ${settings.address?`<div style="font-size:0.85em;color:#64748b;margin-top:4px;">${settings.address}</div>`:''}
-              <div style="font-size:0.85em;color:#64748b;">${[settings.phone,settings.email].filter(Boolean).join(' | ')}</div>
+              <div style="font-family:'Playfair Display',serif;font-size:1.5em;font-weight:700;color:#1a4d8f;">${escapeHtml(settings.company_name)}</div>
+              ${settings.address?`<div style="font-size:0.85em;color:#64748b;margin-top:4px;">${escapeHtml(settings.address)}</div>`:''}
+              <div style="font-size:0.85em;color:#64748b;">${[settings.phone,settings.email].filter(Boolean).map(escapeHtml).join(' | ')}</div>
             </div>
           </div>
           <div style="text-align:right;">
@@ -799,11 +799,11 @@ async function printCustomerSalesSummary(customerId) {
         <!-- Customer Info -->
         <div style="background:#f8fafc;padding:16px;border-radius:10px;margin-bottom:24px;max-width:400px;">
           <div style="font-size:0.75em;font-weight:700;text-transform:uppercase;letter-spacing:0.5px;color:#64748b;margin-bottom:8px;">Customer Information</div>
-          <div style="font-weight:700;font-size:1.05em;">${customer.hotel_name}</div>
-          <div style="color:#64748b;font-size:0.9em;margin-top:4px;">${customer.address || ''}</div>
-          <div style="color:#64748b;font-size:0.9em;">Contact: ${customer.contact_person || '—'}</div>
-          <div style="color:#64748b;font-size:0.9em;">Phone: ${customer.phone || '—'}</div>
-          <div style="color:#64748b;font-size:0.9em;">Email: ${customer.email || '—'}</div>
+          <div style="font-weight:700;font-size:1.05em;">${escapeHtml(customer.hotel_name)}</div>
+          <div style="color:#64748b;font-size:0.9em;margin-top:4px;">${escapeHtml(customer.address || '')}</div>
+          <div style="color:#64748b;font-size:0.9em;">Contact: ${escapeHtml(customer.contact_person || '—')}</div>
+          <div style="color:#64748b;font-size:0.9em;">Phone: ${escapeHtml(customer.phone || '—')}</div>
+          <div style="color:#64748b;font-size:0.9em;">Email: ${escapeHtml(customer.email || '—')}</div>
         </div>
         <!-- Sales Table -->
         <table style="width:100%;border-collapse:collapse;margin-bottom:24px;">
@@ -823,7 +823,7 @@ async function printCustomerSalesSummary(customerId) {
             </tr>
           </tbody>
         </table>
-        ${settings.footer_message?`<div style="text-align:center;padding:16px;background:#f8fafc;border-radius:10px;font-size:0.9em;color:#64748b;font-style:italic;">${settings.footer_message}</div>`:''}
+        ${settings.footer_message?`<div style="text-align:center;padding:16px;background:#f8fafc;border-radius:10px;font-size:0.9em;color:#64748b;font-style:italic;">${escapeHtml(settings.footer_message)}</div>`:''}
         <div style="margin-top:40px;display:flex;justify-content:space-between;align-items:flex-end;">
           <div style="text-align:center;min-width:180px;">
             <div style="height:50px;border-bottom:1.5px solid #1e293b;margin-bottom:6px;"></div>
@@ -898,11 +898,11 @@ function driverCard(d) {
   return `<div class="card">
     <div style="display:flex;align-items:center;gap:14px;margin-bottom:14px;">
       <div style="width:50px;height:50px;border-radius:50%;background:linear-gradient(135deg,#1a4d8f,#00b4d8);display:flex;align-items:center;justify-content:center;color:#fff;font-size:1.3em;font-weight:700;flex-shrink:0;">
-        ${d.name.charAt(0)}</div>
-      <div><div style="font-weight:700;">${d.name}</div><span class="badge ${sc}">${d.status||'available'}</span></div>
+        ${escapeHtml(d.name.charAt(0))}</div>
+      <div><div style="font-weight:700;">${escapeHtml(d.name)}</div><span class="badge ${sc}">${d.status||'available'}</span></div>
     </div>
-    <div style="font-size:0.88em;color:var(--text-muted);margin-bottom:4px;"><i class="fas fa-phone" style="width:16px;"></i> ${d.phone||'—'}</div>
-    <div style="font-size:0.88em;color:var(--text-muted);margin-bottom:14px;"><i class="fas fa-car" style="width:16px;"></i> ${d.vehicle||'—'}</div>
+    <div style="font-size:0.88em;color:var(--text-muted);margin-bottom:4px;"><i class="fas fa-phone" style="width:16px;"></i> ${escapeHtml(d.phone||'—')}</div>
+    <div style="font-size:0.88em;color:var(--text-muted);margin-bottom:14px;"><i class="fas fa-car" style="width:16px;"></i> ${escapeHtml(d.vehicle||'—')}</div>
     <div style="display:flex;gap:8px;">
       <button class="btn btn-primary btn-sm" onclick="showEditDriverModal(${d.id})"><i class="fas fa-edit"></i> Edit</button>
       <button class="btn btn-secondary btn-sm" onclick="toggleDriverStatus(${d.id},'${d.status}')"><i class="fas fa-toggle-on"></i> Status</button>
@@ -937,7 +937,7 @@ async function saveNewDriver() {
   if (phone) {
     const all = await DB.getDrivers();
     const dup = all.find(d => d.phone && d.phone === phone);
-    if (dup) return toast(`Phone ${phone} is already used by driver "${dup.name}"`, 'error');
+    if (dup) return toast(`Phone ${phone} is already used by driver "${escapeHtml(dup.name)}"`, 'error');
   }
   const drvId = await DB.addDriver({name,phone,vehicle,status});
   await DB.logAction('Add Driver', `Added new driver "${name}" (Vehicle: ${vehicle || 'N/A'}, Phone: ${phone || 'N/A'})`, { id: drvId, name, phone, vehicle, status }, 'Driver');
@@ -946,10 +946,10 @@ async function saveNewDriver() {
 async function showEditDriverModal(id) {
   const d=await DB.getDriver(id); if(!d) return;
   createModal('edit-drv-modal','Edit Driver',`
-    <div class="form-group"><label class="form-label">Full Name *</label><input class="form-input" id="ed-name" value="${d.name||''}" maxlength="80"/></div>
+    <div class="form-group"><label class="form-label">Full Name *</label><input class="form-input" id="ed-name" value="${escapeHtml(d.name||'')}" maxlength="80"/></div>
     <div class="form-group"><label class="form-label">Phone <span style="color:var(--text-muted);font-size:0.82em;">(10 digits)</span></label>
-      <input class="form-input" id="ed-phone" value="${d.phone||''}" maxlength="10" inputmode="numeric" oninput="this.value=this.value.replace(/\D/g,'').slice(0,10)"/></div>
-    <div class="form-group"><label class="form-label">Vehicle & Plate</label><input class="form-input" id="ed-vehicle" value="${d.vehicle||''}" maxlength="80"/></div>
+      <input class="form-input" id="ed-phone" value="${escapeHtml(d.phone||'')}" maxlength="10" inputmode="numeric" oninput="this.value=this.value.replace(/\D/g,'').slice(0,10)"/></div>
+    <div class="form-group"><label class="form-label">Vehicle & Plate</label><input class="form-input" id="ed-vehicle" value="${escapeHtml(d.vehicle||'')}" maxlength="80"/></div>
     <div class="form-group"><label class="form-label">Status</label>
       <select class="form-input form-select" id="ed-status">
         ${['available','on-trip','off-duty'].map(s=>`<option value="${s}" ${d.status===s?'selected':''}>${s.charAt(0).toUpperCase()+s.slice(1)}</option>`).join('')}
@@ -970,7 +970,7 @@ async function saveEditDriver(id) {
   if (phone) {
     const all = await DB.getDrivers();
     const dup = all.find(d => d.phone && d.phone === phone && String(d.id) !== String(id));
-    if (dup) return toast(`Phone ${phone} is already used by driver "${dup.name}"`, 'error');
+    if (dup) return toast(`Phone ${phone} is already used by driver "${escapeHtml(dup.name)}"`, 'error');
   }
   await DB.updateDriver(id,{name,phone,vehicle,status});
   await DB.logAction('Edit Driver', `Updated details for driver "${name}"`, { id, name, phone, vehicle, status }, 'Driver');
@@ -1236,8 +1236,8 @@ async function _refreshPayNowTable() {
             <input type="checkbox" class="paynow-checkbox" data-order-id="${o.id}" ${isChecked} onchange="onPayNowCheckboxChange()"/>
           </td>
           <td><strong>${o.batch_id || '—'}</strong></td>
-          <td>${getOrderCustomerName(o, cMap)}</td>
-          <td>${invNum}</td>
+          <td>${escapeHtml(getOrderCustomerName(o, cMap))}</td>
+          <td>${escapeHtml(invNum)}</td>
           <td>${statusBadge(o.status)}</td>
           <td>${formatDate(o.pickup_date)}</td>
           <td style="color:${balance > 0 ? 'var(--danger)' : 'var(--success)'};font-weight:700;">${formatCurrency(balance)}</td>
@@ -1382,7 +1382,7 @@ async function showPayNowOptionsModal(orderId) {
 
   createModal('paynow-options-modal', `Pay Now: ${order.batch_id}`, `
     <div style="background:var(--bg);padding:16px;border-radius:10px;margin-bottom:18px;font-size:0.9em;display:grid;grid-template-columns:1fr 1fr;gap:12px;">
-      <div><span class="form-label">Customer:</span> <strong>${cust?.hotel_name || '—'}</strong></div>
+      <div><span class="form-label">Customer:</span> <strong>${escapeHtml(cust?.hotel_name || '—')}</strong></div>
       <div><span class="form-label">Invoice Number:</span> <strong>${inv.invoice_number}</strong></div>
       <div><span class="form-label">Total Amount:</span> <strong>${formatCurrency(inv.total_amount)}</strong></div>
       <div><span class="form-label">Remaining Balance:</span> <strong style="color:var(--danger);">${formatCurrency(balance)}</strong></div>
@@ -1908,9 +1908,9 @@ async function showBatchPayConfirmModal() {
 
     batchListHTML += `
       <tr style="border-bottom:1px solid var(--border);">
-        <td style="padding:8px 0;">${cust?.hotel_name || '—'}</td>
+        <td style="padding:8px 0;">${escapeHtml(cust?.hotel_name || '—')}</td>
         <td style="padding:8px 0; font-family:monospace; font-weight:700;">${o.batch_id || '—'}</td>
-        <td style="padding:8px 0; font-family:monospace;">${invNum}</td>
+        <td style="padding:8px 0; font-family:monospace;">${escapeHtml(invNum || '—')}</td>
         <td style="padding:8px 0; text-align:right; font-weight:600; color:var(--success);">${formatCurrency(balance)}</td>
       </tr>`;
   }
@@ -2184,9 +2184,9 @@ async function printBatchSummaryReceipt(details, totalAmount) {
 
   const rowsHTML = details.map(d => `
     <tr>
-      <td style="padding:10px 12px; border-bottom:1px solid #e2e8f0;">${d.customerName}</td>
-      <td style="padding:10px 12px; border-bottom:1px solid #e2e8f0; font-family:monospace; font-weight:700;">${d.orderNumber}</td>
-      <td style="padding:10px 12px; border-bottom:1px solid #e2e8f0; font-family:monospace;">${d.invoiceNumber}</td>
+      <td style="padding:10px 12px; border-bottom:1px solid #e2e8f0;">${escapeHtml(d.customerName)}</td>
+      <td style="padding:10px 12px; border-bottom:1px solid #e2e8f0; font-family:monospace; font-weight:700;">${escapeHtml(d.orderNumber)}</td>
+      <td style="padding:10px 12px; border-bottom:1px solid #e2e8f0; font-family:monospace;">${escapeHtml(d.invoiceNumber)}</td>
       <td style="padding:10px 12px; border-bottom:1px solid #e2e8f0; text-align:right; font-weight:700; color:#16a34a;">${formatCurrency(d.amount)}</td>
     </tr>
   `).join('');
@@ -2211,9 +2211,9 @@ async function printBatchSummaryReceipt(details, totalAmount) {
         <div style="display:flex;align-items:center;gap:12px;">
           ${logoHTML}
           <div>
-            <div style="font-family:'Playfair Display',serif;font-size:1.6em;font-weight:700;color:#1a4d8f;">${settings.company_name}</div>
-            ${settings.address?`<div style="font-size:0.9em;color:#64748b;margin-top:2px;">${settings.address}</div>`:''}
-            <div style="font-size:0.9em;color:#64748b;">${[settings.phone,settings.email].filter(Boolean).join('  |  ')}</div>
+            <div style="font-family:'Playfair Display',serif;font-size:1.6em;font-weight:700;color:#1a4d8f;">${escapeHtml(settings.company_name)}</div>
+            ${settings.address?`<div style="font-size:0.9em;color:#64748b;margin-top:2px;">${escapeHtml(settings.address)}</div>`:''}
+            <div style="font-size:0.9em;color:#64748b;">${[settings.phone,settings.email].filter(Boolean).map(escapeHtml).join('  |  ')}</div>
           </div>
         </div>
         <div style="text-align:right;">
@@ -2246,7 +2246,7 @@ async function printBatchSummaryReceipt(details, totalAmount) {
       </div>
 
       <div style="margin-top:40px; text-align:center; font-size:0.9em; color:#94a3b8; font-style:italic;">
-        ${settings.footer_message}
+        ${escapeHtml(settings.footer_message)}
       </div>
       <div style="margin-top:40px;display:flex;justify-content:space-between;align-items:flex-end;">
         <div style="text-align:center;min-width:180px;">
@@ -2284,10 +2284,10 @@ async function showCustomerProfileModal(id) {
     const wdVal = custom.wash_dry != null ? custom.wash_dry : '';
 
     return `
-      <tr class="cust-price-row" data-item-id="${item.id}" data-search-text="${item.item_name.toLowerCase()} ${item.item_id.toLowerCase()}">
+      <tr class="cust-price-row" data-item-id="${item.id}" data-search-text="${escapeHtml(item.item_name.toLowerCase())} ${escapeHtml(item.item_id.toLowerCase())}">
         <td style="padding:10px 12px; border-top: 1px solid var(--border);">
-          <strong>${item.item_name}</strong>
-          <div style="font-size:0.78em;color:var(--text-muted);font-family:monospace;margin-top:2px;">Code: ${item.item_id}</div>
+          <strong>${escapeHtml(item.item_name)}</strong>
+          <div style="font-size:0.78em;color:var(--text-muted);font-family:monospace;margin-top:2px;">Code: ${escapeHtml(item.item_id)}</div>
         </td>
         <td style="padding:8px; border-top: 1px solid var(--border);">
           <input type="number" step="0.01" min="0" class="form-input cprice-dc" value="${dcVal}" placeholder="${item.dry_clean_price || 0}" style="padding:6px 10px;font-size:0.9em;width:100%;margin:0;"/>
@@ -2304,13 +2304,13 @@ async function showCustomerProfileModal(id) {
   createModal('customer-profile-modal', `Customer Profile & Custom Prices`, `
     <div style="display:grid;grid-template-columns:1fr 1fr;gap:16px;margin-bottom:20px;background:var(--bg);padding:14px;border-radius:10px;">
       <div>
-        <div class="form-label" style="font-weight:700;color:var(--primary);font-size:1.1em;margin-bottom:4px;">${c.hotel_name}</div>
-        <div style="font-size:0.85em;color:var(--text-muted);margin-bottom:2px;"><i class="fas fa-user-tie" style="width:16px;"></i> ${c.contact_person || '—'}</div>
-        <div style="font-size:0.85em;color:var(--text-muted);"><i class="fas fa-map-marker-alt" style="width:16px;"></i> ${c.address || '—'}</div>
+        <div class="form-label" style="font-weight:700;color:var(--primary);font-size:1.1em;margin-bottom:4px;">${escapeHtml(c.hotel_name)}</div>
+        <div style="font-size:0.85em;color:var(--text-muted);margin-bottom:2px;"><i class="fas fa-user-tie" style="width:16px;"></i> ${escapeHtml(c.contact_person || '—')}</div>
+        <div style="font-size:0.85em;color:var(--text-muted);"><i class="fas fa-map-marker-alt" style="width:16px;"></i> ${escapeHtml(c.address || '—')}</div>
       </div>
       <div>
-        <div style="font-size:0.85em;color:var(--text-muted);margin-top:4px;margin-bottom:2px;"><i class="fas fa-phone" style="width:16px;"></i> ${c.phone || '—'}</div>
-        <div style="font-size:0.85em;color:var(--text-muted);margin-bottom:2px;"><i class="fas fa-envelope" style="width:16px;"></i> ${c.email || '—'}</div>
+        <div style="font-size:0.85em;color:var(--text-muted);margin-top:4px;margin-bottom:2px;"><i class="fas fa-phone" style="width:16px;"></i> ${escapeHtml(c.phone || '—')}</div>
+        <div style="font-size:0.85em;color:var(--text-muted);margin-bottom:2px;"><i class="fas fa-envelope" style="width:16px;"></i> ${escapeHtml(c.email || '—')}</div>
         <div style="font-size:0.85em;color:var(--text-muted);"><i class="fas fa-calendar-alt" style="width:16px;"></i> Customer since: ${formatDate(c.created_date)}</div>
       </div>
     </div>
@@ -2518,7 +2518,7 @@ async function renderRecentActions() {
         <div class="search-wrap">
           <i class="fas fa-search"></i>
           <input class="form-input" id="actions-search-input" placeholder="Search actions, customers, phone numbers, order IDs..."
-            value="${actionsSearch}" oninput="actionsSearch=this.value;actionsPage=1;_refreshActionsTable()"/>
+            value="${escapeHtml(actionsSearch)}" oninput="actionsSearch=this.value;actionsPage=1;_refreshActionsTable()"/>
         </div>
 
         <div>
@@ -2722,14 +2722,14 @@ async function _refreshActionsTable() {
           </span>
         </td>
         <td>
-          <div style="font-size:0.9em;font-weight:500;line-height:1.4;">${a.description || '—'}</div>
+          <div style="font-size:0.9em;font-weight:500;line-height:1.4;">${escapeHtml(a.description || '—')}</div>
         </td>
         <td>
           <div style="display:flex;align-items:center;gap:6px;">
             <div style="width:24px;height:24px;border-radius:50%;background:linear-gradient(135deg,var(--primary),var(--accent));color:#fff;display:flex;align-items:center;justify-content:center;font-size:0.72em;font-weight:700;flex-shrink:0;">
-              ${(a.user || 'A').charAt(0).toUpperCase()}
+              ${escapeHtml((a.user || 'A').charAt(0).toUpperCase())}
             </div>
-            <span style="font-size:0.85em;font-weight:600;">${a.user || 'System'}</span>
+            <span style="font-size:0.85em;font-weight:600;">${escapeHtml(a.user || 'System')}</span>
           </div>
         </td>
         <td style="text-align:center;">
@@ -2785,8 +2785,8 @@ async function showActionDetailsModal(actionId) {
   if (act.details && Object.keys(act.details).length > 0) {
     detailsRows = Object.entries(act.details).map(([k, v]) => `
       <tr>
-        <td style="font-family:monospace;font-size:0.84em;font-weight:700;color:var(--primary);width:35%;">${k}</td>
-        <td style="font-size:0.88em;word-break:break-all;">${typeof v === 'object' ? '<pre style="margin:0;font-size:0.82em;">' + JSON.stringify(v, null, 2) + '</pre>' : String(v)}</td>
+        <td style="font-family:monospace;font-size:0.84em;font-weight:700;color:var(--primary);width:35%;">${escapeHtml(k)}</td>
+        <td style="font-size:0.88em;word-break:break-all;">${typeof v === 'object' ? '<pre style="margin:0;font-size:0.82em;">' + escapeHtml(JSON.stringify(v, null, 2)) + '</pre>' : escapeHtml(String(v))}</td>
       </tr>
     `).join('');
   } else {
@@ -2798,10 +2798,10 @@ async function showActionDetailsModal(actionId) {
       <div style="font-size:0.85em;color:var(--text-muted);">Timestamp</div>
       <div style="font-weight:700;font-size:1.05em;margin-bottom:10px;">${timeFormatted}</div>
       <div style="font-size:0.85em;color:var(--text-muted);">Description</div>
-      <div style="font-size:0.95em;font-weight:600;padding:10px 14px;background:var(--bg);border-radius:8px;border:1px solid var(--border);margin-bottom:12px;">${act.description}</div>
+      <div style="font-size:0.95em;font-weight:600;padding:10px 14px;background:var(--bg);border-radius:8px;border:1px solid var(--border);margin-bottom:12px;">${escapeHtml(act.description)}</div>
       <div style="display:flex;gap:20px;font-size:0.88em;">
-        <div><strong>Category:</strong> ${act.category || 'System'}</div>
-        <div><strong>Performed By:</strong> ${act.user || 'System'}</div>
+        <div><strong>Category:</strong> ${escapeHtml(act.category || 'System')}</div>
+        <div><strong>Performed By:</strong> ${escapeHtml(act.user || 'System')}</div>
       </div>
     </div>
     <div style="font-weight:700;font-size:0.95em;margin-bottom:8px;">Payload Details</div>
