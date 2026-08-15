@@ -252,48 +252,49 @@ const DB = {
     await DB._callAdminUsersFn('delete', { id });
   },
 
-  // ── ID Generators — Atomic RPC Sequence with fallback ──
+  // ── ID Generators — Atomic, per-month RPC (no unsafe client-side fallback) ──
+  //
+  // There is deliberately NO client-side "scan existing rows, take max, add 1"
+  // fallback here anymore. That pattern is exactly the non-atomic race
+  // condition this RPC was built to replace: two concurrent requests can both
+  // read the same "current max" before either writes back, and both mint the
+  // same ID. A rare, loud failure (this call throws, the caller's existing
+  // try/catch shows a toast and the save doesn't go through) is a much safer
+  // outcome than a rare, silent duplicate batch/invoice number.
+  //
+  // The RPC itself (next_batch_id/next_invoice_number, see
+  // supabase_id_generation_fix.sql) is atomic under concurrency via
+  // Postgres's INSERT ... ON CONFLICT DO UPDATE, and is keyed per-month by
+  // `prefix` so the 4-digit suffix resets to 0001 each month as the ID
+  // format implies, instead of climbing forever.
+  async _generateSequentialId(rpcName, prefix, entityLabel) {
+    let lastErr = null;
+    for (let attempt = 1; attempt <= 2; attempt++) {
+      try {
+        const { data, error } = await _sb.rpc(rpcName, { prefix });
+        if (!error && data) return data;
+        lastErr = error || new Error(`${rpcName} returned no data`);
+      } catch (e) {
+        lastErr = e;
+      }
+      if (attempt === 1) await new Promise(r => setTimeout(r, 400)); // one retry after a short delay, in case of a transient blip
+    }
+    console.error(`${rpcName} failed after retry — refusing to fall back to unsafe client-side ID generation:`, lastErr);
+    throw new Error(`Could not generate a unique ${entityLabel} right now (ID service unavailable). Please try again in a moment — if this keeps happening, the ${rpcName} database function may not be deployed; see supabase_id_generation_fix.sql.`);
+  },
   async generateBatchId() {
     const now = new Date();
     const mm = String(now.getMonth() + 1).padStart(2, '0');
     const yy = String(now.getFullYear()).slice(-2);
-    const prefix = `LND-${mm}${yy}-`;                          // e.g. LND-0526-
-    try {
-      const { data, error } = await _sb.rpc('next_batch_id', { prefix });
-      if (!error && data) return data;
-    } catch (e) {
-      console.warn('next_batch_id RPC fallback triggered:', e);
-    }
-    // Fallback client-side generation if RPC is missing
-    const rows = await _q(_sb.from('orders').select('batch_id').like('batch_id', `${prefix}%`));
-    let maxSeq = 0;
-    (rows || []).forEach(r => {
-      const parts = (r.batch_id || '').split('-');
-      const n = parseInt(parts[parts.length - 1]) || 0;
-      if (n > maxSeq) maxSeq = n;
-    });
-    return `${prefix}${String(maxSeq + 1).padStart(4, '0')}`;
+    const prefix = `LND-${mm}${yy}-`;                          // e.g. LND-0826-
+    return DB._generateSequentialId('next_batch_id', prefix, 'batch ID');
   },
   async generateInvoiceNumber() {
     const now = new Date();
     const mm = String(now.getMonth() + 1).padStart(2, '0');
     const yy = String(now.getFullYear()).slice(-2);
-    const prefix = `INV-${mm}${yy}-`;                          // e.g. INV-0526-
-    try {
-      const { data, error } = await _sb.rpc('next_invoice_number', { prefix });
-      if (!error && data) return data;
-    } catch (e) {
-      console.warn('next_invoice_number RPC fallback triggered:', e);
-    }
-    // Fallback client-side generation if RPC is missing
-    const rows = await _q(_sb.from('invoices').select('invoice_number').like('invoice_number', `${prefix}%`));
-    let maxSeq = 0;
-    (rows || []).forEach(r => {
-      const parts = (r.invoice_number || '').split('-');
-      const n = parseInt(parts[parts.length - 1]) || 0;
-      if (n > maxSeq) maxSeq = n;
-    });
-    return `${prefix}${String(maxSeq + 1).padStart(4, '0')}`;
+    const prefix = `INV-${mm}${yy}-`;                          // e.g. INV-0826-
+    return DB._generateSequentialId('next_invoice_number', prefix, 'invoice number');
   },
 
   // ── Export / Import ───────────────────────

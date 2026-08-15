@@ -15,20 +15,101 @@ SET qr_token = gen_random_uuid()
 WHERE qr_token IS NULL;
 
 -- ------------------------------------------------------------
--- 2. FIX ISSUE #6: Atomic ID Generation via Postgres Sequences & RPC
+-- 2. FIX ISSUE #6: Atomic, PER-MONTH ID Generation via RPC
 -- ------------------------------------------------------------
+-- v2 (superseding the batch_id_seq/invoice_num_seq version below): the
+-- original fix used ONE global Postgres sequence shared across every
+-- month forever. That's atomic, but it means the 4-digit suffix keeps
+-- climbing indefinitely instead of resetting to 0001 each month, even
+-- though the ID format (LND-MMYY-#### / INV-MMYY-####) implies a fresh
+-- count per month. This version keys the counter by `prefix` (which
+-- already encodes month+year), so each calendar month gets its own
+-- atomic counter starting at 1 — while remaining exactly as safe under
+-- concurrency as the sequence version, via INSERT ... ON CONFLICT DO
+-- UPDATE, which Postgres executes as a single atomically-locked
+-- statement per row.
+CREATE TABLE IF NOT EXISTS public.id_counters (
+  counter_key   text PRIMARY KEY,
+  current_value integer NOT NULL DEFAULT 0
+);
+
+ALTER TABLE public.id_counters ENABLE ROW LEVEL SECURITY;
+-- Intentionally no policies: this table is never read or written
+-- directly by the client. It's only touched by the SECURITY DEFINER
+-- functions below, which bypass RLS as their owner. That keeps the
+-- counter from being readable/writable except through the atomic path.
+
+-- Backfill: seed each month's counter with the highest sequence number
+-- already issued for that prefix, so switching from the old global
+-- sequence to this per-month counter can't hand out an ID that
+-- collides with one already on the books. Safe to re-run — GREATEST()
+-- means a second run can only raise a counter, never lower it below
+-- what's actually been issued.
+INSERT INTO public.id_counters (counter_key, current_value)
+SELECT
+  substring(batch_id from '^(.*-)[0-9]{4}$')                          AS counter_key,
+  MAX(substring(batch_id from '([0-9]{4})$')::integer)                AS current_value
+FROM public.orders
+WHERE batch_id ~ '^.+-[0-9]{4}$'
+GROUP BY substring(batch_id from '^(.*-)[0-9]{4}$')
+ON CONFLICT (counter_key) DO UPDATE
+  SET current_value = GREATEST(public.id_counters.current_value, EXCLUDED.current_value);
+
+INSERT INTO public.id_counters (counter_key, current_value)
+SELECT
+  substring(invoice_number from '^(.*-)[0-9]{4}$')                    AS counter_key,
+  MAX(substring(invoice_number from '([0-9]{4})$')::integer)          AS current_value
+FROM public.invoices
+WHERE invoice_number ~ '^.+-[0-9]{4}$'
+GROUP BY substring(invoice_number from '^(.*-)[0-9]{4}$')
+ON CONFLICT (counter_key) DO UPDATE
+  SET current_value = GREATEST(public.id_counters.current_value, EXCLUDED.current_value);
+
+CREATE OR REPLACE FUNCTION public.next_batch_id(prefix text)
+RETURNS text
+LANGUAGE plpgsql
+VOLATILE
+SECURITY DEFINER
+SET search_path = public
+AS $$
+DECLARE
+  v_seq integer;
+BEGIN
+  INSERT INTO public.id_counters (counter_key, current_value)
+  VALUES (prefix, 1)
+  ON CONFLICT (counter_key)
+  DO UPDATE SET current_value = public.id_counters.current_value + 1
+  RETURNING current_value INTO v_seq;
+
+  RETURN prefix || lpad(v_seq::text, 4, '0');
+END;
+$$;
+
+CREATE OR REPLACE FUNCTION public.next_invoice_number(prefix text)
+RETURNS text
+LANGUAGE plpgsql
+VOLATILE
+SECURITY DEFINER
+SET search_path = public
+AS $$
+DECLARE
+  v_seq integer;
+BEGIN
+  INSERT INTO public.id_counters (counter_key, current_value)
+  VALUES (prefix, 1)
+  ON CONFLICT (counter_key)
+  DO UPDATE SET current_value = public.id_counters.current_value + 1
+  RETURNING current_value INTO v_seq;
+
+  RETURN prefix || lpad(v_seq::text, 4, '0');
+END;
+$$;
+
+-- Old global sequences from the superseded v1 fix. No longer referenced
+-- by the functions above; left in place (harmless/unused) rather than
+-- dropped, in case anything else still points at them.
 CREATE SEQUENCE IF NOT EXISTS batch_id_seq START WITH 1;
 CREATE SEQUENCE IF NOT EXISTS invoice_num_seq START WITH 1;
-
-CREATE OR REPLACE FUNCTION next_batch_id(prefix text) 
-RETURNS text AS $$
-  SELECT prefix || lpad(nextval('batch_id_seq')::text, 4, '0');
-$$ LANGUAGE sql VOLATILE;
-
-CREATE OR REPLACE FUNCTION next_invoice_number(prefix text) 
-RETURNS text AS $$
-  SELECT prefix || lpad(nextval('invoice_num_seq')::text, 4, '0');
-$$ LANGUAGE sql VOLATILE;
 
 -- ------------------------------------------------------------
 -- 3. FIX ISSUE #1 & #5: Row Level Security (RLS) & Full Access Policies

@@ -42,7 +42,11 @@ In Supabase Dashboard → **SQL Editor**:
 
 1. `supabase_security_fixes.sql` — only if you haven't already run this
    from the previous round of fixes (it creates the `next_batch_id` /
-   `next_invoice_number` sequences this migration depends on).
+   `next_invoice_number` atomic ID-generation functions this migration
+   depends on). If you HAVE already run it, also run
+   `supabase_id_generation_fix.sql` once (v6.4) — it corrects those two
+   functions to reset per calendar month instead of counting up forever,
+   and is safe to run even if you're not sure whether you need it.
 2. `supabase_auth_migration.sql` — the new migration in this bundle. This
    drops every existing RLS policy and replaces it with the
    authenticated/admin-scoped versions.

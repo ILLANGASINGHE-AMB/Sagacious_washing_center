@@ -16,7 +16,7 @@ Additional #2 Restore has no rollback on failure	✅ Fixed	importAll() performs 
 
 🟠 High Issues
 Issue	Status	Notes
-#6 Batch ID / invoice number race condition	✅ Fixed	generateBatchId() and generateInvoiceNumber() call _sb.rpc('next_batch_id', ...) and _sb.rpc('next_invoice_number', ...).
+#6 Batch ID / invoice number race condition	✅ Fixed (v6.4, corrected)	Originally "fixed" by an atomic RPC (next_batch_id/next_invoice_number) backed by a global Postgres sequence — but that had two remaining problems, caught on review: (1) db.js still fell back to the old non-atomic client-side "scan max, add 1" method whenever the RPC call failed, reintroducing the exact race it was meant to fix; (2) the sequence was global, not per-month, so the 4-digit suffix never reset to 0001 each month despite the LND-MMYY-#### format implying it should. v6.4 replaces the global sequence with a per-month atomic counter table (id_counters, keyed by prefix, via INSERT ... ON CONFLICT DO UPDATE — see supabase_id_generation_fix.sql, includes a backfill so existing IDs can't collide) and removes the unsafe fallback entirely: db.js now retries the RPC once, then throws a clear error instead of silently minting an ID the unsafe way. A rare loud failure beats a rare silent duplicate.
 #7 No double-submit protection	✅ Fixed	Action buttons check disabled state and show visual loading spinners during async calls.
 #8 No error handling in expenses.js / transport.js	✅ Fixed	Both files feature try/catch blocks; native confirm()/alert() replaced with confirmDialog() and toast().
 Additional #3 Range-based server pagination	✅ Fixed	getOrdersPaged(), getInvoicesPaged(), getCustomersPaged() added to db.js using Supabase .range().
