@@ -870,7 +870,9 @@ function renderTopItemsChart(d) {
   const gridColor = isDark ? 'rgba(255,255,255,0.07)' : 'rgba(0,0,0,0.07)';
   const textColor = isDark ? '#94a3b8' : '#64748b';
 
-  const topItems = (d.itemStatsList || []).slice(0, 8);
+  // Was slice(0, 8) — didn't match the "Top 10 Best Selling Items" heading above the chart,
+  // so it silently dropped the 9th and 10th best-selling items from the view.
+  const topItems = (d.itemStatsList || []).slice(0, 10);
   const labels = topItems.map(i => i.name.length > 18 ? i.name.substring(0, 18) + '...' : i.name);
   const revenueData = topItems.map(i => i.revenue);
 
