@@ -691,11 +691,11 @@ const ExpensesModule = {
             </div>
 
             <div class="bg-white/10 backdrop-blur-md p-4 rounded-xl border border-white/10">
-              <div class="text-xs font-semibold text-indigo-200 uppercase">Total Cash Expenses</div>
+              <div class="text-xs font-semibold text-indigo-200 uppercase">Total Cash Expenses (All-Time)</div>
               <div class="text-xl font-black ${totalCashOutlay > 0 ? 'text-rose-400' : 'text-slate-300'} mt-1">
                 LKR ${totalCashOutlay.toLocaleString('en-US', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}
               </div>
-              <div class="text-[10px] text-indigo-300 mt-0.5">Incl. Chemical, Operational & Full Fuel</div>
+              <div class="text-[10px] text-indigo-300 mt-0.5">Lifetime total — NOT scoped to this month. See Analytics for a date-range view.</div>
             </div>
 
             <div class="bg-white/10 backdrop-blur-md p-4 rounded-xl border border-white/10">
