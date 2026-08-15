@@ -212,47 +212,18 @@ ${recentOrdersCtx || "No recent orders."}
 let geminiChatHistory = [];
 
 async function renderGemini() {
-  const providerName = 'Gemini';
-  
-  document.getElementById('page-title').textContent = `${providerName} AI Insights`;
-  
+  document.getElementById('page-title').textContent = `SAGA Assistant`;
+
   const apiKey = await DB.getSetting('gemini_api_key');
-  if (!apiKey) {
-    document.getElementById('content').innerHTML = `
-      <div class="card" style="max-width: 600px; margin: 40px auto; text-align: center; padding: 40px 30px;">
-        <div style="font-size: 3.5em; color: #8b5cf6; margin-bottom: 20px;"><i class="fas fa-brain"></i></div>
-        <h2 style="font-family:'Playfair Display',serif; font-size: 1.6em; font-weight: 700; margin-bottom: 12px;">AI Assistant Integration</h2>
-        <p style="color: var(--text-muted); font-size: 0.95em; line-height: 1.6; margin-bottom: 24px;">
-          Power up your POS system with AI! Get automated financial forecasting, business efficiency analyses, demand summaries, and a smart interactive assistant.
-        </p>
-        <div style="background: rgba(139, 92, 246, 0.05); border: 1px dashed rgba(139, 92, 246, 0.2); border-radius: 10px; padding: 16px; text-align: left; margin-bottom: 24px; font-size: 0.88em;">
-          <h4 style="font-weight: 700; margin-bottom: 6px; color: var(--primary);"><i class="fas fa-key"></i> Setup Required</h4>
-          To get started, please navigate to <strong>Settings</strong>, get your API Key, and save it under the <strong>AI Assistant Integration</strong> section.
-        </div>
-        <button class="btn btn-primary" style="margin:0 auto;" onclick="navigate('settings')"><i class="fas fa-cog"></i> Go to Settings</button>
-      </div>`;
-    return;
-  }
-
-  // Render full dashboard
-  document.getElementById('content').innerHTML = `
-    <div style="margin-bottom: 22px;">
-      <div style="font-size: 0.85em; color: var(--text-muted);">Sagacious Business Partner (${providerName} AI)</div>
-      <div style="font-family:'Playfair Display',serif; font-size: 1.6em; font-weight: 700; color: var(--text); display: flex; align-items: center; gap: 8px;">
-        <i class="fas fa-brain" style="color: #8b5cf6;"></i> ${providerName} AI Insights Hub
-      </div>
-    </div>
-
-    <!-- Quick Analysis Options -->
-    <div style="display: grid; grid-template-columns: repeat(auto-fit, minmax(280px, 1fr)); gap: 20px; margin-bottom: 24px;">
-      <div class="card" style="cursor: pointer; hover: box-shadow: 0 4px 20px rgba(0,0,0,0.1); transition: all 0.2s;" onclick="runAIForecast()">
+  const forecastCardHtml = apiKey ? `
+      <div class="card" style="cursor: pointer; transition: all 0.2s;" onclick="runAIForecast()">
         <div style="display: flex; align-items: center; gap: 14px; margin-bottom: 12px;">
           <div class="icon badge badge-purple" style="width: 48px; height: 48px; border-radius: 12px; display: flex; align-items: center; justify-content: center; font-size: 1.3em; background: rgba(139, 92, 246, 0.12); color: #8b5cf6;">
             <i class="fas fa-chart-line"></i>
           </div>
           <div>
             <div style="font-weight: 700; font-size: 1em;">Demand & Revenue Forecast</div>
-            <div style="font-size: 0.82em; color: var(--text-muted);">Predict next month's demand and revenue trends</div>
+            <div style="font-size: 0.82em; color: var(--text-muted);">Predict next month's demand and revenue trends (uses Gemini — paid/credit-based)</div>
           </div>
         </div>
         <button class="btn btn-primary btn-sm" style="width: 100%; justify-content: center; background: linear-gradient(135deg, #8b5cf6, #3b82f6); border: none;">
@@ -266,14 +237,34 @@ async function renderGemini() {
             <i class="fas fa-bolt"></i>
           </div>
           <div>
-            <div style="font-weight: 700; font-size: 1em;">Business Efficiency Analyzes</div>
-            <div style="font-size: 0.82em; color: var(--text-muted);">Find logistics bottlenecks and driver success rates</div>
+            <div style="font-weight: 700; font-size: 1em;">Business Efficiency Analysis</div>
+            <div style="font-size: 0.82em; color: var(--text-muted);">Find logistics bottlenecks (uses Gemini — paid/credit-based)</div>
           </div>
         </div>
         <button class="btn btn-primary btn-sm" style="width: 100%; justify-content: center; background: linear-gradient(135deg, #22c55e, #10b981); border: none;">
           <i class="fas fa-wand-magic-sparkles"></i> Run Efficiency Analysis
         </button>
+      </div>` : `
+      <div class="card" style="grid-column:1/-1; text-align:center; padding:20px;">
+        <div style="font-size:0.88em; color:var(--text-muted); margin-bottom:10px;">
+          <i class="fas fa-circle-info"></i> The free chatbot below covers most day-to-day questions with no setup.
+          Optional Gemini-powered forecast/efficiency reports need an API key if you want them too.
+        </div>
+        <button class="btn btn-secondary btn-sm" onclick="navigate('settings')"><i class="fas fa-cog"></i> Add Gemini key (optional)</button>
+      </div>`;
+
+  // Render full dashboard — the free chatbot below always works, no key required.
+  document.getElementById('content').innerHTML = `
+    <div style="margin-bottom: 22px;">
+      <div style="font-size: 0.85em; color: var(--text-muted);">Sagacious Business Partner</div>
+      <div style="font-family:'Playfair Display',serif; font-size: 1.6em; font-weight: 700; color: var(--text); display: flex; align-items: center; gap: 8px;">
+        <i class="fas fa-comments" style="color: #8b5cf6;"></i> SAGA Assistant
       </div>
+    </div>
+
+    <!-- Quick Analysis Options (optional, Gemini-powered) -->
+    <div style="display: grid; grid-template-columns: repeat(auto-fit, minmax(280px, 1fr)); gap: 20px; margin-bottom: 24px;">
+      ${forecastCardHtml}
     </div>
 
     <!-- Output Analysis / Interactive Chat workspace -->
@@ -288,23 +279,23 @@ async function renderGemini() {
         <div id="gemini-report-body" style="flex: 1; overflow-y: auto; color: var(--text); line-height: 1.6; font-size: 0.92em; display: flex; align-items: center; justify-content: center; background: rgba(0,0,0,0.01); border-radius: 8px; padding: 20px;">
           <div style="text-align: center; color: var(--text-muted);">
             <i class="fas fa-wand-magic-sparkles" style="font-size: 2.2em; color:#8b5cf6; margin-bottom: 14px; display: block;"></i>
-            Click an action card above to generate a forecasting report or efficiency analysis.
+            ${apiKey ? 'Click an action card above to generate a forecasting report or efficiency analysis.' : 'Add a Gemini API key in Settings to unlock optional forecast/efficiency reports.'}
           </div>
         </div>
       </div>
 
-      <!-- Chat with Assistant -->
+      <!-- Chat with the free rule-based assistant -->
       <div class="card" style="display: flex; flex-direction: column; min-height: 400px; max-height: 600px;">
         <div style="font-family:'Playfair Display',serif; font-weight: 700; margin-bottom: 14px; border-bottom: 1px solid var(--border); padding-bottom: 10px;">
-          <i class="fas fa-comments" style="color:#8b5cf6; margin-right: 8px;"></i>Chat with Gemini AI
+          <i class="fas fa-comments" style="color:#8b5cf6; margin-right: 8px;"></i>Chat with SAGA Assistant <span style="font-size:0.7em;font-weight:500;color:var(--success);">FREE · instant</span>
         </div>
         <div id="gemini-chat-history" style="flex: 1; overflow-y: auto; display: flex; flex-direction: column; gap: 10px; padding: 10px; background: var(--bg); border-radius: 8px; margin-bottom: 12px; font-size: 0.88em;">
           <div class="gemini-msg system">
-            I am your Gemini business assistant. You can ask me questions about customer accounts, unpaid balances, best drivers, or monthly sales growth!
+            I answer questions straight from your database — no AI credits used. Try "revenue this month", "unpaid orders", or "balance for [customer name]". Say "help" for more.
           </div>
         </div>
         <div style="display: flex; gap: 8px;">
-          <input type="text" id="gemini-chat-input" class="form-input" placeholder="Ask about orders, invoices, or metrics..." style="margin: 0; flex: 1;" onkeydown="handleGeminiChatKey(event)" />
+          <input type="text" id="gemini-chat-input" class="form-input" placeholder='Try "unpaid orders" or "revenue this month"...' style="margin: 0; flex: 1;" onkeydown="handleGeminiChatKey(event)" />
           <button class="btn btn-primary" onclick="sendGeminiChatMessage()" style="padding: 10px 14px;"><i class="fas fa-paper-plane"></i></button>
         </div>
       </div>
@@ -535,7 +526,7 @@ async function sendGeminiChatMessage() {
   inputEl.value = '';
   renderChatBubbles('gemini-chat-history');
 
-  // Add typing indicator
+  // Brief typing indicator purely for UX feel — SAGABot answers locally, no network call.
   const historyContainer = document.getElementById('gemini-chat-history');
   const typingBubble = document.createElement('div');
   typingBubble.id = 'chat-typing-indicator';
@@ -546,24 +537,9 @@ async function sendGeminiChatMessage() {
   historyContainer.scrollTop = historyContainer.scrollHeight;
 
   try {
-    const summary = await getBusinessContextSummary();
-    const screenCtx = getScreenContext();
-    const messagesContext = geminiChatHistory.map(m => `${m.role === 'user' ? 'User' : 'Assistant'}: ${m.content}`).join('\n');
-    const prompt = `${summary}
-${screenCtx}
-
-Here is the chat history:
-${messagesContext}
-
-You are SAGA AI, the smart assistant for Sagacious Washing Center POS. Answer the user's message directly, naturally, and concisely. 
-CRITICAL: ONLY provide metric reports, lists of orders/customers, or financial stats if the user specifically requests them or if they are directly relevant to answering the user's query. If the user greets you (e.g. "How are you?"), respond naturally without printing any database summaries, tables, or metric snapshots.`;
-
-    const aiResponse = await callGemini(prompt);
-    
-    // Remove typing bubble
+    const answer = await SAGABot.answer(userText);
     document.getElementById('chat-typing-indicator')?.remove();
-
-    geminiChatHistory.push({ role: 'ai', content: aiResponse });
+    geminiChatHistory.push({ role: 'ai', content: answer });
     renderChatBubbles('gemini-chat-history');
   } catch (error) {
     document.getElementById('chat-typing-indicator')?.remove();
@@ -607,28 +583,15 @@ function toggleGeminiDrawer() {
   }
 
   if (isOpen) {
-    DB.getSetting('gemini_api_key').then((apiKey) => {
-      const providerName = 'Gemini';
-      const container = document.getElementById('gemini-drawer-chat');
-      if (!apiKey) {
-        container.innerHTML = `
-          <div style="text-align: center; color: var(--text-muted); margin-top: 40px; padding: 20px;">
-            <i class="fas fa-exclamation-circle" style="font-size: 2.5em; color: var(--warning); margin-bottom: 12px;"></i>
-            <h4 style="font-weight: 700; margin-bottom: 6px; color: var(--primary);">AI API Key Missing</h4>
-            <p style="font-size:0.83em; line-height:1.5;">To use the AI Quick Assistant, please go to settings and add your API Key first.</p>
-            <button class="btn btn-primary btn-sm" style="margin: 14px auto 0;" onclick="toggleGeminiDrawer(); navigate('settings')"><i class="fas fa-cog"></i> Configure Now</button>
-          </div>`;
-      } else {
-        if (geminiDrawerHistory.length === 0) {
-          container.innerHTML = `
-            <div class="gemini-msg system">
-              Welcome to the AI Quick Assistant (powered by ${providerName})! Ask anything about the POS data, invoicing status, or sales from any page.
-            </div>`;
-        } else {
-          renderDrawerChatBubbles();
-        }
-      }
-    });
+    const container = document.getElementById('gemini-drawer-chat');
+    if (geminiDrawerHistory.length === 0) {
+      container.innerHTML = `
+        <div class="gemini-msg system">
+          Welcome to the SAGA Quick Assistant — free, instant answers straight from your database, from any page. Try "unpaid orders", "revenue this month", or "help".
+        </div>`;
+    } else {
+      renderDrawerChatBubbles();
+    }
   }
 }
 
@@ -652,7 +615,7 @@ async function sendGeminiDrawerMessage() {
   inputEl.value = '';
   renderDrawerChatBubbles();
 
-  // Add typing indicator
+  // Brief typing indicator purely for UX feel — SAGABot answers locally, no network call.
   const historyContainer = document.getElementById('gemini-drawer-chat');
   const typingBubble = document.createElement('div');
   typingBubble.id = 'drawer-typing-indicator';
@@ -663,24 +626,9 @@ async function sendGeminiDrawerMessage() {
   historyContainer.scrollTop = historyContainer.scrollHeight;
 
   try {
-    const summary = await getBusinessContextSummary();
-    const screenCtx = getScreenContext();
-    const messagesContext = geminiDrawerHistory.map(m => `${m.role === 'user' ? 'User' : 'Assistant'}: ${m.content}`).join('\n');
-    const prompt = `${summary}
-${screenCtx}
-
-Here is the chat history:
-${messagesContext}
-
-You are SAGA AI, the smart assistant for Sagacious Washing Center POS. Answer the user's message directly, naturally, and concisely. 
-CRITICAL: ONLY provide metric reports, lists of orders/customers, or financial stats if the user specifically requests them or if they are directly relevant to answering the user's query. If the user greets you (e.g. "How are you?"), respond naturally without printing any database summaries, tables, or metric snapshots.`;
-
-    const aiResponse = await callGemini(prompt);
-    
-    // Remove typing bubble
+    const answer = await SAGABot.answer(userText);
     document.getElementById('drawer-typing-indicator')?.remove();
-
-    geminiDrawerHistory.push({ role: 'ai', content: aiResponse });
+    geminiDrawerHistory.push({ role: 'ai', content: answer });
     renderDrawerChatBubbles();
   } catch (error) {
     document.getElementById('drawer-typing-indicator')?.remove();
@@ -695,7 +643,7 @@ function renderDrawerChatBubbles() {
   const container = document.getElementById('gemini-drawer-chat');
   if (!container) return;
 
-  let html = `<div class="gemini-msg system">Welcome to SAGA AI! Ask anything about the POS data, invoicing status, or sales from any page.</div>`;
+  let html = `<div class="gemini-msg system">SAGA Quick Assistant — free, instant answers from your database, from any page.</div>`;
   
   geminiDrawerHistory.forEach(m => {
     if (m.role === 'user') {
