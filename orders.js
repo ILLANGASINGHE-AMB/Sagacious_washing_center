@@ -408,8 +408,12 @@ function calcCbItemTotal() {
   }
 
   const discRate = parseFloat(document.getElementById('cb-discount')?.value)||0;
-  const discAmt  = subtotal * (discRate/100);        // discount on items only
-  const grand    = Math.max(0, subtotal - discAmt + delivery); // delivery added after
+  const fin = Financials.computeOrderFinancials(
+    { discount_rate: discRate, delivery_charge: delivery, extra_payment: 0 },
+    [{ subtotal }]
+  );
+  const discAmt = fin.discountAmount;
+  const grand   = fin.grandTotal;
   const el = document.getElementById('cb-total');
   if(el) el.textContent = formatCurrency(grand);
   const bd = document.getElementById('cb-breakdown');
@@ -455,8 +459,12 @@ async function saveCreditBill() {
   if(!valid)             return toast('Please select an item for every row', 'error');
   if(!orderItems.length) return toast('Add at least one item', 'error');
 
-  const discAmt  = itemsSubtotal*(discRate/100);          // discount on items only
-  const billTotal = Math.max(0, itemsSubtotal-discAmt+deliveryCharge); // delivery added after
+  const cbFin = Financials.computeOrderFinancials(
+    { discount_rate: discRate, delivery_charge: deliveryCharge, extra_payment: 0 },
+    orderItems
+  );
+  const discAmt   = cbFin.discountAmount;
+  const billTotal = cbFin.grandTotal;
 
   try {
     showProcessingOverlay('Generating Bill', 'Saving credit bill details...');
@@ -832,8 +840,12 @@ function calcOrderTotal(){
   }
 
   const discRate  = parseFloat(document.getElementById('ao-discount')?.value)||0;
-  const discAmt   = subtotal * (discRate/100);        // discount on items only
-  const grandTotal= Math.max(0, subtotal - discAmt + delivery + extra); // delivery and extra added after
+  const fin = Financials.computeOrderFinancials(
+    { discount_rate: discRate, delivery_charge: delivery, extra_payment: extra },
+    [{ subtotal }]
+  );
+  const discAmt    = fin.discountAmount;
+  const grandTotal = fin.grandTotal;
   const el = document.getElementById('ao-total');
   if(el) el.textContent = formatCurrency(grandTotal);
   const bd = document.getElementById('ao-breakdown');
@@ -882,8 +894,12 @@ async function saveNewOrder(){
     if (saveBtn) saveBtn.disabled = false;
     return toast('Add at least one item','error');
   }
-  const discAmt    = itemsSubtotal*(discRate/100);          // discount on items only
-  const grandTotal = Math.max(0, itemsSubtotal-discAmt+deliveryCharge + extra); // delivery and extra added after discount
+  const newOrderFin = Financials.computeOrderFinancials(
+    { discount_rate: discRate, delivery_charge: deliveryCharge, extra_payment: extra },
+    orderItems
+  );
+  const discAmt    = newOrderFin.discountAmount;
+  const grandTotal = newOrderFin.grandTotal;
   try {
     const batchId = await DB.generateBatchId();
     const orderStatus = advance >= grandTotal ? 'Paid' : 'Unpaid';
@@ -1124,15 +1140,28 @@ async function saveEditOrder(orderId,wasPickupOnly=false){
   // Sync existing invoice and calculate totals
   const existingInv=await DB.getInvoiceByOrder(orderId);
   const discRate = existingInv ? (existingInv.discount_rate || 0) : 0;
-  const discAmt = total * (discRate / 100);
-  const eoGrandTotal = Math.max(0, total - discAmt + eoDelivery + extra);
+  const eoFin = Financials.computeOrderFinancials(
+    { discount_rate: discRate, delivery_charge: eoDelivery, extra_payment: extra },
+    orderItems
+  );
+  const discAmt = eoFin.discountAmount;
+  const eoGrandTotal = eoFin.grandTotal;
 
   let status = 'Unpaid';
   if(existingInv){
     const payments=await DB.getPaymentsByInvoice(existingInv.id);
-    const totalPaid=payments.reduce((s,p)=>s+p.amount,0)+advance;
-    const newBalance=Math.max(0,eoGrandTotal-totalPaid);
-    status = newBalance<=0?'Paid':'Unpaid';
+    // Canonical calc — carries forward existingInv.deduction_amount (if any
+    // deduction was already applied to this invoice) instead of silently
+    // dropping it every time the order is edited.
+    const invFin = Financials.computeInvoiceFinancials(
+      { ...existingInv, advance_payment: advance, extra_payment: extra,
+        discount_rate: discRate, discount_amount: discAmt, delivery_charge: eoDelivery,
+        subtotal_before_discount: total, total_amount: eoGrandTotal },
+      orderItems,
+      payments
+    );
+    const newBalance = invFin.balance;
+    status = invFin.isPaid ? 'Paid' : 'Unpaid';
     await DB.updateInvoice(existingInv.id,{total_amount:eoGrandTotal,advance_payment:advance,extra_payment:extra,balance:newBalance,paid_status:status,delivery_date:delivery,subtotal_before_discount:total,discount_amount:discAmt,delivery_charge:eoDelivery});
   } else {
     status = advance>=eoGrandTotal?'Paid':'Unpaid';

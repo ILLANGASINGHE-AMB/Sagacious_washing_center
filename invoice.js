@@ -1367,9 +1367,13 @@ async function undoPaymentForInvoice(invoiceId) {
       // Delete payments
       await DB.deletePaymentsForInvoice(invoiceId);
 
-      // Restore invoice balance and status
-      const balance = Math.max(0, inv.total_amount - (inv.advance_payment || 0));
-      const paidStatus = (inv.advance_payment || 0) >= inv.total_amount ? 'Paid' : 'Unpaid';
+      // Restore invoice balance and status — canonical calc, so any
+      // deduction_amount/discount/delivery/extra already on this invoice is
+      // still accounted for. Payments are already gone at this point, so
+      // only advance_payment counts toward what's still considered paid.
+      const fin = Financials.computeInvoiceFinancials(inv, [], []);
+      const balance = fin.balance;
+      const paidStatus = fin.isPaid ? 'Paid' : 'Unpaid';
 
       await DB.updateInvoice(invoiceId, {
         balance: balance,

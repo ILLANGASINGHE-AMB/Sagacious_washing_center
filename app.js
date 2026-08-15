@@ -1315,8 +1315,11 @@ async function showPayNowOptionsModal(orderId) {
   window._isTempInvoice = isTempInv;
 
   const payments = isTempInv ? [] : await DB.getPaymentsByInvoice(inv.id);
-  const totalPaid = payments.reduce((s, p) => s + p.amount, 0) + (inv.advance_payment || 0);
-  const balance = Math.max(0, inv.total_amount - totalPaid);
+  // Canonical calc — accounts for deduction_amount, discount, delivery charge
+  // and extra payment, not just total_amount minus payments (the old formula
+  // silently ignored any deduction already applied to this invoice).
+  const fin = Financials.computeInvoiceFinancials(inv, items, payments);
+  const balance = fin.balance;
   if (balance <= 0) {
     return toast('This order is already fully paid.', 'info');
   }
