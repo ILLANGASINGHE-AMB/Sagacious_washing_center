@@ -59,11 +59,19 @@ async function enterAppWithSession(session) {
 // (it keeps its own storage independent of anything this app writes) — skip
 // straight to the app instead of forcing a re-login every visit.
 (async function restoreSessionOnLoad() {
+  let loggedIn = false;
   try {
     const session = await DB.getSession();
-    if (session) await enterAppWithSession(session);
+    if (session) loggedIn = await enterAppWithSession(session);
   } catch (e) {
     console.warn('Session restore failed:', e);
+  } finally {
+    const bootLoader = document.getElementById('auth-boot-loader');
+    if (bootLoader) bootLoader.style.display = 'none';
+    // enterAppWithSession() already reveals #app on success; only need to
+    // reveal the login form ourselves on the "no session" / error path,
+    // since it starts hidden to avoid flashing it at every logged-in user.
+    if (!loggedIn) document.getElementById('login-screen').style.display = 'flex';
   }
 })();
 

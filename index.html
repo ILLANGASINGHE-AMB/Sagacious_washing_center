@@ -702,8 +702,16 @@
     </div>
   </div>
 
-  <!-- Login Screen -->
-  <div id="login-screen">
+  <!-- Auth Boot Loader — shown immediately on every page load/refresh while
+       we check for an existing Supabase Auth session, so a logged-in user
+       never sees the login form flash before landing back in the app. -->
+  <div id="auth-boot-loader" style="min-height:100vh;display:flex;align-items:center;justify-content:center;background:linear-gradient(160deg, #0a6e6e 0%, #0d9488 40%, #0891b2 100%);">
+    <i class="fas fa-spinner fa-spin" style="font-size:2.2em;color:rgba(255,255,255,0.85);"></i>
+  </div>
+
+  <!-- Login Screen — hidden by default; app.js reveals this only after
+       confirming there is no existing session. -->
+  <div id="login-screen" style="display:none;">
     <div class="login-card">
 
       <!-- Logo -->
