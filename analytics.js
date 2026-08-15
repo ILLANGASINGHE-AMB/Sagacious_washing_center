@@ -991,7 +991,15 @@ function renderTables(d) {
 
   if (itemTfoot && d.itemStatsList.length > 0) {
     const totalQty = d.itemStatsList.reduce((s, i) => s + i.qty, 0);
-    const totalItemRev = d.grossRevenue;
+    // Sum the rows actually shown in the table, NOT d.grossRevenue. grossRevenue is the
+    // order-level total (includes delivery_charge/extra_payment, which aren't attributed
+    // to any catalog item, plus any order that has no itemized order_items rows at all) —
+    // using it here silently substituted a bigger, unrelated number for what this footer
+    // claims to be: the total of the item lines above it. If itemized revenue is notably
+    // less than Booked Sales on the KPI card above, that gap is real and worth checking —
+    // it means either delivery/extra charges make up a big share of billing, or some
+    // orders were never itemized (their revenue would otherwise be untraceable to a catalog item).
+    const totalItemRev = d.itemStatsList.reduce((s, i) => s + (i.revenue || 0), 0);
     itemTfoot.innerHTML = `
       <tr>
         <td colspan="2" style="padding:10px 16px;">Total (${d.itemStatsList.length} Items)</td>
