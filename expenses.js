@@ -37,6 +37,10 @@ const ExpensesModule = {
             <button onclick="ExpensesModule.openAddChemLogModal('OUT')" class="px-3 py-2 bg-amber-600 hover:bg-amber-700 text-white rounded-xl font-semibold text-xs transition-all shadow-sm flex items-center gap-1.5 whitespace-nowrap">
               <i class="fa-solid fa-flask-vial text-xs"></i> Log Usage (OUT)
             </button>
+            ${canDelete() ? `
+            <button onclick="ExpensesModule.recalculateHistoricalChemicalCosts()" title="One-time fix: prices every past chemical usage (OUT) entry using weighted-average cost, so COGS-mode reports are accurate for past periods too." class="px-3 py-2 bg-slate-600 hover:bg-slate-700 text-white rounded-xl font-semibold text-xs transition-all shadow-sm flex items-center gap-1.5 whitespace-nowrap">
+              <i class="fa-solid fa-calculator text-xs"></i> Recalculate Historical Costs
+            </button>` : ''}
           </div>
         </div>
 
@@ -275,7 +279,17 @@ const ExpensesModule = {
 
     let rowsHTML = '';
     let totalCash = 0;
-    let totalAveraged = 0;
+
+    // "Monthly Averaged Outlay" must reflect ONLY expenses whose amortization
+    // window currently covers this month — not a lifetime sum of every
+    // expense's monthly rate ever entered, which would keep counting expired
+    // multi-month expenses (e.g. a 6-month expense from over a year ago) as
+    // part of the current monthly overhead forever. Uses the same day-prorated
+    // logic as the P&L summary / Analytics for consistency.
+    const _now = new Date();
+    const _monthStart = new Date(_now.getFullYear(), _now.getMonth(), 1);
+    const _monthEnd = new Date(_now.getFullYear(), _now.getMonth() + 1, 0, 23, 59, 59, 999);
+    const totalAveraged = Financials.computeAmortizedExpenses(expenses, _monthStart, _monthEnd).totalAmortized;
 
     if (expenses.length === 0) {
       rowsHTML = `
@@ -288,7 +302,6 @@ const ExpensesModule = {
     } else {
       expenses.forEach(exp => {
         totalCash += (exp.amount || 0);
-        totalAveraged += (exp.monthly_averaged_amount || exp.amount || 0);
 
         const isMultiMonth = (exp.months_covered || 1) > 1;
 
@@ -350,6 +363,7 @@ const ExpensesModule = {
               <div class="text-xl font-extrabold text-indigo-600 dark:text-indigo-400 mt-1">
                 LKR ${totalAveraged.toLocaleString('en-US', { minimumFractionDigits: 2 })} / mo
               </div>
+              <div class="text-[10px] text-slate-400 mt-0.5">Expenses active this month only</div>
             </div>
             <div class="w-10 h-10 rounded-xl bg-emerald-50 dark:bg-emerald-950/40 text-emerald-600 dark:text-emerald-400 flex items-center justify-center text-lg">
               <i class="fa-solid fa-calculator"></i>
@@ -539,18 +553,25 @@ const ExpensesModule = {
   async renderExpenseSummary(container) {
     container.innerHTML = `<div class="p-8 text-center text-slate-500"><i class="fa-solid fa-spinner fa-spin text-2xl mb-2"></i><p>Generating Financial Summary...</p></div>`;
 
-    const [orders, genExpenses, chemLogs, trips, fuelConfig] = await Promise.all([
+    const [orders, genExpenses, chemLogs, trips, fuelConfig, payments] = await Promise.all([
       DB.getOrders(),
       DB.getGeneralExpenses(),
       DB.getChemicalLedger(),
       DB.getTrips(),
-      DB.getFuelPriceSettings()
+      DB.getFuelPriceSettings(),
+      DB.getPayments()
     ]);
 
     // Calculate Dashboard Aligned Totals
     const curMonth = new Date().toISOString().slice(0, 7); // "YYYY-MM"
-    const monthlyIncome = orders.filter(o => (o.created_at || '').startsWith(curMonth)).reduce((s, o) => s + parseFloat(o.total_amount || 0), 0);
-    const totalIncome = orders.reduce((s, o) => s + parseFloat(o.total_amount || 0), 0);
+    const now = new Date();
+    const monthStart = new Date(now.getFullYear(), now.getMonth(), 1);
+    const monthEnd = new Date(now.getFullYear(), now.getMonth() + 1, 0, 23, 59, 59, 999);
+    const monthlyOrders = orders.filter(o => (o.created_at || '').startsWith(curMonth));
+    const monthlyIncome = monthlyOrders.reduce((s, o) => s + parseFloat(o.total_amount || 0), 0); // billed (accrual)
+    const totalIncome = orders.reduce((s, o) => s + parseFloat(o.total_amount || 0), 0); // billed (accrual)
+    const monthlyCollected = monthlyOrders.reduce((s, o) => s + (parseFloat(o.advance_payment) || 0), 0)
+      + (payments || []).filter(p => (p.date || '').startsWith(curMonth)).reduce((s, p) => s + (parseFloat(p.amount) || 0), 0);
 
     let totalChemPurchases = 0;
     chemLogs.forEach(l => {
@@ -560,15 +581,13 @@ const ExpensesModule = {
     });
 
     let totalGeneralExpenses = 0;
-    let totalAveragedGeneral = 0;
     let manualTransportExpenses = 0;
 
     genExpenses.forEach(g => {
       const amt = parseFloat(g.amount || 0);
       totalGeneralExpenses += amt;
-      totalAveragedGeneral += parseFloat(g.monthly_averaged_amount || g.amount || 0);
 
-      const isTransportCat = (g.expense_category === 'Transport Cost') || 
+      const isTransportCat = (g.expense_category === 'Transport Cost') ||
                              (g.expense_name || '').toLowerCase().includes('transport') ||
                              (g.expense_name || '').toLowerCase().includes('tyre') ||
                              (g.expense_name || '').toLowerCase().includes('vehicle');
@@ -576,6 +595,24 @@ const ExpensesModule = {
         manualTransportExpenses += amt;
       }
     });
+
+    // Current-month amortized general expenses — uses the same day-prorated
+    // per-covered-month overlap logic as Analytics/the P&L summary
+    // (Financials.computeAmortizedExpenses), so this figure only counts an
+    // expense while the current month actually falls inside its coverage
+    // window, and it correctly drops to $0 once that window has passed.
+    // The previous version summed every expense's monthly_averaged_amount
+    // forever, so old, fully-amortized expenses kept being counted as an
+    // "ongoing" monthly cost indefinitely.
+    const totalAveragedGeneral = Financials.computeAmortizedExpenses(genExpenses, monthStart, monthEnd).totalAmortized;
+
+    // Current-month chemical cost, using the usage/COGS costing mode (matching
+    // the system-wide default used in Analytics) and scoped to THIS month only.
+    // The previous version used `totalChemPurchases`, an all-time cumulative
+    // purchase total, inside a "monthly" net profit figure — which meant the
+    // "monthly" expense side grew every month as purchase history accumulated,
+    // making Monthly Net Profit increasingly (and incorrectly) negative over time.
+    const monthlyChemCost = Financials.computeChemicalExpenses(chemLogs, monthStart, monthEnd, 'cogs').activeCost;
 
     // Calculate Transport Fuel Costs from completed trips
     const monthlyDistanceMap = {};
@@ -612,7 +649,10 @@ const ExpensesModule = {
     const totalTransportCost = fullFuelCostLKR + manualTransportExpenses;
 
     const totalCashOutlay = totalChemPurchases + totalGeneralExpenses + fullFuelCostLKR;
-    const totalAveragedExpenses = totalChemPurchases + totalAveragedGeneral + curMonthlyFuelCost;
+    // Monthly Net Profit now uses THIS month's amortized general expenses and
+    // THIS month's COGS-based chemical cost (both correctly windowed), instead
+    // of mixing in all-time cumulative totals — see comments above.
+    const totalAveragedExpenses = monthlyChemCost + totalAveragedGeneral + curMonthlyFuelCost;
 
     const monthlyNetProfit = monthlyIncome - totalAveragedExpenses;
 
@@ -623,11 +663,11 @@ const ExpensesModule = {
           <h2 class="text-xl font-extrabold flex items-center gap-2">
             <i class="fa-solid fa-chart-line text-indigo-400"></i> Financial Balance & Operating Margin Summary
           </h2>
-          <p class="text-xs text-indigo-200 mt-1">Comparing Monthly Income against Chemical, Operational & Transport Expenses.</p>
+          <p class="text-xs text-indigo-200 mt-1">Comparing Monthly Billed Income against Chemical, Operational & Transport Expenses.</p>
 
-          <div class="grid grid-cols-1 sm:grid-cols-4 gap-4 mt-6">
+          <div class="grid grid-cols-1 sm:grid-cols-5 gap-4 mt-6">
             <div class="bg-white/10 backdrop-blur-md p-4 rounded-xl border border-white/10">
-              <div class="text-xs font-semibold text-indigo-200 uppercase">Monthly Income</div>
+              <div class="text-xs font-semibold text-indigo-200 uppercase">Monthly Billed (Accrual)</div>
               <div class="text-xl font-black text-emerald-400 mt-1">
                 LKR ${monthlyIncome.toLocaleString('en-US', { minimumFractionDigits: 2 })}
               </div>
@@ -635,7 +675,15 @@ const ExpensesModule = {
             </div>
 
             <div class="bg-white/10 backdrop-blur-md p-4 rounded-xl border border-white/10">
-              <div class="text-xs font-semibold text-indigo-200 uppercase">Total Income (All-Time)</div>
+              <div class="text-xs font-semibold text-indigo-200 uppercase">Monthly Cash Collected</div>
+              <div class="text-xl font-black text-teal-300 mt-1">
+                LKR ${monthlyCollected.toLocaleString('en-US', { minimumFractionDigits: 2 })}
+              </div>
+              <div class="text-[10px] text-indigo-300 mt-0.5">Actually received this month</div>
+            </div>
+
+            <div class="bg-white/10 backdrop-blur-md p-4 rounded-xl border border-white/10">
+              <div class="text-xs font-semibold text-indigo-200 uppercase">Total Billed (All-Time)</div>
               <div class="text-xl font-black text-cyan-400 mt-1">
                 LKR ${totalIncome.toLocaleString('en-US', { minimumFractionDigits: 2 })}
               </div>
@@ -655,7 +703,7 @@ const ExpensesModule = {
               <div class="text-xl font-black ${monthlyNetProfit >= 0 ? 'text-emerald-300' : 'text-rose-300'} mt-1">
                 LKR ${monthlyNetProfit.toLocaleString('en-US', { minimumFractionDigits: 2 })}
               </div>
-              <div class="text-[10px] text-indigo-300 mt-0.5">Income - (Avg Ops + Chem + Monthly Fuel)</div>
+              <div class="text-[10px] text-indigo-300 mt-0.5">Billed - (This Month's Amortized Ops + Chem COGS + Fuel)</div>
             </div>
           </div>
         </div>
@@ -981,6 +1029,20 @@ const ExpensesModule = {
       unitPrice = priceElem ? parseFloat(priceElem.value) || 0 : 0;
       totalAmount = qty * unitPrice;
       expenseId = await DB.generateExpenseId();
+    } else {
+      // OUT (usage) entries must carry a real cost too, or every P&L report
+      // that costs chemical usage by consumption ('cogs' mode) silently
+      // reads 0 for every single one — see Financials.computeChemicalExpenses.
+      // Price it at this chemical's current weighted-average unit cost,
+      // computed from its purchase/usage history so far.
+      const allLedger = await DB.getChemicalLedger();
+      const thisChemLedger = (allLedger || []).filter(e => String(e.chemical_id) === String(cid));
+      const { avgUnitCost } = Financials.computeWeightedAverageChemicalCost(thisChemLedger);
+      if (avgUnitCost <= 0) {
+        showToast(`No purchase history found for ${name} yet — this usage entry will be logged at LKR 0 cost. Log a purchase (IN) first for accurate cost reporting.`, 'warning');
+      }
+      unitPrice = avgUnitCost;
+      totalAmount = qty * avgUnitCost;
     }
 
     const record = await DB.addChemicalLedgerEntry({
@@ -1002,6 +1064,68 @@ const ExpensesModule = {
     document.getElementById('chem-log-modal').remove();
     showToast(`Chemical stock ${type === 'IN' ? 'purchase' : 'usage'} logged!`);
     await this.switchSubTab(this.activeSubTab);
+  },
+
+  // One-time backfill: usage (OUT) entries logged before this version of
+  // the app always had unit_price/total_amount = 0 (a bug — see
+  // Financials.computeChemicalExpenses' doc comment). This recomputes what
+  // every past OUT entry's cost should have been using weighted-average
+  // costing and corrects the stored records, so 'cogs' mode reports are
+  // accurate for historical periods too, not just entries logged from now
+  // on. Safe to run more than once — it only writes rows that are actually
+  // wrong, and running it again after no new data changes nothing.
+  async recalculateHistoricalChemicalCosts() {
+    if (!canDelete()) return showToast('Admin permission required for this action', 'error');
+
+    confirmDialog(
+      'This recalculates the cost of every past chemical usage (OUT) entry using weighted-average costing, and corrects any that were logged with the wrong cost (including entries stuck at LKR 0 from before this fix). This changes historical records — recommended to do this once, now. Continue?',
+      async () => {
+        try {
+          showProcessingOverlay('Recalculating Costs', 'Replaying chemical stock history...');
+          const allLedger = await DB.getChemicalLedger();
+          const byChemical = {};
+          (allLedger || []).forEach(e => {
+            const key = String(e.chemical_id);
+            if (!byChemical[key]) byChemical[key] = [];
+            byChemical[key].push(e);
+          });
+
+          let totalCorrections = 0;
+          let failedCorrections = 0;
+          for (const chemicalId of Object.keys(byChemical)) {
+            const corrections = Financials.recomputeChemicalOutEntryCosts(byChemical[chemicalId]);
+            for (const c of corrections) {
+              try {
+                await DB.updateChemicalLedgerEntry(c.id, { unit_price: c.unit_price, total_amount: c.total_amount });
+                totalCorrections++;
+              } catch (err) {
+                console.error('Failed to correct chemical ledger entry', c.id, err);
+                failedCorrections++;
+              }
+            }
+          }
+
+          await DB.logAction('Recalculate Chemical Costs', `Corrected ${totalCorrections} historical usage entr${totalCorrections === 1 ? 'y' : 'ies'}${failedCorrections ? ` (${failedCorrections} failed — see console)` : ''}`, { totalCorrections, failedCorrections }, 'Chemical');
+
+          if (failedCorrections > 0) {
+            showToast(`Recalculated ${totalCorrections} entries, but ${failedCorrections} failed to save — check your connection and try again.`, 'error');
+          } else if (totalCorrections === 0) {
+            showToast('All chemical usage costs are already correct — nothing to fix.');
+          } else {
+            showToast(`Recalculated and corrected ${totalCorrections} historical usage entr${totalCorrections === 1 ? 'y' : 'ies'}.`);
+          }
+
+          await this.switchSubTab(this.activeSubTab);
+        } catch (err) {
+          console.error('recalculateHistoricalChemicalCosts error:', err);
+          showToast('Failed to recalculate costs: ' + (err.message || err), 'error');
+        } finally {
+          hideProcessingOverlay();
+        }
+      },
+      'Recalculate',
+      false
+    );
   },
 
   async openAddChemicalMasterModal() {

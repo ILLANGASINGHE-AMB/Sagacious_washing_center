@@ -795,6 +795,19 @@ const DB = {
     const filtered = logs.filter(l => l.id !== id && l.expense_id !== id);
     await DB.setSetting('chemical_ledger_records', JSON.stringify(filtered));
   },
+  async updateChemicalLedgerEntry(id, data) {
+    // Used by the one-time cost backfill (Expenses > Chemicals > Recalculate
+    // Historical Costs) — unlike add/delete above, this does NOT swallow
+    // errors, since a silent failure here would leave the real table and
+    // the local cache holding two different cost figures for the same
+    // entry, which is exactly the kind of drift a "numbers I can rely on"
+    // backfill must not introduce.
+    await _q(_sb.from('chemical_ledger').update(data).eq('id', id));
+    const logs = await DB.getChemicalLedger();
+    const idx = logs.findIndex(l => l.id === id);
+    if (idx !== -1) logs[idx] = { ...logs[idx], ...data };
+    await DB.setSetting('chemical_ledger_records', JSON.stringify(logs));
+  },
 
   // ── General Expenses ──────────────────────
   async getGeneralExpenses() {

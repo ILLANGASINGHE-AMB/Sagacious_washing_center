@@ -66,14 +66,23 @@ async function generateDailyOrdersReport() {
     <td>${formatCurrency(o.total_amount)}</td>
     <td>${formatCurrency(o.advance_payment)}</td>
   </tr>`).join('')||`<tr><td colspan="5" style="text-align:center;color:var(--text-muted);">No orders today</td></tr>`;
-  const total = todayOrders.reduce((s,o)=>s+(o.total_amount||0),0);
+  // "Total Billed" = order value regardless of payment status (accrual).
+  // "Collected Today" = actual cash taken in on these orders (advance only
+  // — any later Pay Now payment on an older order is a different day's
+  // collection and correctly belongs to that other day's number instead).
+  // These were previously combined under one misleading "Total Revenue"
+  // label that was really just the billed total.
+  const totalBilled = todayOrders.reduce((s,o)=>s+(o.total_amount||0),0);
+  const totalCollected = todayOrders.reduce((s,o)=>s+(o.advance_payment||0),0);
 
   document.getElementById('report-output').innerHTML = reportWrapper(`Daily Orders — ${todayDisplay()}`,
     `<div class="table-wrap"><table>
       <thead><tr><th>Batch ID</th><th>Customer</th><th>Status</th><th>Total</th><th>Advance</th></tr></thead>
       <tbody>${rows}</tbody>
-      <tfoot><tr><td colspan="3" style="font-weight:700;padding:12px 16px;text-align:right;">Total Revenue</td>
-        <td colspan="2" style="font-weight:700;padding:12px 16px;">${formatCurrency(total)}</td></tr></tfoot>
+      <tfoot><tr><td colspan="3" style="font-weight:700;padding:12px 16px;text-align:right;">Total Billed Today</td>
+        <td colspan="2" style="font-weight:700;padding:12px 16px;">${formatCurrency(totalBilled)}</td></tr>
+      <tr><td colspan="3" style="font-weight:700;padding:12px 16px;text-align:right;color:var(--success);">Cash Collected Today</td>
+        <td colspan="2" style="font-weight:700;padding:12px 16px;color:var(--success);">${formatCurrency(totalCollected)}</td></tr></tfoot>
     </table></div>`, 'exportDailyOrders');
 }
 function exportDailyOrders(type) {
@@ -84,11 +93,27 @@ function exportDailyOrders(type) {
 // MONTHLY REVENUE
 // ─────────────────────────────────────────────
 async function generateMonthlyRevenueReport() {
-  const payments = await DB.getPayments();
+  // Cash actually collected, by month. This has TWO sources, not one:
+  // 1) advance_payment on the order — collected at order creation (or a
+  //    later edit), stored on the order whether or not an invoice exists
+  //    yet. Most walk-in/pay-on-drop-off orders are ENTIRELY captured
+  //    here with zero rows in `payments`.
+  // 2) the `payments` table — additional/partial payments recorded after
+  //    the order was created (Pay Now, deductions payoff, etc).
+  // Summing only `payments` (the old version of this report) silently
+  // dropped every order paid in full at creation.
+  const [orders, payments] = await Promise.all([DB.getOrders(), DB.getPayments()]);
   const monthMap = {};
+  orders.forEach(o=>{
+    const advance = parseFloat(o.advance_payment) || 0;
+    if (advance <= 0) return;
+    const month = (o.created_at || o.pickup_date || '').slice(0,7);
+    if (!month) return;
+    monthMap[month] = (monthMap[month]||0) + advance;
+  });
   payments.forEach(p=>{
     const month=(p.date||'').slice(0,7); if(!month)return;
-    monthMap[month]=(monthMap[month]||0)+p.amount;
+    monthMap[month]=(monthMap[month]||0)+(parseFloat(p.amount)||0);
   });
   const sorted = Object.entries(monthMap).sort((a,b)=>a[0].localeCompare(b[0]));
   window._reportData = sorted.map(([m,a])=>({Month:m,Revenue:a}));
@@ -269,7 +294,9 @@ async function generateFullReport() {
     const advanceAmt=o.advance_payment||0;
     const paidAmt=inv?(payMap[inv.id]||0):0;
     const fullPaid=advanceAmt+paidAmt;
-    const remaining=Math.max(0,(o.total_amount||0)-fullPaid);
+    // Subtract any deduction already applied to this invoice — otherwise a
+    // forgiven/deducted amount shows up here as if it's still owed.
+    const remaining=Math.max(0,(o.total_amount||0)-(inv?.deduction_amount||0)-fullPaid);
     const items=itemsByOrder[o.id]||[];
 
     if(items.length===0){

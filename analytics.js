@@ -527,15 +527,16 @@ async function calculateAnalyticsData(filters) {
   });
 
   // Time Bucket Grouping
-  const filteredGeneralExpenses = (generalExpenses || []).filter(e => {
-    const eDate = new Date(e.expense_date || e.created_at);
-    return !isNaN(eDate) && eDate >= start && eDate <= end;
-  });
+  // NOTE: general expenses are passed through UNFILTERED here (not date-window-clipped
+  // on expense_date) because a multi-month expense's amortized months can overlap the
+  // window even when its entry date doesn't. groupDataByTimeGrain() does its own
+  // per-covered-month overlap/spreading, mirroring Financials.computeAmortizedExpenses,
+  // so the trend chart's expense totals agree with the "Total Expenses" stat above it.
   const filteredChemicalPurchases = (chemicalLedger || []).filter(l => {
     const lDate = new Date(l.date || l.created_at);
     return !isNaN(lDate) && l.type === 'IN' && lDate >= start && lDate <= end;
   });
-  const timeBuckets = groupDataByTimeGrain(filteredOrders, filteredGeneralExpenses, filteredChemicalPurchases, filteredCompletedTrips, fuelConfig, filters.grain, start, end);
+  const timeBuckets = groupDataByTimeGrain(filteredOrders, generalExpenses || [], filteredChemicalPurchases, filteredCompletedTrips, fuelConfig, filters.grain, start, end);
 
   return {
     grossRevenue,
@@ -603,10 +604,45 @@ function groupDataByTimeGrain(orders, genExpenses, chemPurchases, completedTrips
   });
 
   genExpenses.forEach(e => {
-    const d = new Date(e.expense_date || e.created_at);
-    const key = getBucketKey(d);
-    if (!buckets[key]) buckets[key] = { key, revenue: 0, expenses: 0, orders: 0 };
-    buckets[key].expenses += (parseFloat(e.monthly_averaged_amount || e.amount) || 0);
+    const expDate = new Date(e.expense_date || e.created_at);
+    if (isNaN(expDate)) return;
+    const rawAmount = parseFloat(e.amount) || 0;
+    const monthsCovered = Math.max(1, parseInt(e.months_covered) || 1);
+    const monthlyAmount = parseFloat(e.monthly_averaged_amount) || (rawAmount / monthsCovered);
+
+    // Spread the amortized monthly share across every month it actually covers
+    // (clipped to the report window), instead of dumping the whole per-month
+    // amount into a single bucket keyed off the expense's entry date. Without
+    // this, a multi-month expense (e.g. a 12-month insurance premium) would
+    // show its full monthly share only in the month it was entered and $0 in
+    // every other month it covers — both understating those months and
+    // disagreeing with the amortized "Total Expenses" figure computed above.
+    for (let m = 0; m < monthsCovered; m++) {
+      const coveredMonthStart = new Date(expDate.getFullYear(), expDate.getMonth() + m, 1);
+      const coveredMonthEnd = new Date(expDate.getFullYear(), expDate.getMonth() + m + 1, 0, 23, 59, 59, 999);
+      if (coveredMonthEnd < start || coveredMonthStart > end) continue; // no overlap this month
+
+      if (grain === 'daily' || grain === 'weekly') {
+        // Distribute evenly across each day of the covered month that falls within the window.
+        const daysInMonth = coveredMonthEnd.getDate();
+        const perDay = monthlyAmount / daysInMonth;
+        for (let day = 1; day <= daysInMonth; day++) {
+          const dayDate = new Date(expDate.getFullYear(), expDate.getMonth() + m, day);
+          if (dayDate < start || dayDate > end) continue;
+          const key = getBucketKey(dayDate);
+          if (!buckets[key]) buckets[key] = { key, revenue: 0, expenses: 0, orders: 0 };
+          buckets[key].expenses += perDay;
+        }
+      } else {
+        // monthly/yearly grain: attribute the full monthly share to this covered month's
+        // bucket. Use the 15th as a stable mid-month anchor so the bucket key always
+        // resolves to this covered month regardless of which day expDate itself falls on.
+        const anchorDate = new Date(expDate.getFullYear(), expDate.getMonth() + m, 15);
+        const key = getBucketKey(anchorDate);
+        if (!buckets[key]) buckets[key] = { key, revenue: 0, expenses: 0, orders: 0 };
+        buckets[key].expenses += monthlyAmount;
+      }
+    }
   });
 
   chemPurchases.forEach(c => {

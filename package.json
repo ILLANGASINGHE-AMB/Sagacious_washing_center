@@ -1,7 +1,7 @@
 {
   "name": "sagacious-washing-center",
   "private": true,
-  "version": "6.2.0",
+  "version": "6.4.0",
   "description": "Sagacious Washing Center — Laundry Management System & POS",
   "scripts": {
     "build": "node inject-env.js"

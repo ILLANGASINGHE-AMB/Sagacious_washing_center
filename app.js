@@ -302,9 +302,17 @@ async function renderDashboard() {
   const todayStr = today();
   const todayPickups    = orders.filter(o => o.pickup_date === todayStr).length;
   const curMonth        = new Date().toISOString().slice(0, 7); // "YYYY-MM"
-  const monthlyGain     = orders.filter(o => (o.created_at || '').startsWith(curMonth)).reduce((s, o) => s + (o.total_amount || 0), 0);
+  // "Billed" = accrual figures (what was invoiced, regardless of payment status).
+  // "Collected" = actual cash in hand (advance payments taken at order time + later payments logged).
+  // These are kept as two distinct figures throughout the system (see Analytics tab) because
+  // conflating them overstates real cash position — an order can be "billed" long before it's paid.
+  const monthlyOrders   = orders.filter(o => (o.created_at || '').startsWith(curMonth));
+  const monthlyBilled   = monthlyOrders.reduce((s, o) => s + (o.total_amount || 0), 0);
+  const monthlyCollectedAdv = monthlyOrders.reduce((s, o) => s + (parseFloat(o.advance_payment) || 0), 0);
+  const monthlyCollectedPay = (payments || []).filter(p => (p.date || '').startsWith(curMonth)).reduce((s, p) => s + (parseFloat(p.amount) || 0), 0);
+  const monthlyCollected = monthlyCollectedAdv + monthlyCollectedPay;
   const pendingPayments = orders.filter(o => o.status === 'Unpaid').length;
-  const totalIncome     = orders.reduce((s, o) => s + (o.total_amount || 0), 0);
+  const totalBilled     = orders.reduce((s, o) => s + (o.total_amount || 0), 0);
 
   contentEl.innerHTML = `
     <div style="margin-bottom:22px;">
@@ -314,8 +322,9 @@ async function renderDashboard() {
     <div style="display:grid;grid-template-columns:repeat(auto-fit,minmax(175px,1fr));gap:16px;margin-bottom:24px;">
       ${statCard("Today's Pickups",   todayPickups,                    "fa-truck",          "#3b82f6", "#dbeafe", "Scheduled for today")}
       ${statCard("Pending Payments",  pendingPayments,                 "fa-clock",          "#f59e0b", "#fef9c3", "Awaiting payment")}
-      ${statCard("Monthly Income",    formatCurrency(monthlyGain),     "fa-coins",          "#8b5cf6", "#f3e8ff", "All bills this month")}
-      ${statCard("Total Income",      formatCurrency(totalIncome),     "fa-money-bill-wave","#06b6d4", "#cffafe", "All bill types")}
+      ${statCard("Monthly Billed (Accrual)", formatCurrency(monthlyBilled),   "fa-coins",          "#8b5cf6", "#f3e8ff", "All bills invoiced this month")}
+      ${statCard("Monthly Cash Collected",   formatCurrency(monthlyCollected),"fa-wallet",         "#10b981", "#dcfce7", "Actually received this month")}
+      ${statCard("Total Billed (All-Time)",  formatCurrency(totalBilled),     "fa-money-bill-wave","#06b6d4", "#cffafe", "All bill types, accrual")}
     </div>
     <div style="display:grid;grid-template-columns:3fr 2fr;gap:20px;margin-bottom:24px;">
       <div class="card">
@@ -1716,12 +1725,20 @@ async function processPartialPayment(orderId, invoiceId, maxAmount, amount, meth
     const invObj = window._currentPayNowInvoice;
     const order = await DB.getOrder(orderId);
     const newAdvance = (order.advance_payment || 0) + amount;
-    const isNowPaid = newAdvance >= (order.total_amount || 0);
-    const paidStatus = isNowPaid ? 'Paid' : 'Unpaid';
 
     let activeInvoiceId = invoiceId;
+    // The order's `status` and the invoice's `paid_status` must always be derived from
+    // the SAME canonical calculation, or they silently diverge (e.g. an invoice with a
+    // deduction applied could be marked "Paid" while the order stayed stuck on
+    // "Unpaid" because a raw `advance >= total_amount` check ignores the deduction).
+    let paidStatus;
 
     if (isTemp) {
+      const provisional = { ...invObj, advance_payment: newAdvance };
+      const finCheck = Financials.computeInvoiceFinancials(provisional, [], []);
+      const isNowPaid = finCheck.isPaid;
+      paidStatus = isNowPaid ? 'Paid' : 'Unpaid';
+
       if (isNowPaid) {
         invObj.advance_payment = newAdvance;
         invObj.balance = 0;
@@ -1745,9 +1762,10 @@ async function processPartialPayment(orderId, invoiceId, maxAmount, amount, meth
       });
 
       const payments = await DB.getPaymentsByInvoice(invoiceId);
-      const totalPaid = payments.reduce((s, p) => s + p.amount, 0) + (invObj.advance_payment || 0);
-      const newBalance = Math.max(0, invObj.total_amount - (invObj.deduction_amount || 0) - totalPaid);
-      const newPaidStatus = newBalance <= 0 ? 'Paid' : 'Unpaid';
+      const fin = Financials.computeInvoiceFinancials(invObj, [], payments);
+      const newBalance = fin.balance;
+      const newPaidStatus = fin.isPaid ? 'Paid' : 'Unpaid';
+      paidStatus = newPaidStatus;
 
       await DB.updateInvoice(invoiceId, {
         balance: newBalance,
@@ -1835,8 +1853,11 @@ async function showBatchPayConfirmModal() {
     }
 
     const payments = await DB.getPaymentsByInvoice(inv.id);
-    const totalPaid = payments.reduce((s, p) => s + p.amount, 0) + (inv.advance_payment || 0);
-    balance = Math.max(0, inv.total_amount - totalPaid);
+    // Canonical calc — the raw `total_amount - totalPaid` formula this replaced
+    // ignored `inv.deduction_amount`, which would overcharge a batch payment for
+    // any invoice that had a deduction applied (collecting the pre-deduction amount).
+    const finBatch = Financials.computeInvoiceFinancials(inv, [], payments);
+    balance = finBatch.balance;
 
     totalBatchAmount += balance;
     selectedBatchDetails.push({
