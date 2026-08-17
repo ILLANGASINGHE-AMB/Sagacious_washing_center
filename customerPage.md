@@ -6,3 +6,6 @@ then restore the backup of customers,
 
 the summary and other data is not backing up and not getting resoted correctly as it was before, fix it
 
+customer joined date also get deleted with the delete and does not get resoted
+
+everything must be backedup and resoted
