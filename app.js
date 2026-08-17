@@ -348,7 +348,30 @@ async function renderDashboard() {
   const monthlyCollectedAdv = monthlyOrders.reduce((s, o) => s + (parseFloat(o.advance_payment) || 0), 0);
   const monthlyCollectedPay = (payments || []).filter(p => (p.date || '').startsWith(curMonth)).reduce((s, p) => s + (parseFloat(p.amount) || 0), 0);
   const monthlyCollected = monthlyCollectedAdv + monthlyCollectedPay;
-  const pendingPayments = orders.filter(o => o.status === 'Unpaid').length;
+  const invMap = Object.fromEntries((invoices || []).map(i => [i.order_id, i]));
+  const payMap = {};
+  (payments || []).forEach(p => {
+    if (p.invoice_id) {
+      (payMap[p.invoice_id] ||= []).push(p);
+    }
+  });
+
+  const pendingOrders   = orders.filter(o => {
+    const inv = invMap[o.id];
+    return inv ? inv.paid_status !== 'Paid' : o.status === 'Unpaid';
+  });
+  const pendingPaymentsCount  = pendingOrders.length;
+  const pendingPaymentsAmount = pendingOrders.reduce((sum, o) => {
+    const inv = invMap[o.id];
+    if (inv) {
+      if (typeof Financials !== 'undefined' && Financials.computeInvoiceFinancials) {
+        const fin = Financials.computeInvoiceFinancials(inv, [], payMap[inv.id] || []);
+        return sum + (fin.balance || 0);
+      }
+      return sum + (inv.balance != null ? (parseFloat(inv.balance) || 0) : Math.max(0, (parseFloat(o.total_amount) || 0) - (parseFloat(o.advance_payment) || 0)));
+    }
+    return sum + Math.max(0, (parseFloat(o.total_amount) || 0) - (parseFloat(o.advance_payment) || 0));
+  }, 0);
   const totalBilled     = orders.reduce((s, o) => s + (o.total_amount || 0), 0);
 
   contentEl.innerHTML = `
@@ -357,11 +380,11 @@ async function renderDashboard() {
       <div style="font-family:'Playfair Display',serif;font-size:1.6em;font-weight:700;color:var(--text);">Welcome to Sagacious Washing Center</div>
     </div>
     <div style="display:grid;grid-template-columns:repeat(auto-fit,minmax(175px,1fr));gap:16px;margin-bottom:24px;">
-      ${statCard("Today's Pickups",   todayPickups,                    "fa-truck",          "#3b82f6", "#dbeafe", "Scheduled for today")}
-      ${statCard("Pending Payments",  pendingPayments,                 "fa-clock",          "#f59e0b", "#fef9c3", "Awaiting payment")}
-      ${statCard("Monthly Billed (Accrual)", formatCurrency(monthlyBilled),   "fa-coins",          "#8b5cf6", "#f3e8ff", "All bills invoiced this month")}
-      ${statCard("Monthly Cash Collected",   formatCurrency(monthlyCollected),"fa-wallet",         "#10b981", "#dcfce7", "Actually received this month")}
-      ${statCard("Total Billed (All-Time)",  formatCurrency(totalBilled),     "fa-money-bill-wave","#06b6d4", "#cffafe", "All bill types, accrual")}
+      ${statCard("Today's Pickups",          todayPickups,                              "fa-truck",          "#3b82f6", "#dbeafe", "Scheduled for today")}
+      ${statCard("Pending Payments",         formatCurrency(pendingPaymentsAmount),     "fa-clock",          "#f59e0b", "#fef9c3", `${pendingPaymentsCount} order${pendingPaymentsCount !== 1 ? 's' : ''} awaiting payment`)}
+      ${statCard("Monthly Billed (Accrual)", formatCurrency(monthlyBilled),             "fa-coins",          "#8b5cf6", "#f3e8ff", "All bills invoiced this month")}
+      ${statCard("Monthly Cash Collected",   formatCurrency(monthlyCollected),          "fa-wallet",         "#10b981", "#dcfce7", "Actually received this month")}
+      ${statCard("Total Billed (All-Time)",  formatCurrency(totalBilled),               "fa-money-bill-wave","#06b6d4", "#cffafe", "All bill types, accrual")}
     </div>
     <div style="display:grid;grid-template-columns:3fr 2fr;gap:20px;margin-bottom:24px;">
       <div class="card">
@@ -428,17 +451,28 @@ async function renderDashCharts(orders, payments) {
   const textColor = isDark ? '#94a3b8' : '#64748b';
 
   // ── Daily Orders by Status (last 14 days) ──
-  // Counts EVERY order type per day (not just paid/revenue) so pickup requests,
-  // credit bills, etc. all show up. One stacked bar segment per status.
+  // Shows total ORDER VALUE (LKR) per status per day — one stacked bar segment per status.
+  // X-axis = dates, Y-axis = LKR value (formatted with K/M shorthand).
   const datasets = ORDER_STATUSES.map(status => ({
     label: status,
-    data: days.map(d => orders.filter(o => o.status === status && (o.created_at || '').startsWith(d)).length),
+    data: days.map(d =>
+      orders
+        .filter(o => o.status === status && (o.created_at || '').startsWith(d))
+        .reduce((sum, o) => sum + (parseFloat(o.total_amount) || 0), 0)
+    ),
     backgroundColor: statusChartColor(status),
     borderColor: statusChartColor(status),
     borderWidth: 1,
     borderRadius: 4,
     stack: 'orders'
   }));
+
+  // Helper: format LKR value as short label (e.g. 1.5K, 2M)
+  function fmtLkr(val) {
+    if (val >= 1_000_000) return (val / 1_000_000).toFixed(1).replace(/\.0$/, '') + 'M';
+    if (val >= 1_000)     return (val / 1_000).toFixed(1).replace(/\.0$/, '') + 'K';
+    return val.toFixed(0);
+  }
 
   const rCtx = document.getElementById('revenue-chart')?.getContext('2d');
   if (rCtx) {
@@ -452,11 +486,24 @@ async function renderDashCharts(orders, payments) {
         responsive: true, maintainAspectRatio: false,
         plugins: {
           legend: { display: true, position: 'bottom', labels: { color: textColor, font: { size: 10 }, boxWidth: 12, padding: 8 } },
-          tooltip: { callbacks: { label: c => `${c.dataset.label}: ${c.parsed.y} order${c.parsed.y === 1 ? '' : 's'}` } }
+          tooltip: {
+            callbacks: {
+              label: c => `${c.dataset.label}: LKR ${Number(c.parsed.y).toLocaleString('en-LK', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`
+            }
+          }
         },
         scales: {
           x: { stacked: true, grid: { color: gridColor }, ticks: { color: textColor, font: { size: 10 } } },
-          y: { stacked: true, beginAtZero: true, grid: { color: gridColor }, ticks: { color: textColor, font: { size: 10 }, precision: 0, stepSize: 1 } }
+          y: {
+            stacked: true,
+            beginAtZero: true,
+            grid: { color: gridColor },
+            ticks: {
+              color: textColor,
+              font: { size: 10 },
+              callback: function(value) { return fmtLkr(value); }
+            }
+          }
         }
       }
     });
