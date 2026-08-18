@@ -674,10 +674,13 @@ async function openCustomerDetail(customerId, tab = 'orders') {
     return renderCustomers();
   }
 
-  // Filter invoices for this customer
+  // Build a set of order IDs belonging to this customer
+  const customerOrderIds = new Set((orders || []).map(o => String(o.id)));
+
+  // Filter invoices for this customer by matching order_id
   const customerInvoices = (allInvoices || []).filter(inv => 
-    String(inv.customer_id) === String(customerId) || 
-    (inv.customer_name && inv.customer_name.toLowerCase().trim() === (c.hotel_name || '').toLowerCase().trim())
+    (inv.order_id && customerOrderIds.has(String(inv.order_id))) ||
+    (inv.customer_id && String(inv.customer_id) === String(customerId))
   );
 
   // Group payments by invoice_id
@@ -689,27 +692,47 @@ async function openCustomerDetail(customerId, tab = 'orders') {
 
   let totalBilled = 0, totalPaid = 0, totalPending = 0;
 
-  if (customerInvoices.length > 0) {
-    customerInvoices.forEach(inv => {
-      if (typeof Financials !== 'undefined' && Financials.computeInvoiceFinancials) {
-        const fin = Financials.computeInvoiceFinancials(inv, [], payMap[inv.id] || []);
-        totalBilled += fin.finalTotal;
-        totalPaid += fin.paid;
-        totalPending += fin.balanceDue;
-      } else {
-        const invTotal = parseFloat(inv.total_amount) || 0;
-        const invPaid = (payMap[inv.id] || []).reduce((sum, p) => sum + (parseFloat(p.amount) || 0), 0);
-        totalBilled += invTotal;
-        totalPaid += invPaid;
-        totalPending += Math.max(0, invTotal - invPaid);
-      }
-    });
-  } else {
-    // If no invoices yet, show orders total as billed/pending
-    const ordersTotal = (orders || []).reduce((sum, o) => sum + (parseFloat(o.total_amount) || 0), 0);
-    totalBilled = ordersTotal;
-    totalPending = ordersTotal;
-  }
+  // Also group payments by order_id for orders without invoices
+  const payByOrderId = {};
+  (allPayments || []).forEach(p => {
+    if (p.order_id) {
+      if (!payByOrderId[p.order_id]) payByOrderId[p.order_id] = [];
+      payByOrderId[p.order_id].push(p);
+    }
+  });
+
+  // Invoiced orders
+  const invoicedOrderIds = new Set(customerInvoices.map(inv => String(inv.order_id)));
+
+  // Compute from invoices
+  customerInvoices.forEach(inv => {
+    if (typeof Financials !== 'undefined' && Financials.computeInvoiceFinancials) {
+      const fin = Financials.computeInvoiceFinancials(inv, [], payMap[inv.id] || []);
+      totalBilled += fin.finalTotal;
+      totalPaid += fin.paid;
+      totalPending += Math.max(0, fin.balanceDue);
+    } else {
+      const invTotal = parseFloat(inv.total_amount) || 0;
+      const invPaid = (payMap[inv.id] || []).reduce((sum, p) => sum + (parseFloat(p.amount) || 0), 0);
+      const deduction = parseFloat(inv.deduction_amount) || 0;
+      totalBilled += Math.max(0, invTotal - deduction);
+      totalPaid += invPaid;
+      totalPending += Math.max(0, invTotal - deduction - invPaid);
+    }
+  });
+
+  // For orders without invoices, compute from order total and direct payments
+  (orders || []).forEach(o => {
+    if (!invoicedOrderIds.has(String(o.id))) {
+      const oTotal = parseFloat(o.total_amount) || 0;
+      const oPaid = (payByOrderId[o.id] || []).reduce((sum, p) => sum + (parseFloat(p.amount) || 0), 0);
+      const advance = parseFloat(o.advance_payment) || 0;
+      const effectivePaid = oPaid + advance;
+      totalBilled += oTotal;
+      totalPaid += Math.min(effectivePaid, oTotal);
+      totalPending += Math.max(0, oTotal - effectivePaid);
+    }
+  });
 
   document.getElementById('page-title').textContent = c.hotel_name || 'Customer Details';
 
