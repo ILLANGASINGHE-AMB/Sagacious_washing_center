@@ -661,15 +661,54 @@ async function openCustomerDetail(customerId, tab = 'orders') {
   currentDetailCustomerId = customerId;
   currentCustDetailTab = tab;
 
-  const [c, orders] = await Promise.all([
+  const [c, orders, allInvoices, allPayments] = await Promise.all([
     DB.getCustomer(customerId),
-    DB.getOrdersByCustomer(customerId)
+    DB.getOrdersByCustomer(customerId),
+    DB.getInvoices(),
+    DB.getPayments()
   ]);
 
   if (!c) {
     toast('Customer not found', 'error');
     currentDetailCustomerId = null;
     return renderCustomers();
+  }
+
+  // Filter invoices for this customer
+  const customerInvoices = (allInvoices || []).filter(inv => 
+    String(inv.customer_id) === String(customerId) || 
+    (inv.customer_name && inv.customer_name.toLowerCase().trim() === (c.hotel_name || '').toLowerCase().trim())
+  );
+
+  // Group payments by invoice_id
+  const payMap = {};
+  (allPayments || []).forEach(p => {
+    if (!payMap[p.invoice_id]) payMap[p.invoice_id] = [];
+    payMap[p.invoice_id].push(p);
+  });
+
+  let totalBilled = 0, totalPaid = 0, totalPending = 0;
+
+  if (customerInvoices.length > 0) {
+    customerInvoices.forEach(inv => {
+      if (typeof Financials !== 'undefined' && Financials.computeInvoiceFinancials) {
+        const fin = Financials.computeInvoiceFinancials(inv, [], payMap[inv.id] || []);
+        totalBilled += fin.finalTotal;
+        totalPaid += fin.paid;
+        totalPending += fin.balanceDue;
+      } else {
+        const invTotal = parseFloat(inv.total_amount) || 0;
+        const invPaid = (payMap[inv.id] || []).reduce((sum, p) => sum + (parseFloat(p.amount) || 0), 0);
+        totalBilled += invTotal;
+        totalPaid += invPaid;
+        totalPending += Math.max(0, invTotal - invPaid);
+      }
+    });
+  } else {
+    // If no invoices yet, show orders total as billed/pending
+    const ordersTotal = (orders || []).reduce((sum, o) => sum + (parseFloat(o.total_amount) || 0), 0);
+    totalBilled = ordersTotal;
+    totalPending = ordersTotal;
   }
 
   document.getElementById('page-title').textContent = c.hotel_name || 'Customer Details';
@@ -679,10 +718,57 @@ async function openCustomerDetail(customerId, tab = 'orders') {
     <div class="section-header" style="margin-bottom:16px;">
       <div style="display:flex;align-items:center;gap:12px;">
         <button class="btn btn-secondary btn-sm" onclick="currentDetailCustomerId=null;renderCustomers()"><i class="fas fa-arrow-left"></i> Back to Customers</button>
-        <span class="section-title" style="font-size:1.25em;">Customer Details</span>
+        <span class="section-title" style="font-size:1.25em;">Customer Profile</span>
       </div>
       <div style="display:flex;gap:8px;">
         ${isAdmin() ? `<button class="btn btn-success btn-sm" onclick="printCustomerSalesSummary(${c.id})" style="background:#10b981; border-color:#10b981; font-weight:600;"><i class="fas fa-file-pdf"></i> Summary Report</button>` : ''}
+      </div>
+    </div>
+
+    <!-- Customer Financial & Order Stat Cards -->
+    <div style="display:grid;grid-template-columns:repeat(auto-fit,minmax(200px,1fr));gap:16px;margin-bottom:20px;">
+      <div class="stat-card">
+        <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:8px;">
+          <div class="label">Value of Total Bills</div>
+          <div style="background:#dbeafe;color:#2563eb;width:38px;height:38px;border-radius:10px;display:flex;align-items:center;justify-content:center;">
+            <i class="fas fa-file-invoice-dollar"></i>
+          </div>
+        </div>
+        <div class="value" style="color:#2563eb;">${formatCurrency(totalBilled)}</div>
+        <div class="sub">${customerInvoices.length > 0 ? customerInvoices.length + ' invoice' + (customerInvoices.length !== 1 ? 's' : '') + ' generated' : 'From order totals'}</div>
+      </div>
+
+      <div class="stat-card">
+        <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:8px;">
+          <div class="label">Value of Paid Bills</div>
+          <div style="background:#dcfce7;color:#16a34a;width:38px;height:38px;border-radius:10px;display:flex;align-items:center;justify-content:center;">
+            <i class="fas fa-circle-check"></i>
+          </div>
+        </div>
+        <div class="value" style="color:#16a34a;">${formatCurrency(totalPaid)}</div>
+        <div class="sub">Total payments received</div>
+      </div>
+
+      <div class="stat-card">
+        <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:8px;">
+          <div class="label">Value of Pending Bills</div>
+          <div style="background:#fee2e2;color:#dc2626;width:38px;height:38px;border-radius:10px;display:flex;align-items:center;justify-content:center;">
+            <i class="fas fa-clock"></i>
+          </div>
+        </div>
+        <div class="value" style="color:${totalPending > 0 ? '#dc2626' : 'var(--text)'};">${formatCurrency(totalPending)}</div>
+        <div class="sub">Outstanding balance</div>
+      </div>
+
+      <div class="stat-card">
+        <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:8px;">
+          <div class="label">Total No of Orders</div>
+          <div style="background:#f3e8ff;color:#9333ea;width:38px;height:38px;border-radius:10px;display:flex;align-items:center;justify-content:center;">
+            <i class="fas fa-boxes-stacked"></i>
+          </div>
+        </div>
+        <div class="value" style="color:#9333ea;">${(orders || []).length} <span style="font-size:0.6em;font-weight:600;">Orders</span></div>
+        <div class="sub">${(orders || []).filter(o => o.status === 'Completed' || o.status === 'Delivered').length} completed</div>
       </div>
     </div>
 
@@ -1464,10 +1550,6 @@ async function openDriverDetail(driverId, tab = 'trips') {
           </div>
         </div>
         <div>
-          <div style="font-size:0.72em;text-transform:uppercase;color:var(--text-muted);font-weight:700;letter-spacing:0.5px;">Vehicle Assigned</div>
-          <div style="font-weight:600;font-size:0.95em;color:var(--text);margin-top:4px;"><i class="fas fa-car" style="color:var(--primary);margin-right:6px;width:14px;"></i>${escapeHtml(d.vehicle || '—')}</div>
-        </div>
-        <div>
           <div style="font-size:0.72em;text-transform:uppercase;color:var(--text-muted);font-weight:700;letter-spacing:0.5px;">Email Address</div>
           <div style="font-weight:600;font-size:0.95em;color:var(--text);margin-top:4px;"><i class="fas fa-envelope" style="color:#3b82f6;margin-right:6px;width:14px;"></i>${escapeHtml(d.email || '—')}</div>
         </div>
@@ -1697,21 +1779,19 @@ function showAddDriverModal() {
       <div class="form-group"><label class="form-label">Nick Name</label>
         <input class="form-input" id="d-nickname" placeholder="Kamal" maxlength="50"/></div>
       <div class="form-group"><label class="form-label">Phone No 1 * <span style="color:var(--text-muted);font-size:0.82em;">(10 digits)</span></label>
-        <input class="form-input" id="d-phone" placeholder="0771234567" maxlength="10" inputmode="numeric" oninput="this.value=this.value.replace(/\D/g,'').slice(0,10)"/></div>
+        <input class="form-input" id="d-phone" placeholder="0771234567" maxlength="10" inputmode="numeric" oninput="this.value=this.value.replace(/\\D/g,'').slice(0,10)"/></div>
       <div class="form-group"><label class="form-label">Phone No 2 <span style="color:var(--text-muted);font-size:0.82em;">(Optional, 10 digits)</span></label>
-        <input class="form-input" id="d-phone2" placeholder="0719876543" maxlength="10" inputmode="numeric" oninput="this.value=this.value.replace(/\D/g,'').slice(0,10)"/></div>
+        <input class="form-input" id="d-phone2" placeholder="0719876543" maxlength="10" inputmode="numeric" oninput="this.value=this.value.replace(/\\D/g,'').slice(0,10)"/></div>
       <div class="form-group"><label class="form-label">NIC Number *</label>
         <input class="form-input" id="d-nic" placeholder="951234567V / 199512345678" maxlength="20"/></div>
-      <div class="form-group"><label class="form-label">Email</label>
-        <input class="form-input" id="d-email" type="email" placeholder="driver@swc.lk" maxlength="100"/></div>
       <div class="form-group"><label class="form-label">Status</label>
         <select class="form-input form-select" id="d-status">
           <option value="available">Available</option>
           <option value="busy">Busy</option>
           <option value="off-duty">Off Duty</option>
         </select></div>
-      <div class="form-group"><label class="form-label">Vehicle & Plate</label>
-        <input class="form-input" id="d-vehicle" placeholder="Toyota Hiace - WP-AB-1234" maxlength="80"/></div>
+      <div class="form-group" style="grid-column:1/-1;"><label class="form-label">Email</label>
+        <input class="form-input" id="d-email" type="email" placeholder="driver@swc.lk" maxlength="100"/></div>
       <div class="form-group" style="grid-column:1/-1;"><label class="form-label">Address *</label>
         <input class="form-input" id="d-address" placeholder="No. 45, Temple Road, Colombo" maxlength="200"/></div>
     </div>
@@ -1730,7 +1810,6 @@ async function saveNewDriver() {
   const nic      = document.getElementById('d-nic').value.trim();
   const address  = document.getElementById('d-address').value.trim();
   const email    = document.getElementById('d-email').value.trim();
-  const vehicle  = document.getElementById('d-vehicle').value.trim();
   const status   = document.getElementById('d-status').value;
 
   if (!name) return toast('Full Name is required', 'error');
@@ -1759,13 +1838,13 @@ async function saveNewDriver() {
   }
 
   const drvId = await DB.addDriver({
-    name, nickname, phone, phone2, nic, address, email, vehicle, status
+    name, nickname, phone, phone2, nic, address, email, status
   });
 
   await DB.logAction(
     'Add Driver',
     `Added new driver "${name}" (Phone: ${phone}, NIC: ${nic})`,
-    { id: drvId, name, nickname, phone, phone2, nic, address, email, vehicle, status },
+    { id: drvId, name, nickname, phone, phone2, nic, address, email, status },
     'Driver'
   );
 
@@ -1787,21 +1866,19 @@ async function showEditDriverModal(id) {
       <div class="form-group"><label class="form-label">Nick Name</label>
         <input class="form-input" id="ed-nickname" value="${escapeHtml(d.nickname||'')}" maxlength="50"/></div>
       <div class="form-group"><label class="form-label">Phone No 1 * <span style="color:var(--text-muted);font-size:0.82em;">(10 digits)</span></label>
-        <input class="form-input" id="ed-phone" value="${escapeHtml(d.phone||'')}" maxlength="10" inputmode="numeric" oninput="this.value=this.value.replace(/\D/g,'').slice(0,10)"/></div>
+        <input class="form-input" id="ed-phone" value="${escapeHtml(d.phone||'')}" maxlength="10" inputmode="numeric" oninput="this.value=this.value.replace(/\\D/g,'').slice(0,10)"/></div>
       <div class="form-group"><label class="form-label">Phone No 2 <span style="color:var(--text-muted);font-size:0.82em;">(Optional, 10 digits)</span></label>
-        <input class="form-input" id="ed-phone2" value="${escapeHtml(d.phone2||'')}" maxlength="10" inputmode="numeric" oninput="this.value=this.value.replace(/\D/g,'').slice(0,10)"/></div>
+        <input class="form-input" id="ed-phone2" value="${escapeHtml(d.phone2||'')}" maxlength="10" inputmode="numeric" oninput="this.value=this.value.replace(/\\D/g,'').slice(0,10)"/></div>
       <div class="form-group"><label class="form-label">NIC Number *</label>
         <input class="form-input" id="ed-nic" value="${escapeHtml(d.nic||'')}" maxlength="20"/></div>
-      <div class="form-group"><label class="form-label">Email</label>
-        <input class="form-input" id="ed-email" type="email" value="${escapeHtml(d.email||'')}" maxlength="100"/></div>
       <div class="form-group"><label class="form-label">Status</label>
         <select class="form-input form-select" id="ed-status">
           <option value="available" ${statusVal==='available'?'selected':''}>Available</option>
           <option value="busy" ${statusVal==='busy'?'selected':''}>Busy</option>
           <option value="off-duty" ${statusVal==='off-duty'?'selected':''}>Off Duty</option>
         </select></div>
-      <div class="form-group"><label class="form-label">Vehicle & Plate</label>
-        <input class="form-input" id="ed-vehicle" value="${escapeHtml(d.vehicle||'')}" maxlength="80"/></div>
+      <div class="form-group" style="grid-column:1/-1;"><label class="form-label">Email</label>
+        <input class="form-input" id="ed-email" type="email" value="${escapeHtml(d.email||'')}" maxlength="100"/></div>
       <div class="form-group" style="grid-column:1/-1;"><label class="form-label">Address *</label>
         <input class="form-input" id="ed-address" value="${escapeHtml(d.address||'')}" maxlength="200"/></div>
     </div>
@@ -1820,7 +1897,6 @@ async function saveEditDriver(id) {
   const nic      = document.getElementById('ed-nic').value.trim();
   const address  = document.getElementById('ed-address').value.trim();
   const email    = document.getElementById('ed-email').value.trim();
-  const vehicle  = document.getElementById('ed-vehicle').value.trim();
   const status   = document.getElementById('ed-status').value;
 
   if (!name) return toast('Full Name is required', 'error');
@@ -1851,13 +1927,13 @@ async function saveEditDriver(id) {
   }
 
   await DB.updateDriver(id, {
-    name, nickname, phone, phone2, nic, address, email, vehicle, status
+    name, nickname, phone, phone2, nic, address, email, status
   });
 
   await DB.logAction(
     'Edit Driver',
     `Updated details for driver "${name}"`,
-    { id, name, nickname, phone, phone2, nic, address, email, vehicle, status },
+    { id, name, nickname, phone, phone2, nic, address, email, status },
     'Driver'
   );
 
