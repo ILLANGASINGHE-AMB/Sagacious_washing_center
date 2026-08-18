@@ -67,7 +67,7 @@ const DB = {
   // ── Drivers ───────────────────────────────
   async getDrivers() { return _q(_sb.from('drivers').select('*').order('name')); },
   async addDriver(data) {
-    const rows = await _q(_sb.from('drivers').insert(data).select());
+    const rows = await _q(_sb.from('drivers').insert({ created_date: new Date().toISOString(), status: 'available', ...data }).select());
     return rows[0].id;
   },
   async updateDriver(id, data) { await _q(_sb.from('drivers').update(data).eq('id', id)); },

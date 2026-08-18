@@ -120,17 +120,20 @@ async function runGlobalSearch(immediate = false) {
   if (allowedPages.includes('drivers')) {
     drivers.forEach(d => {
       const match = (d.name || '').toLowerCase().includes(query) ||
+                    (d.nickname || '').toLowerCase().includes(query) ||
                     (d.phone || '').toLowerCase().includes(query) ||
+                    (d.phone2 || '').toLowerCase().includes(query) ||
+                    (d.nic || '').toLowerCase().includes(query) ||
                     (d.vehicle || '').toLowerCase().includes(query);
       if (match) {
         results.push({
           type: 'Driver',
           icon: 'fa-truck',
           color: '#f59e0b',
-          title: d.name,
-          subtitle: `Vehicle: ${d.vehicle || 'N/A'} • Phone: ${d.phone || 'N/A'}`,
-          badge: d.status || 'Active',
-          action: () => { closeGsDropdown(); navigate('drivers'); }
+          title: d.name + (d.nickname ? ` (${d.nickname})` : ''),
+          subtitle: `NIC: ${d.nic || 'N/A'} • Phone: ${d.phone || 'N/A'} • Status: ${d.status || 'available'}`,
+          badge: d.status || 'available',
+          action: () => { closeGsDropdown(); navigate('drivers'); setTimeout(() => openDriverDetail(d.id), 200); }
         });
       }
     });

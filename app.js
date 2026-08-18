@@ -1243,147 +1243,654 @@ async function printCustomerSalesSummary(customerId) {
 // ─────────────────────────────────────────────
 // DRIVERS
 // ─────────────────────────────────────────────
-let drvPage = 1, drvSearch = '';
+let drvPage = 1, drvSearch = '', drvPerPage = 12;
+let currentDetailDriverId = null;
+let currentDriverDetailTab = 'trips';
+let drvTripChartInstance = null;
 
 async function renderDrivers() {
+  currentDetailDriverId = null;
   document.getElementById('page-title').textContent = 'Drivers';
-  if (document.getElementById('drv-grid')) { await _refreshDriversGrid(); return; }
+  if (document.getElementById('drv-table-body')) { await _refreshDriversGrid(); return; }
   document.getElementById('content').innerHTML = `
     <div class="section-header">
       <span class="section-title">Drivers</span>
       <div style="display:flex;gap:8px;">
-        <button class="btn btn-secondary" onclick="exportDrivers()" title="Export drivers to JSON"><i class="fas fa-download"></i> Backup</button>
-        <button class="btn btn-secondary" onclick="document.getElementById('drv-import-file').click()" title="Import drivers from JSON"><i class="fas fa-upload"></i> Import</button>
-        <input type="file" id="drv-import-file" accept=".json" style="display:none" onchange="importDrivers(this)"/>
+        ${canBackupRestore() ? `
+          <button class="btn btn-secondary" onclick="exportDrivers()" title="Export drivers to JSON"><i class="fas fa-download"></i> Backup</button>
+          <button class="btn btn-secondary" onclick="document.getElementById('drv-import-file').click()" title="Import drivers from JSON"><i class="fas fa-upload"></i> Import</button>
+          <input type="file" id="drv-import-file" accept=".json" style="display:none" onchange="importDrivers(this)"/>
+        ` : ''}
         <button class="btn btn-primary" onclick="showAddDriverModal()"><i class="fas fa-plus"></i> Add Driver</button>
       </div>
     </div>
     <div class="card" style="margin-bottom:18px;">
-      <div class="search-wrap" style="max-width:360px;">
-        <i class="fas fa-search"></i>
-        <input class="form-input" id="drv-search-input" placeholder="Search name, phone, vehicle..."
-          autocomplete="off" spellcheck="false"
-          oninput="drvSearch=this.value;drvPage=1;_refreshDriversGrid()"/>
+      <div style="display:flex;gap:12px;align-items:center;">
+        <div class="search-wrap" style="flex:1;">
+          <i class="fas fa-search"></i>
+          <input class="form-input" id="drv-search-input" placeholder="Search driver name, nickname, phone, NIC, vehicle..."
+            autocomplete="off" spellcheck="false"
+            oninput="drvSearch=this.value;drvPage=1;_refreshDriversGrid()"/>
+        </div>
+        <span id="drv-count" style="font-size:0.82em;color:var(--text-muted);"></span>
       </div>
     </div>
-    <div id="drv-grid" style="display:grid;grid-template-columns:repeat(auto-fill,minmax(280px,1fr));gap:16px;"></div>
-    <div id="drv-pagination" style="margin-top:16px;display:flex;justify-content:flex-end;"></div>`;
+    <div class="card" style="padding:0;">
+      <div class="table-wrap">
+        <table>
+          <thead>
+            <tr>
+              <th style="width:70px;text-align:center;">No</th>
+              <th>Driver Name</th>
+              <th style="width:160px;text-align:center;">Status</th>
+              <th style="width:140px;text-align:center;">Action</th>
+            </tr>
+          </thead>
+          <tbody id="drv-table-body"></tbody>
+        </table>
+      </div>
+      <div id="drv-pagination" style="padding:14px 18px;display:flex;justify-content:space-between;align-items:center;border-top:1px solid var(--border);"></div>
+    </div>`;
   await _refreshDriversGrid();
   document.getElementById('drv-search-input')?.focus();
 }
 
 async function _refreshDriversGrid() {
-  const grid = document.getElementById('drv-grid');
-  if (!grid) { await renderDrivers(); return; }
+  const tbody = document.getElementById('drv-table-body');
+  if (!tbody) { await renderDrivers(); return; }
   const drivers = await DB.getDrivers();
-  let filtered = filterData(drivers, drvSearch, ['name','phone','vehicle']);
-  const {items,totalPages} = paginateData(filtered, drvPage, 10);
-  grid.innerHTML = items.map(d=>driverCard(d)).join('')
-    || `<div style="grid-column:1/-1;text-align:center;padding:40px;color:var(--text-muted);">No drivers found</div>`;
-  const pg=document.getElementById('drv-pagination');
-  if(pg) pg.innerHTML=renderPagination(drvPage,totalPages,'changeDrvPage');
+  let filtered = filterData(drivers, drvSearch, ['name','nickname','phone','phone2','nic','vehicle','email','address']);
+  filtered = filtered.sort((a,b) => (a.name||'').localeCompare(b.name||''));
+  const {items,totalPages,total} = paginateData(filtered, drvPage, drvPerPage);
+  const countEl = document.getElementById('drv-count');
+  if(countEl) countEl.textContent = total+' driver'+(total!==1?'s':'');
+
+  tbody.innerHTML = items.length === 0
+    ? `<tr><td colspan="4" style="text-align:center;padding:32px;color:var(--text-muted);">No drivers found</td></tr>`
+    : items.map((d, idx) => {
+        const rowNum = String((drvPage - 1) * drvPerPage + idx + 1).padStart(2, '0');
+        const statusVal = (d.status || 'available').toLowerCase();
+        const stBadgeClass = statusVal === 'available' ? 'badge-green' : (statusVal === 'busy' || statusVal === 'on-trip') ? 'badge-yellow' : 'badge-gray';
+        const stLabel = statusVal === 'available' ? 'Available' : (statusVal === 'busy' || statusVal === 'on-trip') ? 'Busy' : 'Off Duty';
+
+        return `<tr>
+          <td style="text-align:center;font-weight:700;color:var(--text-muted);font-family:monospace;font-size:1.05em;">${rowNum}</td>
+          <td>
+            <div style="font-weight:700;font-size:1.02em;color:var(--text);">
+              ${escapeHtml(d.name)}${d.nickname ? ` <span style="font-weight:400;font-size:0.85em;color:var(--text-muted);">(${escapeHtml(d.nickname)})</span>` : ''}
+            </div>
+            ${d.phone ? `<div style="font-size:0.8em;color:var(--text-muted);margin-top:2px;"><i class="fas fa-phone" style="font-size:0.8em;margin-right:4px;"></i>${escapeHtml(d.phone)}</div>` : ''}
+          </td>
+          <td style="text-align:center;">
+            <button class="btn btn-sm badge ${stBadgeClass}" onclick="cycleDriverStatus(${d.id}, '${statusVal}')" title="Click to cycle status: Available / Busy / Off Duty" style="cursor:pointer;padding:5px 12px;font-size:0.82em;border:none;display:inline-flex;align-items:center;gap:6px;">
+              <i class="fas fa-circle" style="font-size:0.6em;"></i> ${stLabel} <i class="fas fa-rotate" style="font-size:0.75em;opacity:0.7;"></i>
+            </button>
+          </td>
+          <td style="text-align:center;">
+            <button class="btn btn-primary btn-sm" onclick="openDriverDetail(${d.id})" style="padding:6px 16px;font-weight:600;">
+              <i class="fas fa-eye"></i> View
+            </button>
+          </td>
+        </tr>`;
+      }).join('');
+
+  const pg = document.getElementById('drv-pagination');
+  if(pg) pg.innerHTML = `<span style="font-size:0.82em;color:var(--text-muted);">Page ${drvPage} of ${totalPages}</span>` + renderPagination(drvPage, totalPages, 'changeDrvPage');
 }
 
-function changeDrvPage(p) { drvPage=p; _refreshDriversGrid(); }
+function changeDrvPage(p) { drvPage = p; _refreshDriversGrid(); }
 
-function driverCard(d) {
-  const sc = d.status==='available'?'badge-green':d.status==='on-trip'?'badge-yellow':'badge-gray';
-  return `<div class="card">
-    <div style="display:flex;align-items:center;gap:14px;margin-bottom:14px;">
-      <div style="width:50px;height:50px;border-radius:50%;background:linear-gradient(135deg,#1a4d8f,#00b4d8);display:flex;align-items:center;justify-content:center;color:#fff;font-size:1.3em;font-weight:700;flex-shrink:0;">
-        ${escapeHtml(d.name.charAt(0))}</div>
-      <div><div style="font-weight:700;">${escapeHtml(d.name)}</div><span class="badge ${sc}">${d.status||'available'}</span></div>
+async function cycleDriverStatus(id, current) {
+  const currentNorm = (current || 'available').toLowerCase() === 'on-trip' ? 'busy' : (current || 'available').toLowerCase();
+  const statuses = ['available', 'busy', 'off-duty'];
+  const nextStatus = statuses[(statuses.indexOf(currentNorm) + 1) % statuses.length];
+  await DB.updateDriver(id, { status: nextStatus });
+  const drv = await DB.getDriver(id);
+  await DB.logAction('Edit Driver', `Changed driver "${drv?.name || '#' + id}" status to "${nextStatus}"`, { id, status: nextStatus }, 'Driver');
+  toast(`Status changed to ${nextStatus === 'available' ? 'Available' : nextStatus === 'busy' ? 'Busy' : 'Off Duty'}`);
+  if (currentDetailDriverId === id) {
+    openDriverDetail(id, currentDriverDetailTab);
+  } else {
+    _refreshDriversGrid();
+  }
+}
+
+async function openDriverDetail(driverId, tab = 'trips') {
+  currentDetailDriverId = driverId;
+  currentDriverDetailTab = tab;
+
+  const [d, allTrips] = await Promise.all([
+    DB.getDriver(driverId),
+    DB.getTrips()
+  ]);
+
+  if (!d) {
+    toast('Driver not found', 'error');
+    currentDetailDriverId = null;
+    return renderDrivers();
+  }
+
+  // Filter trips for this driver
+  const driverTrips = (allTrips || []).filter(t => 
+    (t.driver_id && String(t.driver_id) === String(d.id)) ||
+    (t.driver_name && (
+      t.driver_name.toLowerCase().trim() === (d.name || '').toLowerCase().trim() ||
+      (d.nickname && t.driver_name.toLowerCase().trim() === d.nickname.toLowerCase().trim())
+    ))
+  );
+
+  const totalKms = driverTrips.reduce((sum, t) => sum + (parseFloat(t.distance_km) || 0), 0);
+  const totalTripsCount = driverTrips.length;
+
+  const statusVal = (d.status || 'available').toLowerCase();
+  const stBadgeClass = statusVal === 'available' ? 'badge-green' : (statusVal === 'busy' || statusVal === 'on-trip') ? 'badge-yellow' : 'badge-gray';
+  const stLabel = statusVal === 'available' ? 'Available' : (statusVal === 'busy' || statusVal === 'on-trip') ? 'Busy' : 'Off Duty';
+
+  document.getElementById('page-title').textContent = d.name || 'Driver Details';
+
+  const contentEl = document.getElementById('content');
+  contentEl.innerHTML = `
+    <div class="section-header" style="margin-bottom:16px;">
+      <div style="display:flex;align-items:center;gap:12px;">
+        <button class="btn btn-secondary btn-sm" onclick="currentDetailDriverId=null;renderDrivers()"><i class="fas fa-arrow-left"></i> Back to Drivers</button>
+        <span class="section-title" style="font-size:1.25em;">Driver Profile</span>
+      </div>
     </div>
-    <div style="font-size:0.88em;color:var(--text-muted);margin-bottom:4px;"><i class="fas fa-phone" style="width:16px;"></i> ${escapeHtml(d.phone||'—')}</div>
-    <div style="font-size:0.88em;color:var(--text-muted);margin-bottom:14px;"><i class="fas fa-car" style="width:16px;"></i> ${escapeHtml(d.vehicle||'—')}</div>
-    <div style="display:flex;gap:8px;">
-      <button class="btn btn-primary btn-sm" onclick="showEditDriverModal(${d.id})"><i class="fas fa-edit"></i> Edit</button>
-      <button class="btn btn-secondary btn-sm" onclick="toggleDriverStatus(${d.id},'${d.status}')"><i class="fas fa-toggle-on"></i> Status</button>
-      <button class="btn btn-danger btn-sm" onclick="deleteDriverConfirm(${d.id})"><i class="fas fa-trash"></i></button>
+
+    <!-- Top Summary Stat Cards for Driver -->
+    <div style="display:grid;grid-template-columns:repeat(auto-fit,minmax(220px,1fr));gap:16px;margin-bottom:20px;">
+      <div class="stat-card">
+        <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:8px;">
+          <div class="label">Total KMs Travelled</div>
+          <div style="background:#dbeafe;color:#2563eb;width:38px;height:38px;border-radius:10px;display:flex;align-items:center;justify-content:center;">
+            <i class="fas fa-route"></i>
+          </div>
+        </div>
+        <div class="value" style="color:#2563eb;">${totalKms.toLocaleString('en-LK', { maximumFractionDigits: 1 })} <span style="font-size:0.6em;font-weight:600;">KM</span></div>
+        <div class="sub">Across all recorded trips</div>
+      </div>
+
+      <div class="stat-card">
+        <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:8px;">
+          <div class="label">Total Trips Done</div>
+          <div style="background:#dcfce7;color:#16a34a;width:38px;height:38px;border-radius:10px;display:flex;align-items:center;justify-content:center;">
+            <i class="fas fa-truck-fast"></i>
+          </div>
+        </div>
+        <div class="value" style="color:#16a34a;">${totalTripsCount} <span style="font-size:0.6em;font-weight:600;">Trips</span></div>
+        <div class="sub">${driverTrips.filter(t => t.status === 'Completed').length} completed, ${driverTrips.filter(t => t.status === 'In Progress').length} in progress</div>
+      </div>
     </div>
-  </div>`;
+
+    <!-- Driver Details Card -->
+    <div class="card" style="margin-bottom:20px;border-left:4px solid var(--primary);">
+      <div style="display:flex;justify-content:space-between;align-items:flex-start;flex-wrap:wrap;gap:14px;margin-bottom:16px;">
+        <div>
+          <div style="font-size:0.75em;font-weight:700;color:var(--text-muted);text-transform:uppercase;letter-spacing:0.5px;margin-bottom:4px;">Driver Details</div>
+          <div style="font-family:'Playfair Display',serif;font-size:1.6em;font-weight:700;color:var(--text);">
+            ${escapeHtml(d.name)}
+            ${d.nickname ? `<span style="font-size:0.65em;color:var(--text-muted);font-weight:400;margin-left:6px;">(${escapeHtml(d.nickname)})</span>` : ''}
+          </div>
+        </div>
+        <div style="display:flex;gap:8px;">
+          <button class="btn btn-primary btn-sm" onclick="showEditDriverModal(${d.id})"><i class="fas fa-edit"></i> Edit</button>
+          ${canDelete() ? `<button class="btn btn-danger btn-sm" onclick="deleteDriverConfirm(${d.id})"><i class="fas fa-trash"></i> Delete</button>` : ''}
+        </div>
+      </div>
+
+      <div style="display:grid;grid-template-columns:repeat(auto-fit,minmax(200px,1fr));gap:16px;padding:16px;background:var(--bg);border-radius:10px;border:1px solid var(--border);">
+        <div>
+          <div style="font-size:0.72em;text-transform:uppercase;color:var(--text-muted);font-weight:700;letter-spacing:0.5px;">Contact No 1</div>
+          <div style="font-weight:600;font-size:0.95em;color:var(--text);margin-top:4px;"><i class="fas fa-phone" style="color:var(--success);margin-right:6px;width:14px;"></i>${escapeHtml(d.phone || '—')}</div>
+        </div>
+        <div>
+          <div style="font-size:0.72em;text-transform:uppercase;color:var(--text-muted);font-weight:700;letter-spacing:0.5px;">Contact No 2</div>
+          <div style="font-weight:600;font-size:0.95em;color:var(--text);margin-top:4px;"><i class="fas fa-phone-volume" style="color:#06b6d4;margin-right:6px;width:14px;"></i>${escapeHtml(d.phone2 || '—')}</div>
+        </div>
+        <div>
+          <div style="font-size:0.72em;text-transform:uppercase;color:var(--text-muted);font-weight:700;letter-spacing:0.5px;">NIC Number</div>
+          <div style="font-weight:600;font-size:0.95em;color:var(--text);margin-top:4px;"><i class="fas fa-id-card" style="color:#8b5cf6;margin-right:6px;width:14px;"></i>${escapeHtml(d.nic || '—')}</div>
+        </div>
+        <div>
+          <div style="font-size:0.72em;text-transform:uppercase;color:var(--text-muted);font-weight:700;letter-spacing:0.5px;">Joined Date</div>
+          <div style="font-weight:600;font-size:0.95em;color:var(--text);margin-top:4px;"><i class="fas fa-calendar-alt" style="color:#f59e0b;margin-right:6px;width:14px;"></i>${formatDate(d.created_date)}</div>
+        </div>
+        <div>
+          <div style="font-size:0.72em;text-transform:uppercase;color:var(--text-muted);font-weight:700;letter-spacing:0.5px;">Current Status</div>
+          <div style="margin-top:4px;">
+            <button class="btn btn-sm badge ${stBadgeClass}" onclick="cycleDriverStatus(${d.id}, '${statusVal}')" title="Click to cycle status" style="cursor:pointer;padding:4px 10px;font-size:0.82em;border:none;display:inline-flex;align-items:center;gap:6px;">
+              <i class="fas fa-circle" style="font-size:0.6em;"></i> ${stLabel} <i class="fas fa-rotate" style="font-size:0.75em;opacity:0.7;"></i>
+            </button>
+          </div>
+        </div>
+        <div>
+          <div style="font-size:0.72em;text-transform:uppercase;color:var(--text-muted);font-weight:700;letter-spacing:0.5px;">Vehicle Assigned</div>
+          <div style="font-weight:600;font-size:0.95em;color:var(--text);margin-top:4px;"><i class="fas fa-car" style="color:var(--primary);margin-right:6px;width:14px;"></i>${escapeHtml(d.vehicle || '—')}</div>
+        </div>
+        <div>
+          <div style="font-size:0.72em;text-transform:uppercase;color:var(--text-muted);font-weight:700;letter-spacing:0.5px;">Email Address</div>
+          <div style="font-weight:600;font-size:0.95em;color:var(--text);margin-top:4px;"><i class="fas fa-envelope" style="color:#3b82f6;margin-right:6px;width:14px;"></i>${escapeHtml(d.email || '—')}</div>
+        </div>
+        <div style="grid-column:1 / -1;">
+          <div style="font-size:0.72em;text-transform:uppercase;color:var(--text-muted);font-weight:700;letter-spacing:0.5px;">Address</div>
+          <div style="font-weight:600;font-size:0.95em;color:var(--text);margin-top:4px;"><i class="fas fa-map-marker-alt" style="color:#ec4899;margin-right:6px;width:14px;"></i>${escapeHtml(d.address || '—')}</div>
+        </div>
+      </div>
+    </div>
+
+    <!-- Details Part (Switchable Tabs: Trip History, Graph View) -->
+    <div class="card" style="padding:0;overflow:hidden;">
+      <div style="display:flex;align-items:center;border-bottom:1px solid var(--border);background:var(--card-bg);padding:10px 16px;gap:10px;flex-wrap:wrap;">
+        <span style="font-size:0.8em;font-weight:700;text-transform:uppercase;letter-spacing:0.5px;color:var(--text-muted);margin-right:4px;">Details:</span>
+        <button id="drv-tab-btn-trips" class="btn btn-sm ${currentDriverDetailTab === 'trips' ? 'btn-primary' : 'btn-secondary'}" onclick="switchDriverDetailTab(${d.id}, 'trips')">
+          <i class="fas fa-truck-fast"></i> Trip History
+        </button>
+        <button id="drv-tab-btn-graph" class="btn btn-sm ${currentDriverDetailTab === 'graph' ? 'btn-primary' : 'btn-secondary'}" onclick="switchDriverDetailTab(${d.id}, 'graph')">
+          <i class="fas fa-chart-line"></i> Graph View
+        </button>
+      </div>
+
+      <div id="drv-detail-tab-body" style="padding:20px;">
+      </div>
+    </div>
+  `;
+
+  await renderDriverDetailTabBody(d, driverTrips, currentDriverDetailTab);
+}
+
+async function switchDriverDetailTab(driverId, tab) {
+  currentDriverDetailTab = tab;
+  ['trips', 'graph'].forEach(t => {
+    const btn = document.getElementById('drv-tab-btn-' + t);
+    if (btn) {
+      btn.className = (t === tab) ? 'btn btn-sm btn-primary' : 'btn btn-sm btn-secondary';
+    }
+  });
+
+  const [d, allTrips] = await Promise.all([
+    DB.getDriver(driverId),
+    DB.getTrips()
+  ]);
+
+  if (d) {
+    const driverTrips = (allTrips || []).filter(t => 
+      (t.driver_id && String(t.driver_id) === String(d.id)) ||
+      (t.driver_name && (
+        t.driver_name.toLowerCase().trim() === (d.name || '').toLowerCase().trim() ||
+        (d.nickname && t.driver_name.toLowerCase().trim() === d.nickname.toLowerCase().trim())
+      ))
+    );
+    await renderDriverDetailTabBody(d, driverTrips, tab);
+  }
+}
+
+async function renderDriverDetailTabBody(d, driverTrips, tab) {
+  const container = document.getElementById('drv-detail-tab-body');
+  if (!container) return;
+
+  if (drvTripChartInstance) {
+    try { drvTripChartInstance.destroy(); } catch(e) {}
+    drvTripChartInstance = null;
+  }
+
+  if (tab === 'trips') {
+    const sortedTrips = [...(driverTrips || [])].sort((a,b) => new Date(b.start_date || b.created_at || 0) - new Date(a.start_date || a.created_at || 0));
+    container.innerHTML = `
+      <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:14px;">
+        <div style="font-weight:700;font-family:'Playfair Display',serif;font-size:1.15em;">Trip History (${sortedTrips.length})</div>
+      </div>
+      <div class="table-wrap">
+        <table>
+          <thead>
+            <tr>
+              <th>Driver Name</th>
+              <th>Trip ID</th>
+              <th>Distance</th>
+              <th>Date</th>
+              <th>Status</th>
+              <th style="text-align:center;width:120px;">Action</th>
+            </tr>
+          </thead>
+          <tbody>
+            ${sortedTrips.map(t => `
+              <tr>
+                <td><strong>${escapeHtml(d.name)}</strong></td>
+                <td><span style="font-family:monospace;font-weight:700;color:var(--primary);">${escapeHtml(t.trip_id || t.id)}</span></td>
+                <td style="font-weight:700;color:#2563eb;">${t.distance_km != null ? t.distance_km + ' KM' : '—'}</td>
+                <td>${formatDate(t.start_date || t.created_at)}</td>
+                <td><span class="badge ${t.status === 'Completed' ? 'badge-green' : 'badge-yellow'}">${t.status || 'In Progress'}</span></td>
+                <td style="text-align:center;">
+                  <button class="btn btn-secondary btn-sm" onclick="navigate('transport'); setTimeout(() => TransportModule?.viewTripDetails?.('${t.id}'), 200)">
+                    <i class="fas fa-eye"></i> View
+                  </button>
+                </td>
+              </tr>
+            `).join('') || `<tr><td colspan="6" style="text-align:center;padding:32px;color:var(--text-muted);">No trip history found for this driver</td></tr>`}
+          </tbody>
+        </table>
+      </div>
+    `;
+  } else if (tab === 'graph') {
+    container.innerHTML = `
+      <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:16px;flex-wrap:wrap;gap:8px;">
+        <div>
+          <div style="font-family:'Playfair Display',serif;font-size:1.15em;font-weight:700;">Trip Distance Fluctuations</div>
+          <div style="font-size:0.82em;color:var(--text-muted);">Non-linear timeline of total distance travelled (KM) across trip dates</div>
+        </div>
+      </div>
+      <div id="drv-chart-wrap" style="background:var(--bg);padding:16px;border-radius:10px;border:1px solid var(--border);">
+        <div class="chart-container" style="height:350px;position:relative;">
+          <canvas id="drv-trip-chart"></canvas>
+        </div>
+      </div>
+    `;
+
+    renderDriverTripGraph(driverTrips || []);
+  }
+}
+
+function renderDriverTripGraph(trips) {
+  const chartCanvas = document.getElementById('drv-trip-chart');
+  if (!chartCanvas) return;
+
+  const validTrips = (trips || []).filter(t => (t.start_date || t.created_at) && (parseFloat(t.distance_km) > 0));
+  if (!validTrips.length) {
+    const wrap = document.getElementById('drv-chart-wrap');
+    if (wrap) {
+      wrap.innerHTML = `<div style="text-align:center;padding:48px 20px;color:var(--text-muted);"><i class="fas fa-chart-line" style="font-size:2.8em;opacity:0.3;margin-bottom:12px;display:block;"></i>No completed distance data available yet to plot graph.</div>`;
+    }
+    return;
+  }
+
+  // Aggregate total distance per date (YYYY-MM-DD)
+  const dateMap = {};
+  validTrips.forEach(t => {
+    const rawDate = t.start_date || t.created_at;
+    const dateKey = rawDate.slice(0, 10);
+    dateMap[dateKey] = (dateMap[dateKey] || 0) + (parseFloat(t.distance_km) || 0);
+  });
+
+  // Sort dates chronologically (oldest to newest)
+  const sortedDates = Object.keys(dateMap).sort();
+  const labels = sortedDates.map(d => new Date(d).toLocaleDateString('en-GB', { day: 'numeric', month: 'short', year: 'numeric' }));
+  const values = sortedDates.map(d => dateMap[d]);
+
+  const isDark = document.documentElement.classList.contains('dark');
+  const gridColor = isDark ? 'rgba(255,255,255,0.07)' : 'rgba(0,0,0,0.07)';
+  const textColor = isDark ? '#94a3b8' : '#64748b';
+
+  const ctx = chartCanvas.getContext('2d');
+  
+  // Gradient fill under the smooth curve
+  const gradient = ctx.createLinearGradient(0, 0, 0, 320);
+  gradient.addColorStop(0, 'rgba(6, 182, 212, 0.40)');
+  gradient.addColorStop(1, 'rgba(6, 182, 212, 0.02)');
+
+  drvTripChartInstance = new Chart(ctx, {
+    type: 'line',
+    data: {
+      labels,
+      datasets: [{
+        label: 'Trip Distance (KM)',
+        data: values,
+        borderColor: '#06b6d4',
+        backgroundColor: gradient,
+        borderWidth: 2.5,
+        tension: 0.38, // Smooth non-linear curve
+        fill: true,
+        pointBackgroundColor: '#06b6d4',
+        pointBorderColor: isDark ? '#1e293b' : '#ffffff',
+        pointBorderWidth: 2,
+        pointRadius: 5,
+        pointHoverRadius: 8,
+        pointHoverBackgroundColor: '#0891b2',
+        pointHoverBorderColor: '#ffffff',
+        pointHoverBorderWidth: 2
+      }]
+    },
+    options: {
+      responsive: true,
+      maintainAspectRatio: false,
+      interaction: {
+        mode: 'index',
+        intersect: false
+      },
+      plugins: {
+        legend: {
+          display: true,
+          position: 'top',
+          labels: { color: textColor, font: { size: 11 }, boxWidth: 12 }
+        },
+        tooltip: {
+          callbacks: {
+            label: c => `Distance: ${Number(c.parsed.y).toLocaleString('en-LK', { maximumFractionDigits: 1 })} KM`
+          }
+        }
+      },
+      scales: {
+        x: {
+          grid: { color: gridColor },
+          ticks: { color: textColor, font: { size: 10 }, maxRotation: 45, minRotation: 0 }
+        },
+        y: {
+          beginAtZero: true,
+          grid: { color: gridColor },
+          ticks: {
+            color: textColor,
+            font: { size: 10 },
+            callback: function(val) {
+              if (val >= 1000) return (val / 1000).toFixed(1).replace(/\.0$/, '') + 'K KM';
+              return val + ' KM';
+            }
+          }
+        }
+      }
+    }
+  });
 }
 
 function showAddDriverModal() {
   createModal('add-drv-modal','Add Driver',`
-    <div class="form-group"><label class="form-label">Full Name *</label><input class="form-input" id="d-name" placeholder="Kamal Rathnayake" maxlength="80"/></div>
-    <div class="form-group"><label class="form-label">Phone <span style="color:var(--text-muted);font-size:0.82em;">(10 digits)</span></label>
-      <input class="form-input" id="d-phone" placeholder="0771234567" maxlength="10" inputmode="numeric" oninput="this.value=this.value.replace(/\D/g,'').slice(0,10)"/></div>
-    <div class="form-group"><label class="form-label">Vehicle & Plate</label><input class="form-input" id="d-vehicle" placeholder="Toyota Hiace - WP-AB-1234" maxlength="80"/></div>
-    <div class="form-group"><label class="form-label">Status</label>
-      <select class="form-input form-select" id="d-status">
-        <option value="available">Available</option><option value="on-trip">On Trip</option><option value="off-duty">Off Duty</option>
-      </select></div>
+    <div style="display:grid;grid-template-columns:1fr 1fr;gap:14px;">
+      <div class="form-group"><label class="form-label">Full Name *</label>
+        <input class="form-input" id="d-name" placeholder="Kamal Rathnayake" maxlength="80"/></div>
+      <div class="form-group"><label class="form-label">Nick Name</label>
+        <input class="form-input" id="d-nickname" placeholder="Kamal" maxlength="50"/></div>
+      <div class="form-group"><label class="form-label">Phone No 1 * <span style="color:var(--text-muted);font-size:0.82em;">(10 digits)</span></label>
+        <input class="form-input" id="d-phone" placeholder="0771234567" maxlength="10" inputmode="numeric" oninput="this.value=this.value.replace(/\D/g,'').slice(0,10)"/></div>
+      <div class="form-group"><label class="form-label">Phone No 2 <span style="color:var(--text-muted);font-size:0.82em;">(Optional, 10 digits)</span></label>
+        <input class="form-input" id="d-phone2" placeholder="0719876543" maxlength="10" inputmode="numeric" oninput="this.value=this.value.replace(/\D/g,'').slice(0,10)"/></div>
+      <div class="form-group"><label class="form-label">NIC Number *</label>
+        <input class="form-input" id="d-nic" placeholder="951234567V / 199512345678" maxlength="20"/></div>
+      <div class="form-group"><label class="form-label">Email</label>
+        <input class="form-input" id="d-email" type="email" placeholder="driver@swc.lk" maxlength="100"/></div>
+      <div class="form-group"><label class="form-label">Status</label>
+        <select class="form-input form-select" id="d-status">
+          <option value="available">Available</option>
+          <option value="busy">Busy</option>
+          <option value="off-duty">Off Duty</option>
+        </select></div>
+      <div class="form-group"><label class="form-label">Vehicle & Plate</label>
+        <input class="form-input" id="d-vehicle" placeholder="Toyota Hiace - WP-AB-1234" maxlength="80"/></div>
+      <div class="form-group" style="grid-column:1/-1;"><label class="form-label">Address *</label>
+        <input class="form-input" id="d-address" placeholder="No. 45, Temple Road, Colombo" maxlength="200"/></div>
+    </div>
     <div style="display:flex;gap:10px;justify-content:flex-end;margin-top:8px;">
       <button class="btn btn-secondary" onclick="hideModal('add-drv-modal')">Cancel</button>
       <button class="btn btn-primary" onclick="saveNewDriver()"><i class="fas fa-save"></i> Save</button>
-    </div>`);
+    </div>`, 'modal-lg');
   showModal('add-drv-modal');
 }
+
 async function saveNewDriver() {
-  const name    = document.getElementById('d-name').value.trim();
-  const phone   = document.getElementById('d-phone').value.trim();
-  const vehicle = document.getElementById('d-vehicle').value.trim();
-  const status  = document.getElementById('d-status').value;
-  if (!name) return toast('Name required','error');
-  if (phone && (phone.length !== 10 || !/^\d{10}$/.test(phone))) return toast('Phone must be exactly 10 digits','error');
-  if (phone) {
-    const all = await DB.getDrivers();
-    const dup = all.find(d => d.phone && d.phone === phone);
-    if (dup) return toast(`Phone ${phone} is already used by driver "${escapeHtml(dup.name)}"`, 'error');
+  const name     = document.getElementById('d-name').value.trim();
+  const nickname = document.getElementById('d-nickname').value.trim();
+  const phone    = document.getElementById('d-phone').value.trim();
+  const phone2   = document.getElementById('d-phone2').value.trim();
+  const nic      = document.getElementById('d-nic').value.trim();
+  const address  = document.getElementById('d-address').value.trim();
+  const email    = document.getElementById('d-email').value.trim();
+  const vehicle  = document.getElementById('d-vehicle').value.trim();
+  const status   = document.getElementById('d-status').value;
+
+  if (!name) return toast('Full Name is required', 'error');
+  if (!phone) return toast('Phone No 1 is required', 'error');
+  if (phone.length !== 10 || !/^\d{10}$/.test(phone)) return toast('Phone No 1 must be exactly 10 digits', 'error');
+  if (phone2 && (phone2.length !== 10 || !/^\d{10}$/.test(phone2))) return toast('Phone No 2 must be exactly 10 digits', 'error');
+  if (!nic) return toast('NIC Number is required', 'error');
+  if (!address) return toast('Address is required', 'error');
+
+  const all = await DB.getDrivers();
+
+  // Duplicate Phone Check
+  const dupPhone = all.find(d => 
+    (d.phone && d.phone === phone) || 
+    (d.phone2 && d.phone2 === phone) ||
+    (phone2 && (d.phone === phone2 || d.phone2 === phone2))
+  );
+  if (dupPhone) {
+    return toast(`Phone number is already registered to driver "${escapeHtml(dupPhone.name)}"`, 'error');
   }
-  const drvId = await DB.addDriver({name,phone,vehicle,status});
-  await DB.logAction('Add Driver', `Added new driver "${name}" (Vehicle: ${vehicle || 'N/A'}, Phone: ${phone || 'N/A'})`, { id: drvId, name, phone, vehicle, status }, 'Driver');
-  hideModal('add-drv-modal'); toast('Driver added!'); renderDrivers();
+
+  // Duplicate NIC Check
+  const dupNic = all.find(d => d.nic && d.nic.toLowerCase().trim() === nic.toLowerCase().trim());
+  if (dupNic) {
+    return toast(`NIC "${nic}" is already registered to driver "${escapeHtml(dupNic.name)}"`, 'error');
+  }
+
+  const drvId = await DB.addDriver({
+    name, nickname, phone, phone2, nic, address, email, vehicle, status
+  });
+
+  await DB.logAction(
+    'Add Driver',
+    `Added new driver "${name}" (Phone: ${phone}, NIC: ${nic})`,
+    { id: drvId, name, nickname, phone, phone2, nic, address, email, vehicle, status },
+    'Driver'
+  );
+
+  hideModal('add-drv-modal');
+  toast('Driver added successfully!');
+  renderDrivers();
 }
+
 async function showEditDriverModal(id) {
-  const d=await DB.getDriver(id); if(!d) return;
+  const d = await DB.getDriver(id);
+  if(!d) return;
+
+  const statusVal = (d.status || 'available').toLowerCase() === 'on-trip' ? 'busy' : (d.status || 'available').toLowerCase();
+
   createModal('edit-drv-modal','Edit Driver',`
-    <div class="form-group"><label class="form-label">Full Name *</label><input class="form-input" id="ed-name" value="${escapeHtml(d.name||'')}" maxlength="80"/></div>
-    <div class="form-group"><label class="form-label">Phone <span style="color:var(--text-muted);font-size:0.82em;">(10 digits)</span></label>
-      <input class="form-input" id="ed-phone" value="${escapeHtml(d.phone||'')}" maxlength="10" inputmode="numeric" oninput="this.value=this.value.replace(/\D/g,'').slice(0,10)"/></div>
-    <div class="form-group"><label class="form-label">Vehicle & Plate</label><input class="form-input" id="ed-vehicle" value="${escapeHtml(d.vehicle||'')}" maxlength="80"/></div>
-    <div class="form-group"><label class="form-label">Status</label>
-      <select class="form-input form-select" id="ed-status">
-        ${['available','on-trip','off-duty'].map(s=>`<option value="${s}" ${d.status===s?'selected':''}>${s.charAt(0).toUpperCase()+s.slice(1)}</option>`).join('')}
-      </select></div>
+    <div style="display:grid;grid-template-columns:1fr 1fr;gap:14px;">
+      <div class="form-group"><label class="form-label">Full Name *</label>
+        <input class="form-input" id="ed-name" value="${escapeHtml(d.name||'')}" maxlength="80"/></div>
+      <div class="form-group"><label class="form-label">Nick Name</label>
+        <input class="form-input" id="ed-nickname" value="${escapeHtml(d.nickname||'')}" maxlength="50"/></div>
+      <div class="form-group"><label class="form-label">Phone No 1 * <span style="color:var(--text-muted);font-size:0.82em;">(10 digits)</span></label>
+        <input class="form-input" id="ed-phone" value="${escapeHtml(d.phone||'')}" maxlength="10" inputmode="numeric" oninput="this.value=this.value.replace(/\D/g,'').slice(0,10)"/></div>
+      <div class="form-group"><label class="form-label">Phone No 2 <span style="color:var(--text-muted);font-size:0.82em;">(Optional, 10 digits)</span></label>
+        <input class="form-input" id="ed-phone2" value="${escapeHtml(d.phone2||'')}" maxlength="10" inputmode="numeric" oninput="this.value=this.value.replace(/\D/g,'').slice(0,10)"/></div>
+      <div class="form-group"><label class="form-label">NIC Number *</label>
+        <input class="form-input" id="ed-nic" value="${escapeHtml(d.nic||'')}" maxlength="20"/></div>
+      <div class="form-group"><label class="form-label">Email</label>
+        <input class="form-input" id="ed-email" type="email" value="${escapeHtml(d.email||'')}" maxlength="100"/></div>
+      <div class="form-group"><label class="form-label">Status</label>
+        <select class="form-input form-select" id="ed-status">
+          <option value="available" ${statusVal==='available'?'selected':''}>Available</option>
+          <option value="busy" ${statusVal==='busy'?'selected':''}>Busy</option>
+          <option value="off-duty" ${statusVal==='off-duty'?'selected':''}>Off Duty</option>
+        </select></div>
+      <div class="form-group"><label class="form-label">Vehicle & Plate</label>
+        <input class="form-input" id="ed-vehicle" value="${escapeHtml(d.vehicle||'')}" maxlength="80"/></div>
+      <div class="form-group" style="grid-column:1/-1;"><label class="form-label">Address *</label>
+        <input class="form-input" id="ed-address" value="${escapeHtml(d.address||'')}" maxlength="200"/></div>
+    </div>
     <div style="display:flex;gap:10px;justify-content:flex-end;margin-top:8px;">
       <button class="btn btn-secondary" onclick="hideModal('edit-drv-modal')">Cancel</button>
       <button class="btn btn-primary" onclick="saveEditDriver(${id})"><i class="fas fa-save"></i> Save</button>
-    </div>`);
+    </div>`, 'modal-lg');
   showModal('edit-drv-modal');
 }
+
 async function saveEditDriver(id) {
-  const name    = document.getElementById('ed-name').value.trim();
-  const phone   = document.getElementById('ed-phone').value.trim();
-  const vehicle = document.getElementById('ed-vehicle').value.trim();
-  const status  = document.getElementById('ed-status').value;
-  if (!name) return toast('Name required','error');
-  if (phone && (phone.length !== 10 || !/^\d{10}$/.test(phone))) return toast('Phone must be exactly 10 digits','error');
-  if (phone) {
-    const all = await DB.getDrivers();
-    const dup = all.find(d => d.phone && d.phone === phone && String(d.id) !== String(id));
-    if (dup) return toast(`Phone ${phone} is already used by driver "${escapeHtml(dup.name)}"`, 'error');
+  const name     = document.getElementById('ed-name').value.trim();
+  const nickname = document.getElementById('ed-nickname').value.trim();
+  const phone    = document.getElementById('ed-phone').value.trim();
+  const phone2   = document.getElementById('ed-phone2').value.trim();
+  const nic      = document.getElementById('ed-nic').value.trim();
+  const address  = document.getElementById('ed-address').value.trim();
+  const email    = document.getElementById('ed-email').value.trim();
+  const vehicle  = document.getElementById('ed-vehicle').value.trim();
+  const status   = document.getElementById('ed-status').value;
+
+  if (!name) return toast('Full Name is required', 'error');
+  if (!phone) return toast('Phone No 1 is required', 'error');
+  if (phone.length !== 10 || !/^\d{10}$/.test(phone)) return toast('Phone No 1 must be exactly 10 digits', 'error');
+  if (phone2 && (phone2.length !== 10 || !/^\d{10}$/.test(phone2))) return toast('Phone No 2 must be exactly 10 digits', 'error');
+  if (!nic) return toast('NIC Number is required', 'error');
+  if (!address) return toast('Address is required', 'error');
+
+  const all = await DB.getDrivers();
+
+  // Duplicate Phone Check
+  const dupPhone = all.find(d => 
+    String(d.id) !== String(id) && (
+      (d.phone && d.phone === phone) || 
+      (d.phone2 && d.phone2 === phone) ||
+      (phone2 && (d.phone === phone2 || d.phone2 === phone2))
+    )
+  );
+  if (dupPhone) {
+    return toast(`Phone number is already registered to driver "${escapeHtml(dupPhone.name)}"`, 'error');
   }
-  await DB.updateDriver(id,{name,phone,vehicle,status});
-  await DB.logAction('Edit Driver', `Updated details for driver "${name}"`, { id, name, phone, vehicle, status }, 'Driver');
-  hideModal('edit-drv-modal'); toast('Driver updated!'); renderDrivers();
+
+  // Duplicate NIC Check
+  const dupNic = all.find(d => String(d.id) !== String(id) && d.nic && d.nic.toLowerCase().trim() === nic.toLowerCase().trim());
+  if (dupNic) {
+    return toast(`NIC "${nic}" is already registered to driver "${escapeHtml(dupNic.name)}"`, 'error');
+  }
+
+  await DB.updateDriver(id, {
+    name, nickname, phone, phone2, nic, address, email, vehicle, status
+  });
+
+  await DB.logAction(
+    'Edit Driver',
+    `Updated details for driver "${name}"`,
+    { id, name, nickname, phone, phone2, nic, address, email, vehicle, status },
+    'Driver'
+  );
+
+  hideModal('edit-drv-modal');
+  toast('Driver updated successfully!');
+  if (currentDetailDriverId === id) {
+    openDriverDetail(id, currentDriverDetailTab);
+  } else {
+    renderDrivers();
+  }
 }
-async function toggleDriverStatus(id, current) {
-  const s=['available','on-trip','off-duty'];
-  const nextStatus = s[(s.indexOf(current)+1)%s.length];
-  await DB.updateDriver(id,{status:nextStatus});
-  const drv = await DB.getDriver(id);
-  await DB.logAction('Edit Driver', `Changed driver "${drv?.name || '#'+id}" status to "${nextStatus}"`, { id, status: nextStatus }, 'Driver');
-  toast('Status updated'); renderDrivers();
-}
+
 async function deleteDriverConfirm(id) {
   if (!canDelete()) return toast('Admin permission required to delete drivers', 'error');
   const d = await DB.getDriver(id);
-  confirmDialog('Delete this driver?', async()=>{
-    await DB.deleteDriver(id);
-    await DB.logAction('Delete Driver', `Deleted driver "${d?.name || '#'+id}"`, { id, name: d?.name }, 'Driver');
-    toast('Driver deleted'); renderDrivers();
+  const drvName = d ? d.name : 'Driver #' + id;
+  const drvPhone = d ? d.phone : '';
+  confirmDialog('Delete this driver? (Their past trip records will remain in the system)', async () => {
+    try {
+      await DB.deleteDriver(id);
+      await DB.logAction(
+        'Delete Driver',
+        `Deleted driver "${drvName}" (Phone: ${drvPhone || 'N/A'})`,
+        { id, name: drvName, phone: drvPhone },
+        'Driver'
+      );
+      toast('Driver deleted successfully');
+      currentDetailDriverId = null;
+      renderDrivers();
+    } catch (err) {
+      console.error('Delete driver error:', err);
+      toast('Error deleting driver: ' + (err.message || err), 'error');
+    }
   });
 }
 
@@ -1455,11 +1962,14 @@ async function importCustomers(input) {
 async function exportDrivers() {
   const all = await DB.getDrivers();
   const exportData = {
-    type:'swc_drivers_backup', version:1,
+    type:'swc_drivers_backup', version:2,
     exported_at:new Date().toISOString(), count:all.length,
     drivers:all.map(d=>({
-      name:d.name, phone:d.phone||'',
-      vehicle:d.vehicle||'', status:d.status||'available'
+      name:d.name, nickname:d.nickname||'',
+      phone:d.phone||'', phone2:d.phone2||'',
+      nic:d.nic||'', address:d.address||'',
+      email:d.email||'', vehicle:d.vehicle||'',
+      status:d.status||'available', created_date:d.created_date||''
     }))
   };
   const blob=new Blob([JSON.stringify(exportData,null,2)],{type:'application/json'});
@@ -1478,19 +1988,35 @@ async function importDrivers(input) {
     if(data.type!=='swc_drivers_backup') return toast('Invalid backup file','error');
     const records=data.drivers||[];
     if(!records.length) return toast('No drivers found in file','warning');
-    confirmDialog(`Import ${records.length} drivers? Existing drivers (matched by phone number) will be updated. New drivers will be added.`, async()=>{
+    confirmDialog(`Import ${records.length} drivers? Existing drivers (matched by phone number or NIC) will be updated. New drivers will be added.`, async()=>{
       const existing=await DB.getDrivers();
       const byPhone=Object.fromEntries(existing.filter(d=>d.phone).map(d=>[d.phone,d]));
-      const byName =Object.fromEntries(existing.map(d=>[d.name.toLowerCase().trim(),d]));
+      const byNic=Object.fromEntries(existing.filter(d=>d.nic).map(d=>[d.nic.toLowerCase().trim(),d]));
+      const byName=Object.fromEntries(existing.map(d=>[d.name.toLowerCase().trim(),d]));
       let added=0,updated=0,errors=0;
       for(const rec of records){
         try {
-          const match = (rec.phone&&byPhone[rec.phone]) || byName[rec.name?.toLowerCase().trim()];
+          const match = (rec.phone && byPhone[rec.phone]) || 
+                        (rec.nic && byNic[rec.nic.toLowerCase().trim()]) || 
+                        byName[rec.name?.toLowerCase().trim()];
+          const driverData = {
+            name: rec.name,
+            nickname: rec.nickname || '',
+            phone: rec.phone || '',
+            phone2: rec.phone2 || '',
+            nic: rec.nic || '',
+            address: rec.address || '',
+            email: rec.email || '',
+            vehicle: rec.vehicle || '',
+            status: rec.status || 'available'
+          };
+          if (rec.created_date) driverData.created_date = rec.created_date;
+
           if(match){
-            await DB.updateDriver(match.id,{name:rec.name,phone:rec.phone||'',vehicle:rec.vehicle||'',status:rec.status||'available'});
+            await DB.updateDriver(match.id, driverData);
             updated++;
           } else {
-            await DB.addDriver({name:rec.name,phone:rec.phone||'',vehicle:rec.vehicle||'',status:rec.status||'available'});
+            await DB.addDriver(driverData);
             added++;
           }
         } catch(e){errors++;console.error(e);}
