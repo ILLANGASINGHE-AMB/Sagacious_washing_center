@@ -873,6 +873,15 @@ async function switchCustomerDetailTab(customerId, tab) {
   }
 }
 
+// Re-renders the customer profile (stat cards + active sub-tab) if it's
+// currently open for the given customer. Call after any order/invoice/
+// payment mutation so the stat cards don't go stale.
+function refreshCustomerDetailIfOpen(customerId) {
+  if (customerId != null && currentDetailCustomerId === customerId) {
+    openCustomerDetail(customerId, currentCustDetailTab);
+  }
+}
+
 async function renderCustomerDetailTabBody(c, orders, tab) {
   const container = document.getElementById('cust-detail-tab-body');
   if (!container) return;

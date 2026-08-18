@@ -181,6 +181,7 @@ async function deleteOrderConfirm(id) {
     );
     toast('Order deleted');
     renderOrders();
+    refreshCustomerDetailIfOpen(order ? order.customer_id : null);
   });
 }
 
@@ -242,6 +243,7 @@ async function savePickupRequest() {
     hideModal('pickup-modal');
     toast(`Pickup request ${batchId} created!`);
     renderOrders();
+    refreshCustomerDetailIfOpen(parseInt(custId));
   } catch(err){toast('Failed: '+(err.message||err),'error');}
 }
 
@@ -956,6 +958,7 @@ async function saveNewOrder(){
     hideModal('add-order-modal');
     toast(`Order ${batchId} created!`);
     renderOrders();
+    refreshCustomerDetailIfOpen(custId);
   } catch(err) {
     console.error('saveNewOrder error:', err);
     toast('Failed to save order: ' + (err.message||err), 'error');
@@ -1217,6 +1220,10 @@ async function saveEditOrder(orderId,wasPickupOnly=false){
   hideModal('edit-order-modal');
   toast('Order updated!');
   renderOrders();
+  refreshCustomerDetailIfOpen(custId);
+  if (originalOrder && originalOrder.customer_id !== custId) {
+    refreshCustomerDetailIfOpen(originalOrder.customer_id);
+  }
 }
 
 // ─────────────────────────────────────────────
