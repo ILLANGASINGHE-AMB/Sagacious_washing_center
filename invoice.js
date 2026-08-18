@@ -9,6 +9,7 @@ let invoiceEndDate = '';
 let invoiceSortField = 'issue_date';
 let invoiceSortAsc = false;
 let invoiceFilterPanelOpen = false;
+let invoiceActionsVisible = false;
 
 // Cache object to store processed list for filters and export
 let _invCache = { invoices: [], oMap: {}, cMap: {}, filteredInvoices: [], invoicePaymentsMap: {} };
@@ -28,8 +29,6 @@ async function renderInvoices() {
       ${renderInvStatCard("Total Invoices", "0", "fa-file-invoice", "#3b82f6", "#dbeafe", '<span id="card-total-invoices-sub">Across current filter</span>', "card-total-invoices")}
       ${renderInvStatCard("Total Revenue Collected", "LKR 0.00", "fa-hand-holding-dollar", "#22c55e", "#dcfce7", "Calculated from payments", "card-total-revenue")}
       ${renderInvStatCard("Outstanding Balance", "LKR 0.00", "fa-file-invoice-dollar", "#ef4444", "#fee2e2", '<span id="card-outstanding-balance-sub">Awaiting payment</span>', "card-outstanding-balance")}
-      ${renderInvStatCard("Overdue Invoices", "0", "fa-calendar-times", "#f59e0b", "#fef9c3", "Credit Bills past due date", "card-overdue-count", "card-overdue-container")}
-      ${renderInvStatCard("Credit Bills Outstanding", "0", "fa-hourglass-half", "#7c3aed", "#f3e8ff", '<span id="card-credit-outstanding-sub">LKR 0.00 unpaid</span>', "card-credit-count")}
     </div>
 
     <!-- Filters & Search -->
@@ -122,8 +121,8 @@ async function renderInvoices() {
         <table style="min-width:1300px;border-collapse:collapse;">
           <thead>
             <tr>
-              <th onclick="sortInvoices('invoice_number')" style="cursor:pointer;user-select:none;">Invoice No ${getSortIcon('invoice_number')}</th>
-              <th>Order ID</th>
+              <th onclick="sortInvoices('invoice_number')" style="cursor:pointer;user-select:none;white-space:nowrap;">Invoice No ${getSortIcon('invoice_number')}</th>
+              <th style="white-space:nowrap;">Order ID</th>
               <th onclick="sortInvoices('customer')" style="cursor:pointer;user-select:none;">Customer ${getSortIcon('customer')}</th>
               <th onclick="sortInvoices('status')" style="cursor:pointer;user-select:none;">Status ${getSortIcon('status')}</th>
               <th onclick="sortInvoices('total')" style="cursor:pointer;text-align:right;user-select:none;">Invoice Total ${getSortIcon('total')}</th>
@@ -131,7 +130,13 @@ async function renderInvoices() {
               <th>Deduction</th>
               <th onclick="sortInvoices('balance')" style="cursor:pointer;text-align:right;user-select:none;">Remaining Balance ${getSortIcon('balance')}</th>
               <th>Description(Notes)</th>
-              <th style="position:sticky;right:0;background:var(--card-bg);box-shadow:-2px 0 5px rgba(0,0,0,0.05);z-index:5;">Actions</th>
+              <th style="position:sticky;right:0;background:var(--card-bg);box-shadow:-2px 0 5px rgba(0,0,0,0.05);z-index:5;white-space:nowrap;">
+                Actions
+                <button id="inv-actions-toggle" onclick="_toggleAllInvoiceActions()" title="Show / Hide action buttons"
+                  style="margin-left:6px;padding:2px 7px;font-size:0.85em;cursor:pointer;border-radius:5px;border:1px solid var(--border);background:var(--bg);color:var(--text-muted);vertical-align:middle;">
+                  <i class="fas fa-eye-slash"></i>
+                </button>
+              </th>
             </tr>
           </thead>
           <tbody id="inv-table-body"></tbody>
@@ -178,6 +183,16 @@ function toggleInvoicesFilter() {
     btn.classList.toggle('btn-primary', invoiceFilterPanelOpen);
     btn.classList.toggle('btn-secondary', !invoiceFilterPanelOpen);
   }
+}
+
+function _toggleAllInvoiceActions() {
+  invoiceActionsVisible = !invoiceActionsVisible;
+  document.querySelectorAll('.invoice-extra-actions').forEach(span => {
+    span.style.display = invoiceActionsVisible ? 'inline-flex' : 'none';
+    if (invoiceActionsVisible) span.style.gap = '4px';
+  });
+  const toggleBtn = document.getElementById('inv-actions-toggle');
+  if (toggleBtn) toggleBtn.innerHTML = invoiceActionsVisible ? '<i class="fas fa-eye"></i>' : '<i class="fas fa-eye-slash"></i>';
 }
 
 async function _refreshInvoicesTable() {
@@ -338,16 +353,10 @@ async function _refreshInvoicesTable() {
     return s + pList.reduce((sum, p) => sum + (p.amount || 0), 0) + (inv.advance_payment || 0);
   }, 0);
   const totalOutstanding = filtered.reduce((s, inv) => s + inv.computedBalance, 0);
-  const overdueCount = filtered.filter(inv => {
-    const isCredit = inv.invoice_type === 'Credit';
-    return isCredit && inv.credit_due_date && new Date(inv.credit_due_date) < new Date() && inv.computedBalance > 0;
-  }).length;
   const paidCount = filtered.filter(inv => inv.computedStatus === 'Paid').length;
   const partialCount = filtered.filter(inv => inv.computedStatus === 'Partially Paid').length;
   const unpaidCount = filtered.filter(inv => inv.computedStatus === 'Unpaid').length;
   const unpaidOrPartialCount = partialCount + unpaidCount;
-  const creditOutstanding = filtered.filter(inv => inv.invoice_type === 'Credit' && inv.computedBalance > 0);
-  const creditOutstandingTotal = creditOutstanding.reduce((s, inv) => s + inv.computedBalance, 0);
 
   const elInvoices = document.getElementById('card-total-invoices');
   if (elInvoices) elInvoices.textContent = totalInvoices;
@@ -359,26 +368,6 @@ async function _refreshInvoicesTable() {
   if (elOutstanding) elOutstanding.textContent = formatCurrency(totalOutstanding);
   const elOutstandingSub = document.getElementById('card-outstanding-balance-sub');
   if (elOutstandingSub) elOutstandingSub.textContent = `Across ${unpaidOrPartialCount} invoice${unpaidOrPartialCount !== 1 ? 's' : ''}`;
-
-  const overdueEl = document.getElementById('card-overdue-count');
-  if (overdueEl) overdueEl.textContent = overdueCount;
-  const overdueContainer = document.getElementById('card-overdue-container');
-  if (overdueContainer && overdueEl) {
-    if (overdueCount > 0) {
-      overdueContainer.style.border = '1px solid var(--danger)';
-      overdueContainer.style.background = 'rgba(239, 68, 68, 0.04)';
-      overdueEl.style.color = 'var(--danger)';
-    } else {
-      overdueContainer.style.border = 'none';
-      overdueContainer.style.background = 'var(--card-bg)';
-      overdueEl.style.color = 'inherit';
-    }
-  }
-
-  const creditCountEl = document.getElementById('card-credit-count');
-  if (creditCountEl) creditCountEl.textContent = creditOutstanding.length;
-  const creditSubEl = document.getElementById('card-credit-outstanding-sub');
-  if (creditSubEl) creditSubEl.textContent = `${formatCurrency(creditOutstandingTotal)} unpaid`;
 
   // Set Count Label
   const countEl = document.getElementById('inv-count');
@@ -411,10 +400,12 @@ async function _refreshInvoicesTable() {
 
         const balanceColor = inv.computedBalance === 0 ? 'var(--success)' : 'var(--danger)';
 
+        const extraStyle = invoiceActionsVisible ? 'display:inline-flex;gap:4px;' : 'display:none;';
+
         return `
           <tr style="${overdue ? 'background:rgba(239, 68, 68, 0.04);' : ''} transition:background 0.2s;" class="hover-highlight-row">
-            <td style="${overdue ? 'border-left: 4px solid var(--danger);' : ''}"><strong>${inv.invoice_number}</strong></td>
-            <td>${o?.batch_id || '—'}</td>
+            <td style="${overdue ? 'border-left: 4px solid var(--danger);' : ''}white-space:nowrap;font-size:0.85em;"><strong>${inv.invoice_number}</strong></td>
+            <td style="white-space:nowrap;font-size:0.85em;">${o?.batch_id || '—'}</td>
             <td>${escapeHtml(o ? getOrderCustomerName(o, cMap) : '—')}</td>
             <td>
               <div style="display:flex;flex-direction:column;align-items:flex-start;">
@@ -428,11 +419,11 @@ async function _refreshInvoicesTable() {
             <td style="text-align:right;color:${balanceColor};"><strong>${formatCurrency(inv.computedBalance)}</strong></td>
             <td>${truncatedNotes}</td>
             <td style="position:sticky;right:0;background:var(--card-bg);box-shadow:-2px 0 5px rgba(0,0,0,0.05);z-index:5;">
-              <div style="display:flex;gap:4px;flex-wrap:nowrap;white-space:nowrap;">
+              <div style="display:inline-flex;align-items:center;gap:4px;flex-wrap:nowrap;">
                 <button class="btn btn-primary btn-sm" onclick="viewInvoice(${inv.id})"><i class="fas fa-eye"></i> View</button>
-                <button class="btn btn-secondary btn-sm" onclick="printInvoice(${inv.id})"><i class="fas fa-print"></i> Print</button>
-                <button class="btn btn-danger btn-sm" onclick="deleteInvoiceConfirm(${inv.id})"><i class="fas fa-trash"></i> Delete</button>
-                ${inv.computedPaid > 0 ? `<button class="btn btn-sm" style="background:#ea580c; border-color:#d97706; color:#fff;" onclick="undoPaymentForInvoice(${inv.id})"><i class="fas fa-undo"></i> Undo</button>` : ''}
+                <span class="invoice-extra-actions" style="${extraStyle}">
+                  ${inv.computedPaid > 0 ? `<button class="btn btn-sm" style="background:#ea580c; border-color:#d97706; color:#fff;" onclick="undoPaymentForInvoice(${inv.id})"><i class="fas fa-undo"></i> Undo</button>` : ''}
+                </span>
               </div>
             </td>
           </tr>`;
@@ -901,14 +892,6 @@ async function printInvoice(id) {
       <td style="padding:10px 12px;border-bottom:1px solid #f1f5f9;text-align:right;font-weight:700;">${formatCurrency(i.subtotal)}</td>
     </tr>`).join('');
 
-  const paymentsRows = payments.map(p => `
-    <tr>
-      <td style="padding:6px 12px;border-bottom:1px solid #f1f5f9;">${formatDate(p.date)}</td>
-      <td style="padding:6px 12px;border-bottom:1px solid #f1f5f9;">${p.method}</td>
-      <td style="padding:6px 12px;border-bottom:1px solid #f1f5f9;text-align:right;color:#16a34a;font-weight:600;">${formatCurrency(p.amount)}</td>
-      <td style="padding:6px 12px;border-bottom:1px solid #f1f5f9;color:var(--text-muted);">${escapeHtml(p.notes || '—')}</td>
-    </tr>`).join('');
-
   const paidStamp = balance <= 0 ? `
     <div style="position:absolute;left:0;bottom:20px;pointer-events:none;z-index:10;">
       <div style="color:#16a34a;font-family:'Playfair Display',serif;font-size:72px;font-weight:900;letter-spacing:8px;text-transform:uppercase;opacity:0.30;transform:rotate(-12deg);line-height:1;user-select:none;">PAID</div>
@@ -1067,22 +1050,6 @@ async function printInvoice(id) {
           ${summaryHTML}
         </div>
       </div>
-
-      ${payments.length > 0 ? `
-        <div style="margin-bottom:24px;">
-          <div style="font-size:0.8em;font-weight:700;text-transform:uppercase;color:#64748b;margin-bottom:8px;letter-spacing:0.5px;">Payment History</div>
-          <table style="width:100%;border-collapse:collapse;border:1px solid #e5e7eb;border-radius:8px;overflow:hidden;">
-            <thead>
-              <tr style="background:#f8fafc;">
-                <th style="padding:8px 12px;text-align:left;font-size:0.8em;color:#64748b;">Date</th>
-                <th style="padding:8px 12px;text-align:left;font-size:0.8em;color:#64748b;">Method</th>
-                <th style="padding:8px 12px;text-align:right;font-size:0.8em;color:#64748b;">Amount</th>
-                <th style="padding:8px 12px;text-align:left;font-size:0.8em;color:#64748b;">Notes</th>
-              </tr>
-            </thead>
-            <tbody>${paymentsRows}</tbody>
-          </table>
-        </div>` : ''}
 
       ${settings.footer_message ? `<div style="text-align:center;padding:16px;background:#f8fafc;border-radius:10px;font-size:0.9em;color:#64748b;font-style:italic;">${escapeHtml(settings.footer_message)}</div>` : ''}
     </div>`;
@@ -1610,7 +1577,7 @@ async function submitRecordedPayment(invoiceId, balance) {
 
 // ── UNDO PAYMENT (REVERSE PAYMENTS) ──
 async function undoPaymentForInvoice(invoiceId) {
-  confirmDialog('Are you sure you want to undo payment for this invoice? All recorded payments will be deleted and the status reverted to Unpaid.', async () => {
+  confirmDialog('Are you sure you want to undo payment for this invoice? All recorded payments will be deleted and the status reverted.', async () => {
     try {
       const inv = await DB.getInvoice(invoiceId);
       if (!inv) return toast('Invoice not found', 'error');
@@ -1620,21 +1587,41 @@ async function undoPaymentForInvoice(invoiceId) {
 
       // Restore invoice balance and status — canonical calc, so any
       // deduction_amount/discount/delivery/extra already on this invoice is
-      // still accounted for. Payments are already gone at this point, so
-      // only advance_payment counts toward what's still considered paid.
+      // still accounted for, and 'Partially Paid' is recognized rather than
+      // only Paid/Unpaid. Payments are already gone at this point, so only
+      // advance_payment counts toward what's still considered paid.
       const fin = Financials.computeInvoiceFinancials(inv, [], []);
       const balance = fin.balance;
-      const paidStatus = fin.isPaid ? 'Paid' : 'Unpaid';
+      const paidStatus = fin.status;
 
       await DB.updateInvoice(invoiceId, {
         balance: balance,
         paid_status: paidStatus
       });
 
-      // Update order status back
-      await DB.updateOrder(inv.order_id, {
-        status: paidStatus
-      });
+      // Push the reversal to every order this invoice covers, or Orders/Pay
+      // Now silently keep showing the old paid state.
+      if (inv.batch_order_ids) {
+        // A "Single Invoice" batch payment never touched each order's own
+        // advance_payment (only its status) — see processBatchPayment — so
+        // only status needs reverting here; writing inv.advance_payment
+        // (the batch's combined total) into each order would corrupt it.
+        const orderIds = inv.batch_order_ids.split(',').map(Number);
+        for (const oId of orderIds) {
+          await DB.updateOrder(oId, { status: 'Unpaid' });
+          refreshCustomerDetailForOrder(oId);
+        }
+      } else {
+        // A Pay Now partial payment bumps order.advance_payment directly
+        // without ever touching the invoice's own advance_payment — so
+        // undoing every payment must reset the order back to what the
+        // invoice was created with, or its balance stays understated.
+        await DB.updateOrder(inv.order_id, {
+          status: paidStatus,
+          advance_payment: inv.advance_payment || 0
+        });
+        refreshCustomerDetailForOrder(inv.order_id);
+      }
 
       toast('Payment undone successfully!');
 
@@ -1643,40 +1630,10 @@ async function undoPaymentForInvoice(invoiceId) {
       if (currentPage === 'orders') renderOrders();
       else if (currentPage === 'invoices') _refreshInvoicesTable();
       else if (currentPage === 'paynow') renderPayNow();
-      refreshCustomerDetailForOrder(inv.order_id);
     } catch (err) {
       toast('Failed to undo payment: ' + (err.message || err), 'error');
     }
   }, 'Undo Payment');
-}
-
-function deleteInvoiceConfirm(invoiceId) {
-  if (!canDelete()) return toast('Admin permission required to delete invoices', 'error');
-  confirmDialog('Are you sure you want to delete this invoice? Linked orders will revert to Unpaid.', async () => {
-    try {
-      const inv = await DB.getInvoice(invoiceId);
-      if (!inv) return toast('Invoice not found', 'error');
-
-      await DB.deletePaymentsForInvoice(invoiceId);
-      await DB.deleteInvoice(invoiceId);
-
-      if (inv.batch_order_ids) {
-        const orderIds = inv.batch_order_ids.split(',').map(Number);
-        for (const oId of orderIds) {
-          await DB.updateOrder(oId, { status: 'Unpaid' });
-          refreshCustomerDetailForOrder(oId);
-        }
-      } else {
-        await DB.updateOrder(inv.order_id, { status: 'Unpaid' });
-        refreshCustomerDetailForOrder(inv.order_id);
-      }
-
-      toast('Invoice deleted successfully!');
-      _refreshInvoicesTable();
-    } catch (err) {
-      toast('Error: ' + (err.message || err), 'error');
-    }
-  });
 }
 
 async function renderDeductions() {
