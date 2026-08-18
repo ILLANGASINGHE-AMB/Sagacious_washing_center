@@ -46,19 +46,6 @@ async function renderInvoices() {
           <button class="btn btn-secondary" id="invoices-filter-btn" onclick="toggleInvoicesFilter()">
             <i class="fas fa-filter"></i> Filter
           </button>
-          <button class="btn btn-secondary" onclick="resetInvoiceFilters()">
-            <i class="fas fa-sync-alt"></i> Reset
-          </button>
-          <div class="dropdown" style="position:relative;">
-            <button class="btn btn-primary" onclick="toggleExportDropdown()">
-              <i class="fas fa-file-export"></i> Export <i class="fas fa-chevron-down" style="font-size:0.75em;margin-left:4px;"></i>
-            </button>
-            <div class="dropdown-menu" id="export-dropdown" style="display:none;position:absolute;right:0;top:100%;z-index:50;background:var(--card-bg);border:1px solid var(--border);border-radius:8px;box-shadow:0 4px 12px rgba(0,0,0,0.15);width:150px;margin-top:6px;overflow:hidden;">
-              <a href="#" class="dropdown-item" onclick="exportInvoices('csv')" onmouseover="this.style.background='var(--bg)'" onmouseout="this.style.background='transparent'" style="display:flex;align-items:center;padding:10px 14px;color:var(--text);text-decoration:none;font-size:0.88em;transition:background 0.2s;"><i class="fas fa-file-csv" style="margin-right:10px;color:#10b981;font-size:1.1em;"></i> CSV</a>
-              <a href="#" class="dropdown-item" onclick="exportInvoices('excel')" onmouseover="this.style.background='var(--bg)'" onmouseout="this.style.background='transparent'" style="display:flex;align-items:center;padding:10px 14px;color:var(--text);text-decoration:none;font-size:0.88em;transition:background 0.2s;"><i class="fas fa-file-excel" style="margin-right:10px;color:#22c55e;font-size:1.1em;"></i> Excel</a>
-              <a href="#" class="dropdown-item" onclick="exportInvoices('pdf')" onmouseover="this.style.background='var(--bg)'" onmouseout="this.style.background='transparent'" style="display:flex;align-items:center;padding:10px 14px;color:var(--text);text-decoration:none;font-size:0.88em;transition:background 0.2s;"><i class="fas fa-file-pdf" style="margin-right:10px;color:#ef4444;font-size:1.1em;"></i> PDF</a>
-            </div>
-          </div>
           <span id="inv-count" style="font-size:0.82em;color:var(--text-muted);font-weight:600;margin-left:8px;"></span>
         </div>
       </div>
@@ -128,7 +115,6 @@ async function renderInvoices() {
               <th onclick="sortInvoices('paid')" style="cursor:pointer;text-align:right;user-select:none;">Amount Paid ${getSortIcon('paid')}</th>
               <th>Deduction</th>
               <th onclick="sortInvoices('balance')" style="cursor:pointer;text-align:right;user-select:none;">Remaining Balance ${getSortIcon('balance')}</th>
-              <th>Description(Notes)</th>
               <th style="position:sticky;right:0;background:var(--card-bg);box-shadow:-2px 0 5px rgba(0,0,0,0.05);z-index:5;white-space:nowrap;">
                 Actions
                 <button id="inv-actions-toggle" onclick="_toggleAllInvoiceActions()" title="Show / Hide action buttons"
@@ -394,12 +380,6 @@ async function _refreshInvoicesTable() {
             : '<span class="badge badge-red">Unpaid</span>';
         const overdueBadge = overdue ? '<span class="badge badge-red" style="margin-top:4px;display:inline-block;">Overdue</span>' : '';
 
-        // Notes tooltip helper
-        const notesText = inv.latestPayment && inv.latestPayment.notes ? inv.latestPayment.notes : '—';
-        const truncatedNotes = notesText.length > 20
-          ? `<span title="${escapeHtml(notesText)}" style="cursor:help;border-bottom:1px dotted var(--text-muted);">${escapeHtml(notesText.slice(0, 18))}...</span>`
-          : escapeHtml(notesText);
-
         const balanceColor = inv.computedBalance === 0 ? 'var(--success)' : 'var(--danger)';
 
         const extraStyle = invoiceActionsVisible ? 'display:inline-flex;gap:4px;' : 'display:none;';
@@ -419,7 +399,6 @@ async function _refreshInvoicesTable() {
             <td style="text-align:right;"><strong>${formatCurrency(inv.computedPaid)}</strong></td>
             <td style="text-align:right;color:var(--danger);"><strong>${formatCurrency(inv.deduction_amount || 0)}</strong></td>
             <td style="text-align:right;color:${balanceColor};"><strong>${formatCurrency(inv.computedBalance)}</strong></td>
-            <td>${truncatedNotes}</td>
             <td style="position:sticky;right:0;background:var(--card-bg);box-shadow:-2px 0 5px rgba(0,0,0,0.05);z-index:5;">
               <div style="display:inline-flex;align-items:center;gap:4px;flex-wrap:nowrap;">
                 <button class="btn btn-primary btn-sm" onclick="viewInvoice(${inv.id})"><i class="fas fa-eye"></i> View</button>
@@ -447,147 +426,6 @@ function getSortIcon(field) {
   return invoiceSortAsc 
     ? '<i class="fas fa-sort-up" style="color:var(--primary);margin-left:4px;font-size:0.95em;"></i>' 
     : '<i class="fas fa-sort-down" style="color:var(--primary);margin-left:4px;font-size:0.95em;"></i>';
-}
-
-function toggleExportDropdown() {
-  const dropdown = document.getElementById('export-dropdown');
-  if (dropdown) {
-    dropdown.style.display = dropdown.style.display === 'block' ? 'none' : 'block';
-  }
-}
-
-// Global click listener to close dropdown on outer click
-document.addEventListener('click', (e) => {
-  if (!e.target.closest('.dropdown')) {
-    const dropdown = document.getElementById('export-dropdown');
-    if (dropdown) dropdown.style.display = 'none';
-  }
-});
-
-function resetInvoiceFilters() {
-  invoiceSearch = '';
-  invoiceFilter = '';
-  invoiceTypeFilter = '';
-  invoiceMethodFilter = '';
-  invoiceDateType = 'issue_date';
-  invoiceStartDate = '';
-  invoiceEndDate = '';
-  invoicePage = 1;
-
-  // Clear elements in DOM
-  const searchInput = document.getElementById('inv-search-input');
-  if (searchInput) searchInput.value = '';
-  const statusSel = document.getElementById('inv-filter-sel');
-  if (statusSel) statusSel.value = '';
-  const typeSel = document.getElementById('inv-type-sel');
-  if (typeSel) typeSel.value = '';
-  const methodSel = document.getElementById('inv-method-sel');
-  if (methodSel) methodSel.value = '';
-  const dateTypeSel = document.getElementById('inv-date-type-sel');
-  if (dateTypeSel) dateTypeSel.value = 'issue_date';
-  const startDate = document.getElementById('inv-start-date');
-  if (startDate) startDate.value = '';
-  const endDate = document.getElementById('inv-end-date');
-  if (endDate) endDate.value = '';
-
-  _refreshInvoicesTable();
-  toast('Filters reset!');
-}
-
-function exportInvoices(type) {
-  const filtered = _invCache.filteredInvoices;
-  if (!filtered || !filtered.length) {
-    return toast('No data to export', 'error');
-  }
-
-  const exportDataList = filtered.map(inv => {
-    const o = _invCache.oMap[inv.order_id];
-    const c = o ? _invCache.cMap[o.customer_id] : null;
-    const isCredit = inv.invoice_type === 'Credit';
-    const latestPayment = inv.latestPayment;
-
-    return {
-      "Invoice #": inv.invoice_number,
-      "Order #": o ? o.batch_id : '—',
-      "Customer": o ? getOrderCustomerName(o, cMap) : '—',
-      "Type": inv.invoice_type,
-      "Issue Date": formatDate(inv.issue_date),
-      "Due Date": isCredit && inv.credit_due_date ? formatDate(inv.credit_due_date) : '—',
-      "Invoice Total": inv.total_amount,
-      "Amount Paid": inv.computedPaid,
-      "Outstanding Balance": inv.computedBalance,
-      "Payment Method": latestPayment ? latestPayment.method : (inv.advance_payment > 0 ? 'Advance' : '—'),
-      "Last Payment Date": latestPayment ? formatDate(latestPayment.date) : '—',
-      "Status": inv.computedStatus
-    };
-  });
-
-  const filename = `Invoices_Export_${new Date().toISOString().slice(0, 10)}`;
-
-  if (type === 'csv') {
-    const headers = Object.keys(exportDataList[0]);
-    const csv = [headers.join(','), ...exportDataList.map(row => headers.map(h => `"${row[h] ?? ''}"`).join(','))].join('\n');
-    downloadFile(csv, `${filename}.csv`, 'text/csv');
-    toast('CSV exported!');
-  } else if (type === 'excel') {
-    const ws = XLSX.utils.json_to_sheet(exportDataList);
-    const wb = XLSX.utils.book_new();
-    XLSX.utils.book_append_sheet(wb, ws, 'Invoices');
-    XLSX.writeFile(wb, `${filename}.xlsx`);
-    toast('Excel exported!');
-  } else if (type === 'pdf') {
-    let printHTML = `<!DOCTYPE html><html><head><meta charset="UTF-8"/><title>Invoices Export</title>
-      <link href="https://fonts.googleapis.com/css2?family=DM+Sans:wght@400;600;700&display=swap" rel="stylesheet"/>
-      <style>
-        body { font-family:'DM Sans',sans-serif; padding: 20px; color: #1e293b; }
-        table { width:100%; border-collapse:collapse; margin-top:20px; font-size:12px; }
-        th { background:#1a4d8f; color:#fff; padding:8px; text-align:left; }
-        td { padding:8px; border-bottom:1px solid #e2e8f0; }
-        .text-right { text-align:right; }
-        .badge { display:inline-block; padding:2px 6px; border-radius:4px; font-size:10px; font-weight:700; text-transform:uppercase; }
-        .badge-green { background:#dcfce7; color:#15803d; }
-        .badge-yellow { background:#fef9c3; color:#a16207; }
-        .badge-red { background:#fee2e2; color:#b91c1c; }
-        .badge-purple { background:#f3e8ff; color:#6b21a8; }
-        .badge-blue { background:#dbeafe; color:#1d4ed8; }
-      </style>
-      </head><body>
-      <h2>Invoice Management Report</h2>
-      <p>Generated on: ${new Date().toLocaleString()}</p>
-      <table>
-        <thead>
-          <tr>
-            <th>Invoice #</th>
-            <th>Customer</th>
-            <th>Type</th>
-            <th>Issue Date</th>
-            <th class="text-right">Total</th>
-            <th class="text-right">Paid</th>
-            <th class="text-right">Balance</th>
-            <th>Method</th>
-            <th>Status</th>
-          </tr>
-        </thead>
-        <tbody>
-          ${exportDataList.map(row => `
-            <tr>
-              <td><strong>${escapeHtml(row["Invoice #"])}</strong></td>
-              <td>${escapeHtml(row["Customer"])}</td>
-              <td><span class="badge ${row["Type"] === 'Credit' ? 'badge-purple' : 'badge-blue'}">${row["Type"]}</span></td>
-              <td>${row["Issue Date"]}</td>
-              <td class="text-right"><strong>LKR ${row["Invoice Total"].toFixed(2)}</strong></td>
-              <td class="text-right">LKR ${row["Amount Paid"].toFixed(2)}</td>
-              <td class="text-right" style="font-weight:700;color:${row["Outstanding Balance"] > 0 ? '#b91c1c' : '#15803d'};">LKR ${row["Outstanding Balance"].toFixed(2)}</td>
-              <td>${row["Payment Method"]}</td>
-              <td><span class="badge ${row["Status"] === 'Paid' ? 'badge-green' : 'badge-red'}">${row["Status"]}</span></td>
-            </tr>
-          `).join('')}
-        </tbody>
-      </table>
-      </div>
-    </div>`;
-    Print.openPrintWindow(printHTML, `Invoice_${inv.invoice_number}`);
-  }
 }
 
 // ── VIEW / PRINT INVOICE ──
