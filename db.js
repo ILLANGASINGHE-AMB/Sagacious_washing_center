@@ -80,6 +80,83 @@ const DB = {
     return rows[0] || null;
   },
 
+  // ── Vehicles ──────────────────────────────
+  async getVehicles() {
+    try {
+      const rows = await _q(_sb.from('vehicles').select('*').order('vehicle_no'));
+      if (rows && rows.length >= 0) return rows;
+    } catch(e) {}
+    try {
+      const val = await DB.getSetting('transport_vehicles_records');
+      if (val) return JSON.parse(val);
+    } catch(e) {}
+    return [];
+  },
+  async addVehicle(data) {
+    const record = {
+      vehicle_no: (data.vehicle_no || '').toUpperCase().trim(),
+      category: data.category || 'Car',
+      model: data.model || '',
+      status: data.status || 'available',
+      created_at: new Date().toISOString()
+    };
+    try {
+      const rows = await _q(_sb.from('vehicles').insert(record).select());
+      if (rows && rows[0]) {
+        return rows[0].id;
+      }
+    } catch(e) {}
+
+    // Fallback in settings
+    const vehicles = await DB.getVehicles();
+    const fakeId = Date.now();
+    const newVeh = { id: fakeId, ...record };
+    vehicles.push(newVeh);
+    await DB.setSetting('transport_vehicles_records', JSON.stringify(vehicles));
+    return fakeId;
+  },
+  async updateVehicle(id, data) {
+    const updateData = { ...data };
+    if (updateData.vehicle_no) {
+      updateData.vehicle_no = updateData.vehicle_no.toUpperCase().trim();
+    }
+    try {
+      await _q(_sb.from('vehicles').update(updateData).eq('id', id));
+    } catch(e) {}
+    const vehicles = await DB.getVehicles();
+    const idx = vehicles.findIndex(v => String(v.id) === String(id) || v.vehicle_no === id);
+    if (idx >= 0) {
+      vehicles[idx] = { ...vehicles[idx], ...updateData };
+      await DB.setSetting('transport_vehicles_records', JSON.stringify(vehicles));
+    }
+  },
+  async deleteVehicle(id) {
+    try {
+      await _q(_sb.from('vehicles').delete().eq('id', id));
+    } catch(e) {}
+    const vehicles = await DB.getVehicles();
+    const filtered = vehicles.filter(v => String(v.id) !== String(id) && v.vehicle_no !== id);
+    await DB.setSetting('transport_vehicles_records', JSON.stringify(filtered));
+  },
+  async getVehicle(id) {
+    try {
+      const rows = await _q(_sb.from('vehicles').select('*').eq('id', id).limit(1));
+      if (rows && rows[0]) return rows[0];
+    } catch(e) {}
+    const vehicles = await DB.getVehicles();
+    return vehicles.find(v => String(v.id) === String(id) || v.vehicle_no === id) || null;
+  },
+  async getVehicleByNo(vehicleNo) {
+    if (!vehicleNo) return null;
+    const vNo = String(vehicleNo).toUpperCase().trim();
+    try {
+      const rows = await _q(_sb.from('vehicles').select('*').eq('vehicle_no', vNo).limit(1));
+      if (rows && rows[0]) return rows[0];
+    } catch(e) {}
+    const vehicles = await DB.getVehicles();
+    return vehicles.find(v => (v.vehicle_no || '').toUpperCase().trim() === vNo) || null;
+  },
+
   // ── Orders ────────────────────────────────
   async getOrders() {
     const [rows, deletedMap] = await Promise.all([
@@ -304,8 +381,8 @@ const DB = {
     // are managed exclusively through Settings > User Management, which calls
     // the admin-only Netlify function. This avoids ever putting credentials
     // in a downloadable backup file.
-    const [customers, drivers, orders, order_items, invoices, payments, settings, items, deductions, chemicals, chemical_ledger, general_expenses, trips] = await Promise.all([
-      DB.getCustomers(), DB.getDrivers(), DB.getOrders(),
+    const [customers, drivers, vehicles, orders, order_items, invoices, payments, settings, items, deductions, chemicals, chemical_ledger, general_expenses, trips] = await Promise.all([
+      DB.getCustomers(), DB.getDrivers(), DB.getVehicles(), DB.getOrders(),
       _q(_sb.from('order_items').select('*')),
       DB.getInvoices(), DB.getPayments(),
       _q(_sb.from('settings').select('*')),
@@ -316,7 +393,7 @@ const DB = {
       DB.getGeneralExpenses(),
       DB.getTrips()
     ]);
-    return { customers, drivers, orders, order_items, invoices, payments, settings, items, deductions, chemicals, chemical_ledger, general_expenses, trips, exported_at: new Date().toISOString() };
+    return { customers, drivers, vehicles, orders, order_items, invoices, payments, settings, items, deductions, chemicals, chemical_ledger, general_expenses, trips, exported_at: new Date().toISOString() };
   },
   async addOrderItemsBatch(dataArray) {
     if (!dataArray || dataArray.length === 0) return [];

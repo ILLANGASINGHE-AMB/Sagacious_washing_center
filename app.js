@@ -137,13 +137,13 @@ function isDriver() { return currentUser && currentUser.role === 'driver'; }
 
 function getRoleAllowedPages() {
   if (isAdmin()) {
-    return ['dashboard', 'orders', 'customers', 'drivers', 'transport', 'paynow', 'invoices', 'deductions', 'items', 'expenses', 'analytics', 'reports', 'recent-actions', 'settings'];
+    return ['dashboard', 'orders', 'customers', 'drivers', 'vehicles', 'transport', 'paynow', 'invoices', 'deductions', 'items', 'expenses', 'analytics', 'reports', 'recent-actions', 'settings'];
   }
   if (isStaffUser()) {
-    return ['dashboard', 'orders', 'customers', 'drivers', 'transport', 'paynow', 'deductions', 'items', 'expenses', 'settings'];
+    return ['dashboard', 'orders', 'customers', 'drivers', 'vehicles', 'transport', 'paynow', 'deductions', 'items', 'expenses', 'settings'];
   }
   if (isDriver()) {
-    return ['transport', 'customers', 'orders', 'settings'];
+    return ['transport', 'vehicles', 'customers', 'orders', 'settings'];
   }
   return ['dashboard', 'settings'];
 }
@@ -153,6 +153,7 @@ function canAddOrders() { return isAdmin() || isStaffUser(); }
 function canEditOrders() { return isAdmin() || isStaffUser(); }
 function canEditCustomers() { return true; } // Admin, Staff User, Driver all can add/edit customers
 function canEditDrivers() { return isAdmin() || isStaffUser(); }
+function canEditVehicles() { return isAdmin() || isStaffUser(); }
 function canEditTransport() { return isAdmin() || isDriver(); }
 function canEditPayNow() { return isAdmin() || isStaffUser(); }
 function canEditItems() { return isAdmin() || isStaffUser(); }
@@ -273,7 +274,7 @@ function navigate(page) {
   });
 
   const titles = {
-    dashboard: 'Dashboard', customers: 'Customers', drivers: 'Drivers', transport: 'Transport & Trip Management',
+    dashboard: 'Dashboard', customers: 'Customers', drivers: 'Drivers', vehicles: 'Vehicles', transport: 'Transport & Trip Management',
     orders: 'Orders', paynow: 'Pay Now', invoices: 'Invoices', payments: 'Payments',
     items: 'Items', expenses: 'Expenses & Chemical Register', analytics: 'Data Analytics', reports: 'Reports', settings: 'Settings', deductions: 'Deductions',
     'recent-actions': 'Recent Actions'
@@ -284,6 +285,7 @@ function navigate(page) {
     dashboard: renderDashboard,
     customers: renderCustomers,
     drivers:   renderDrivers,
+    vehicles:  renderVehicles,
     transport: renderTransportPage,
     orders:    renderOrders,
     paynow:    renderPayNow,

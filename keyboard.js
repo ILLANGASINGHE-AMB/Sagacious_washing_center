@@ -60,13 +60,14 @@ async function runGlobalSearch(immediate = false) {
   // Allowed pages check based on user role
   const allowedPages = typeof getRoleAllowedPages === 'function' 
     ? getRoleAllowedPages() 
-    : ['dashboard', 'orders', 'customers', 'drivers', 'transport', 'paynow', 'invoices', 'items', 'expenses'];
+    : ['dashboard', 'orders', 'customers', 'drivers', 'vehicles', 'transport', 'paynow', 'invoices', 'items', 'expenses'];
 
-  const [orders, invoices, customers, drivers, items, trips] = await Promise.all([
+  const [orders, invoices, customers, drivers, vehicles, items, trips] = await Promise.all([
     allowedPages.includes('orders') ? DB.getOrders() : Promise.resolve([]),
     allowedPages.includes('invoices') ? DB.getInvoices() : Promise.resolve([]),
     allowedPages.includes('customers') ? DB.getCustomers() : Promise.resolve([]),
     allowedPages.includes('drivers') ? DB.getDrivers() : Promise.resolve([]),
+    allowedPages.includes('vehicles') ? DB.getVehicles() : Promise.resolve([]),
     allowedPages.includes('items') ? DB.getItems() : Promise.resolve([]),
     allowedPages.includes('transport') ? DB.getTrips() : Promise.resolve([])
   ]);
@@ -134,6 +135,26 @@ async function runGlobalSearch(immediate = false) {
           subtitle: `NIC: ${d.nic || 'N/A'} • Phone: ${d.phone || 'N/A'} • Status: ${d.status || 'available'}`,
           badge: d.status || 'available',
           action: () => { closeGsDropdown(); navigate('drivers'); setTimeout(() => openDriverDetail(d.id), 200); }
+        });
+      }
+    });
+  }
+
+  // 3.5. Search Vehicles
+  if (allowedPages.includes('vehicles')) {
+    (vehicles || []).forEach(v => {
+      const match = (v.vehicle_no || '').toLowerCase().includes(query) ||
+                    (v.category || '').toLowerCase().includes(query) ||
+                    (v.model || '').toLowerCase().includes(query);
+      if (match) {
+        results.push({
+          type: 'Vehicle',
+          icon: 'fa-car',
+          color: '#06b6d4',
+          title: v.vehicle_no,
+          subtitle: `Category: ${v.category || 'N/A'} • Model: ${v.model || 'N/A'} • Status: ${v.status || 'available'}`,
+          badge: v.category || 'Vehicle',
+          action: () => { closeGsDropdown(); navigate('vehicles'); setTimeout(() => openVehicleDetail(v.id), 200); }
         });
       }
     });
