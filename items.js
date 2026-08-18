@@ -59,7 +59,6 @@ async function renderItems() {
           <tbody id="items-table-body"></tbody>
         </table>
       </div>
-      <div id="items-pagination" style="padding:14px 18px;display:flex;justify-content:space-between;align-items:center;border-top:1px solid var(--border);"></div>
     </div>
 
     <!-- QUOTATIONS GENERATED HISTORY SECTION -->
@@ -95,7 +94,8 @@ async function _refreshItemsTable() {
   const allItems = await DB.getItems();
   let filtered = filterData(allItems, itemsSearch, ['item_id','item_name','description']);
   filtered = filtered.sort((a,b)=>(a.item_id||'').localeCompare(b.item_id||''));
-  const {items,totalPages,total} = paginateData(filtered, itemsPage, itemsPerPage);
+  const items = filtered;
+  const total = filtered.length;
 
   const statsEl = document.getElementById('items-stats');
   if(statsEl) {
@@ -119,12 +119,7 @@ async function _refreshItemsTable() {
           ${canDelete()?`<button class="btn btn-danger btn-sm" onclick="deleteItemConfirm(${item.id})"><i class="fas fa-trash"></i></button>`:''}
         </div></td>
       </tr>`).join('');
-
-  const pg=document.getElementById('items-pagination');
-  if(pg) pg.innerHTML=`<span style="font-size:0.82em;color:var(--text-muted);">Page ${itemsPage} of ${totalPages}</span>`+renderPagination(itemsPage,totalPages,'changeItemsPage');
 }
-
-function changeItemsPage(p){itemsPage=p;renderItems();}
 
 // ─────────────────────────────────────────────
 // ADD ITEM

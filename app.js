@@ -621,7 +621,6 @@ async function renderCustomers() {
           <tbody id="cust-table-body"></tbody>
         </table>
       </div>
-      <div id="cust-pagination" style="padding:14px 18px;display:flex;justify-content:space-between;align-items:center;border-top:1px solid var(--border);"></div>
     </div>`;
   await _refreshCustomersTable();
   document.getElementById('cust-search-input')?.focus();
@@ -633,13 +632,14 @@ async function _refreshCustomersTable() {
   const customers = await DB.getCustomers();
   let filtered = filterData(customers, custSearch, ['hotel_name','contact_person','phone','email','address']);
   filtered = filtered.sort((a,b) => (a.hotel_name||'').localeCompare(b.hotel_name||''));
-  const {items,totalPages,total} = paginateData(filtered, custPage, custPerPage);
+  const items = filtered;
+  const total = filtered.length;
   const countEl = document.getElementById('cust-count');
   if(countEl) countEl.textContent = total+' customer'+(total!==1?'s':'');
   tbody.innerHTML = items.length===0
     ? `<tr><td colspan="3" style="text-align:center;padding:32px;color:var(--text-muted);">No customers found</td></tr>`
     : items.map((c, idx) => {
-        const rowNum = String((custPage - 1) * custPerPage + idx + 1).padStart(2, '0');
+        const rowNum = String(idx + 1).padStart(2, '0');
         return `<tr>
           <td style="text-align:center;font-weight:700;color:var(--text-muted);font-family:monospace;font-size:1.05em;">${rowNum}</td>
           <td>
@@ -653,11 +653,7 @@ async function _refreshCustomersTable() {
           </td>
         </tr>`;
       }).join('');
-  const pg=document.getElementById('cust-pagination');
-  if(pg) pg.innerHTML=`<span style="font-size:0.82em;color:var(--text-muted);">Page ${custPage} of ${totalPages}</span>`+renderPagination(custPage,totalPages,'changeCustPage');
 }
-
-function changeCustPage(p) { custPage=p; _refreshCustomersTable(); }
 
 async function openCustomerDetail(customerId, tab = 'orders') {
   currentDetailCustomerId = customerId;
@@ -1478,7 +1474,6 @@ async function renderDrivers() {
           <tbody id="drv-table-body"></tbody>
         </table>
       </div>
-      <div id="drv-pagination" style="padding:14px 18px;display:flex;justify-content:space-between;align-items:center;border-top:1px solid var(--border);"></div>
     </div>`;
   await _refreshDriversGrid();
   document.getElementById('drv-search-input')?.focus();
@@ -1490,14 +1485,15 @@ async function _refreshDriversGrid() {
   const drivers = await DB.getDrivers();
   let filtered = filterData(drivers, drvSearch, ['name','nickname','phone','phone2','nic','vehicle','email','address']);
   filtered = filtered.sort((a,b) => (a.name||'').localeCompare(b.name||''));
-  const {items,totalPages,total} = paginateData(filtered, drvPage, drvPerPage);
+  const items = filtered;
+  const total = filtered.length;
   const countEl = document.getElementById('drv-count');
   if(countEl) countEl.textContent = total+' driver'+(total!==1?'s':'');
 
   tbody.innerHTML = items.length === 0
     ? `<tr><td colspan="4" style="text-align:center;padding:32px;color:var(--text-muted);">No drivers found</td></tr>`
     : items.map((d, idx) => {
-        const rowNum = String((drvPage - 1) * drvPerPage + idx + 1).padStart(2, '0');
+        const rowNum = String(idx + 1).padStart(2, '0');
         const statusVal = (d.status || 'available').toLowerCase();
         const stBadgeClass = statusVal === 'available' ? 'badge-green' : (statusVal === 'busy' || statusVal === 'on-trip') ? 'badge-yellow' : 'badge-gray';
         const stLabel = statusVal === 'available' ? 'Available' : (statusVal === 'busy' || statusVal === 'on-trip') ? 'Busy' : 'Off Duty';
@@ -1522,12 +1518,7 @@ async function _refreshDriversGrid() {
           </td>
         </tr>`;
       }).join('');
-
-  const pg = document.getElementById('drv-pagination');
-  if(pg) pg.innerHTML = `<span style="font-size:0.82em;color:var(--text-muted);">Page ${drvPage} of ${totalPages}</span>` + renderPagination(drvPage, totalPages, 'changeDrvPage');
 }
-
-function changeDrvPage(p) { drvPage = p; _refreshDriversGrid(); }
 
 async function cycleDriverStatus(id, current) {
   const currentNorm = (current || 'available').toLowerCase() === 'on-trip' ? 'busy' : (current || 'available').toLowerCase();
@@ -2302,7 +2293,6 @@ async function renderVehicles() {
           <tbody id="veh-table-body"></tbody>
         </table>
       </div>
-      <div id="veh-pagination" style="padding:14px 18px;display:flex;justify-content:space-between;align-items:center;border-top:1px solid var(--border);"></div>
     </div>`;
 
   await _refreshVehiclesGrid();
@@ -2329,7 +2319,8 @@ async function _refreshVehiclesGrid() {
   let filtered = filterData(vehicles, vehSearch, ['vehicle_no', 'category', 'model', 'status']);
   filtered = filtered.sort((a, b) => (a.vehicle_no || '').localeCompare(b.vehicle_no || ''));
 
-  const { items, totalPages, total } = paginateData(filtered, vehPage, vehPerPage);
+  const items = filtered;
+  const total = filtered.length;
   const countEl = document.getElementById('veh-count');
   if (countEl) countEl.textContent = total + ' vehicle' + (total !== 1 ? 's' : '');
 
@@ -2349,7 +2340,7 @@ async function _refreshVehiclesGrid() {
   tbody.innerHTML = items.length === 0
     ? `<tr><td colspan="7" style="text-align:center;padding:32px;color:var(--text-muted);">No vehicles found</td></tr>`
     : items.map((v, idx) => {
-        const rowNum = String((vehPage - 1) * vehPerPage + idx + 1).padStart(2, '0');
+        const rowNum = String(idx + 1).padStart(2, '0');
         const vNo = (v.vehicle_no || '').toUpperCase().trim();
         const vDist = distMap[vNo] || distMap[String(v.id)] || 0;
         const statusVal = (v.status || 'available').toLowerCase();
@@ -2375,12 +2366,7 @@ async function _refreshVehiclesGrid() {
           </td>
         </tr>`;
       }).join('');
-
-  const pg = document.getElementById('veh-pagination');
-  if (pg) pg.innerHTML = `<span style="font-size:0.82em;color:var(--text-muted);">Page ${vehPage} of ${totalPages}</span>` + renderPagination(vehPage, totalPages, 'changeVehPage');
 }
-
-function changeVehPage(p) { vehPage = p; _refreshVehiclesGrid(); }
 
 async function cycleVehicleStatus(id, current) {
   const currentNorm = (current || 'available').toLowerCase() === 'on-trip' ? 'busy' : (current || 'available').toLowerCase();
@@ -2951,7 +2937,6 @@ async function renderPayNow() {
           <tbody id="paynow-table-body"></tbody>
         </table>
       </div>
-      <div id="paynow-pagination" style="padding:14px 18px;display:flex;justify-content:space-between;align-items:center;border-top:1px solid var(--border);"></div>
     </div>`;
 
   await _refreshPayNowTable();
@@ -3005,8 +2990,8 @@ async function _refreshPayNowTable() {
   // Sort: newest first
   pending.sort((a, b) => new Date(b.created_at || 0) - new Date(a.created_at || 0));
 
-  // Pagination
-  const { items, totalPages, total } = paginateData(pending, paynowPage, paynowPerPage);
+  const items = pending;
+  const total = pending.length;
 
   const countEl = document.getElementById('paynow-count');
   if (countEl) countEl.textContent = total + ' pending order' + (total !== 1 ? 's' : '');
@@ -3038,13 +3023,6 @@ async function _refreshPayNowTable() {
           </td>
         </tr>`;
       }).join('');
-
-  // Update pagination UI
-  const pg = document.getElementById('paynow-pagination');
-  if (pg) {
-    pg.innerHTML = `<span style="font-size:0.82em;color:var(--text-muted);">Page ${paynowPage} of ${totalPages}</span>`
-      + renderPagination(paynowPage, totalPages, 'changePayNowPage');
-  }
 
   // Update Master checkbox state
   updatePayNowMasterCheckboxState(items);
@@ -4314,7 +4292,6 @@ async function renderRecentActions() {
           <tbody id="actions-table-body"></tbody>
         </table>
       </div>
-      <div id="actions-pagination" style="padding:14px 18px;display:flex;justify-content:space-between;align-items:center;border-top:1px solid var(--border);"></div>
     </div>`;
 
   await _refreshActionsTable();
@@ -4382,11 +4359,7 @@ async function _refreshActionsTable() {
     `;
   }
 
-  // Paginate
-  const totalPages = Math.ceil(filtered.length / actionsPerPage) || 1;
-  if (actionsPage > totalPages) actionsPage = totalPages;
-  const startIdx = (actionsPage - 1) * actionsPerPage;
-  const pageItems = filtered.slice(startIdx, startIdx + actionsPerPage);
+  const pageItems = filtered;
 
   if (pageItems.length === 0) {
     tbody.innerHTML = `<tr><td colspan="6" style="text-align:center;padding:40px;color:var(--text-muted);"><div style="font-size:2em;margin-bottom:8px;">🔍</div>No matching actions found</td></tr>`;
@@ -4457,18 +4430,6 @@ async function _refreshActionsTable() {
       </tr>`;
     }).join('');
   }
-
-  const pg = document.getElementById('actions-pagination');
-  if (pg) {
-    pg.innerHTML = `
-      <span style="font-size:0.82em;color:var(--text-muted);">Showing ${filtered.length ? startIdx + 1 : 0} to ${Math.min(startIdx + actionsPerPage, filtered.length)} of ${filtered.length} entries</span>
-      ` + renderPagination(actionsPage, totalPages, 'changeActionsPage');
-  }
-}
-
-function changeActionsPage(p) {
-  actionsPage = p;
-  _refreshActionsTable();
 }
 
 function resetActionsFilters() {

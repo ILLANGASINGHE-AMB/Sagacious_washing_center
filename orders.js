@@ -94,14 +94,13 @@ async function renderOrders() {
           <tbody id="orders-table-body"></tbody>
         </table>
       </div>
-      <div id="orders-pagination" style="padding:14px 18px;display:flex;justify-content:space-between;align-items:center;border-top:1px solid var(--border);"></div>
     </div>`;
 
   await _refreshOrdersTable();
   document.getElementById('orders-search-input')?.focus();
 }
 
-// ── Only updates tbody + pagination + count — never touches the search input ──
+// ── Only updates tbody + count — never touches the search input ──
 async function _refreshOrdersTable() {
   const tbody = document.getElementById('orders-table-body');
   if (!tbody) { await renderOrders(); return; }
@@ -152,7 +151,8 @@ async function _refreshOrdersTable() {
   }
   filtered.sort((a,b)=>new Date(b.created_at)-new Date(a.created_at));
 
-  const {items,totalPages,total} = paginateData(filtered, ordersPage, ordersPerPage);
+  const items = filtered;
+  const total = filtered.length;
 
   // Update count
   const countEl = document.getElementById('orders-count');
@@ -200,14 +200,6 @@ async function _refreshOrdersTable() {
   // Sync the header toggle icon
   const toggleBtn = document.getElementById('orders-actions-toggle');
   if (toggleBtn) toggleBtn.innerHTML = ordersActionsVisible ? '<i class="fas fa-eye"></i>' : '<i class="fas fa-eye-slash"></i>';
-
-  // Update pagination
-  const paginationEl = document.getElementById('orders-pagination');
-  if (paginationEl) {
-    paginationEl.innerHTML =
-      `<span style="font-size:0.82em;color:var(--text-muted);">Page ${ordersPage} of ${totalPages}</span>`
-      + renderPagination(ordersPage, totalPages, 'changeOrdersPage');
-  }
 }
 
 function changeOrdersPage(p){ordersPage=p;renderOrders();}

@@ -135,7 +135,6 @@ async function renderInvoices() {
           <tbody id="inv-table-body"></tbody>
         </table>
       </div>
-      <div id="inv-pagination" style="padding:14px 18px;display:flex;justify-content:space-between;align-items:center;border-top:1px solid var(--border);background:var(--card-bg);"></div>
     </div>`;
 
   // Apply visual state for filter drawer if previously toggled
@@ -368,8 +367,8 @@ async function _refreshInvoicesTable() {
   const countEl = document.getElementById('inv-count');
   if (countEl) countEl.textContent = `${totalInvoices} invoice${totalInvoices !== 1 ? 's' : ''}`;
 
-  // Paginate list
-  const { items, totalPages } = paginateData(filtered, invoicePage, invoicePerPage);
+  // Display all filtered items in a single list
+  const items = filtered;
 
   tbody.innerHTML = items.length === 0
     ? `<tr><td colspan="14" style="text-align:center;padding:48px;color:var(--text-muted);font-weight:500;">No invoices found.<br/><span style="font-size:0.85em;font-weight:400;margin-top:6px;display:block;">Create an invoice or adjust filters to get started.</span></td></tr>`
@@ -419,14 +418,6 @@ async function _refreshInvoicesTable() {
             </td>
           </tr>`;
       }).join('');
-
-  const pg = document.getElementById('inv-pagination');
-  if (pg) pg.innerHTML = `<span style="font-size:0.82em;color:var(--text-muted);font-weight:600;">Page ${invoicePage} of ${totalPages}</span>` + renderPagination(invoicePage, totalPages, 'changeInvoicePage');
-}
-
-function changeInvoicePage(p) {
-  invoicePage = p;
-  _refreshInvoicesTable();
 }
 
 function sortInvoices(field) {
