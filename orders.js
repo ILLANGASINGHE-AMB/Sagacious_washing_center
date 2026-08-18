@@ -1,7 +1,7 @@
 // orders.js - Orders Module
 
 let ordersPage=1, ordersSearch='', ordersStatusFilter='', ordersDriverFilter='', ordersCustFilter='', ordersDateFilter='', ordersPerPage=12;
-let ordersActionsVisible = false;
+let ordersActionsVisible = true;
 let sigPad=null;
 let _ordersCustomers=[], _ordersDrivers=[];
 
@@ -87,7 +87,7 @@ async function renderOrders() {
               Actions
               <button id="orders-actions-toggle" onclick="_toggleAllOrderActions()" title="Show / Hide action buttons"
                 style="margin-left:6px;padding:2px 7px;font-size:0.75em;cursor:pointer;border-radius:5px;border:1px solid var(--border);background:var(--bg);color:var(--text-muted);vertical-align:middle;">
-                <i class="fas fa-eye-slash"></i>
+                <i class="fas fa-eye"></i>
               </button>
             </th>
           </tr></thead>
