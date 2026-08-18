@@ -17,6 +17,13 @@ async function _q(promise) {
   return data;
 }
 
+// Orders only ever carry one of these three payment states — anything else
+// read back from the DB (nulls, legacy values) collapses to 'Unpaid'.
+function normalizeOrderStatus(status) {
+  if (status === 'Paid' || status === 'Partially Paid') return status;
+  return 'Unpaid';
+}
+
 const DB = {
   // ── Settings ──────────────────────────────
   async getSetting(key) {
@@ -164,7 +171,7 @@ const DB = {
       DB.getDeletedCustomerOrders()
     ]);
     window._deletedCustOrders = deletedMap || {};
-    return (rows || []).map(r => { r.status = (r.status === 'Paid' ? 'Paid' : 'Unpaid'); return r; });
+    return (rows || []).map(r => { r.status = normalizeOrderStatus(r.status); return r; });
   },
   async addOrder(data) {
     const rows = await _q(_sb.from('orders').insert({ ...data, created_at: new Date().toISOString() }).select());
@@ -188,13 +195,13 @@ const DB = {
   async getOrder(id) {
     const rows = await _q(_sb.from('orders').select('*').eq('id', id).limit(1));
     const r = rows[0] || null;
-    if (r) { r.status = (r.status === 'Paid' ? 'Paid' : 'Unpaid'); }
+    if (r) { r.status = normalizeOrderStatus(r.status); }
     return r;
   },
   async getOrdersByStatus(status) { return _q(_sb.from('orders').select('*').eq('status', status)); },
   async getOrdersByCustomer(cid) {
     const rows = await _q(_sb.from('orders').select('*').eq('customer_id', cid).order('created_at', { ascending: false }));
-    return (rows || []).map(r => { r.status = (r.status === 'Paid' ? 'Paid' : 'Unpaid'); return r; });
+    return (rows || []).map(r => { r.status = normalizeOrderStatus(r.status); return r; });
   },
 
   // ── Order Items ───────────────────────────
@@ -404,7 +411,7 @@ const DB = {
     const to = page * limit - 1;
     const { data, count, error } = await _sb.from('orders').select('*', { count: 'exact' }).order('created_at', { ascending: false }).range(from, to);
     if (error) throw error;
-    const rows = (data || []).map(r => { r.status = (r.status === 'Paid' ? 'Paid' : 'Unpaid'); return r; });
+    const rows = (data || []).map(r => { r.status = normalizeOrderStatus(r.status); return r; });
     return { data: rows, count: count || rows.length };
   },
   async getInvoicesPaged(page = 1, limit = 20) {

@@ -166,7 +166,8 @@ const STATUS_COLORS = {
   'Out for Delivery':'badge-blue',
   'Delivered':       'badge-cyan',
   'Paid':            'badge-green',
-  'Credits':         'badge-credits'
+  'Credits':         'badge-credits',
+  'Partially Paid':  'badge-orange'
 };
 function statusBadge(status) { return `<span class="badge ${STATUS_COLORS[status]||'badge-gray'}">${status||'—'}</span>`; }
 

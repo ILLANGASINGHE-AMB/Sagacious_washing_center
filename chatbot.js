@@ -322,7 +322,7 @@ SAGABot._intents.push({
     const orders = await DB.getOrders();
     const customers = await DB.getCustomers();
     const cMap = Object.fromEntries(customers.map(c => [c.id, c.hotel_name]));
-    const unpaid = orders.filter(o => o.status === 'Unpaid');
+    const unpaid = orders.filter(o => o.status !== 'Paid');
     const total = unpaid.reduce((s, o) => s + Math.max(0, (parseFloat(o.total_amount) || 0) - (parseFloat(o.advance_payment) || 0)), 0);
     if (unpaid.length === 0) return `No unpaid orders right now — nice.`;
     const balanceOf = o => Math.max(0, (parseFloat(o.total_amount) || 0) - (parseFloat(o.advance_payment) || 0));

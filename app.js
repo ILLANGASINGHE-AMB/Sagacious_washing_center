@@ -360,7 +360,7 @@ async function renderDashboard() {
 
   const pendingOrders   = orders.filter(o => {
     const inv = invMap[o.id];
-    return inv ? inv.paid_status !== 'Paid' : o.status === 'Unpaid';
+    return inv ? inv.paid_status !== 'Paid' : o.status !== 'Paid';
   });
   const pendingPaymentsCount  = pendingOrders.length;
   const pendingPaymentsAmount = pendingOrders.reduce((sum, o) => {
@@ -2885,17 +2885,23 @@ let paynowSearch = '';
 let paynowStatusFilter = '';
 let paynowPerPage = 10;
 let paynowSelectedIds = [];
+let paynowShowHidden = false;
+
+// Payment status filter for Pay Now — distinct from the global ORDER_STATUSES
+// (which only drives the Paid/Unpaid dropdown on order creation) since this
+// list also needs to surface the 'Partially Paid' status.
+const PAYNOW_STATUSES = ['Unpaid', 'Partially Paid', 'Paid'];
 
 async function renderPayNow() {
   document.getElementById('page-title').textContent = 'Pay Now';
-  
+
   if (document.getElementById('paynow-table-body')) {
     await _refreshPayNowTable();
     return;
   }
 
   const [allOrders, customers] = await Promise.all([DB.getOrders(), DB.getCustomers()]);
-  const statusOpts = ORDER_STATUSES.map(s => `<option value="${s}" ${s === paynowStatusFilter ? 'selected' : ''}>${s}</option>`).join('');
+  const statusOpts = PAYNOW_STATUSES.map(s => `<option value="${s}" ${s === paynowStatusFilter ? 'selected' : ''}>${s}</option>`).join('');
 
   document.getElementById('content').innerHTML = `
     <div class="section-header">
@@ -2906,7 +2912,7 @@ async function renderPayNow() {
       <div style="display:flex;gap:12px;flex-wrap:wrap;align-items:center;">
         <div class="search-wrap" style="flex:1;min-width:200px;">
           <i class="fas fa-search"></i>
-          <input class="form-input" id="paynow-search-input" placeholder="Search invoice #, order batch ID, customer..."
+          <input class="form-input" id="paynow-search-input" placeholder="Search order ID, customer..."
             autocomplete="off" spellcheck="false"
             oninput="paynowSearch=this.value;paynowPage=1;_refreshPayNowTable()"/>
         </div>
@@ -2914,6 +2920,10 @@ async function renderPayNow() {
           <option value="">All Statuses</option>
           ${statusOpts}
         </select>
+        <label style="display:flex;align-items:center;gap:6px;font-size:0.85em;color:var(--text-muted);cursor:pointer;white-space:nowrap;">
+          <input type="checkbox" id="paynow-show-hidden" ${paynowShowHidden ? 'checked' : ''} onchange="paynowShowHidden=this.checked;_refreshPayNowTable()"/>
+          Show Hidden
+        </label>
         <span id="paynow-count" style="font-size:0.82em;color:var(--text-muted);"></span>
       </div>
     </div>
@@ -2925,12 +2935,12 @@ async function renderPayNow() {
               <th style="width: 40px; text-align: center;">
                 <input type="checkbox" id="paynow-select-all" onchange="toggleSelectAllPayNow(this)"/>
               </th>
-              <th>Batch ID</th>
+              <th>Order ID</th>
               <th>Customer</th>
-              <th>Invoice Number</th>
               <th>Status</th>
               <th>Pickup Date</th>
               <th>Unpaid Balance</th>
+              <th>OverDue (days)</th>
               <th>Actions</th>
             </tr>
           </thead>
@@ -2959,6 +2969,8 @@ async function _refreshPayNowTable() {
   // Sync filters
   const sel = document.getElementById('paynow-filter-sel');
   if (sel && sel.value !== paynowStatusFilter) sel.value = paynowStatusFilter;
+  const hiddenChk = document.getElementById('paynow-show-hidden');
+  if (hiddenChk) hiddenChk.checked = paynowShowHidden;
 
   // Filter orders: only pending payment (order status is not 'Paid', or invoice paid_status is not 'Paid')
   let pending = orders.filter(o => {
@@ -2970,15 +2982,18 @@ async function _refreshPayNowTable() {
     }
   });
 
+  // Hidden orders are excluded from the default view
+  if (!paynowShowHidden) {
+    pending = pending.filter(o => !o.hidden);
+  }
+
   // Apply search query
   if (paynowSearch) {
     const q = paynowSearch.toLowerCase();
     pending = pending.filter(o => {
-      const inv = invMap[o.id];
-      const invNum = (inv?.invoice_number || '').toLowerCase();
       const batchId = (o.batch_id || '').toLowerCase();
       const custName = getOrderCustomerName(o, cMap).toLowerCase();
-      return invNum.includes(q) || batchId.includes(q) || custName.includes(q);
+      return batchId.includes(q) || custName.includes(q);
     });
   }
 
@@ -3002,24 +3017,29 @@ async function _refreshPayNowTable() {
     : items.map(o => {
         const cust = cMap[o.customer_id];
         const inv = invMap[o.id];
-        const invNum = inv?.invoice_number || '—';
         const balance = inv ? inv.balance : Math.max(0, (o.total_amount || 0) - (o.advance_payment || 0));
         const isChecked = paynowSelectedIds.includes(o.id) ? 'checked' : '';
+        const overdueDays = getOverdueDays(o.created_at);
 
-        return `<tr>
+        return `<tr style="${o.hidden ? 'opacity:0.55;' : ''}">
           <td style="text-align: center;">
             <input type="checkbox" class="paynow-checkbox" data-order-id="${o.id}" ${isChecked} onchange="onPayNowCheckboxChange()"/>
           </td>
           <td><strong>${o.batch_id || '—'}</strong></td>
           <td>${escapeHtml(getOrderCustomerName(o, cMap))}</td>
-          <td>${escapeHtml(invNum)}</td>
           <td>${statusBadge(o.status)}</td>
           <td>${formatDate(o.pickup_date)}</td>
           <td style="color:${balance > 0 ? 'var(--danger)' : 'var(--success)'};font-weight:700;">${formatCurrency(balance)}</td>
+          <td style="color:${overdueDays > 7 ? 'var(--danger)' : 'var(--text-muted)'};font-weight:${overdueDays > 7 ? '700' : '400'};">${overdueDays} day${overdueDays !== 1 ? 's' : ''}</td>
           <td>
-            <button class="btn btn-success btn-sm" style="background:#22c55e; border-color:#16a34a; font-weight:700;" onclick="showPayNowOptionsModal(${o.id})">
-              <i class="fas fa-money-bill-wave"></i> Pay Now
-            </button>
+            <div style="display:flex;gap:6px;flex-wrap:wrap;">
+              <button class="btn btn-success btn-sm" style="background:#22c55e; border-color:#16a34a; font-weight:700;" onclick="showPayNowOptionsModal(${o.id})">
+                <i class="fas fa-money-bill-wave"></i> Pay Now
+              </button>
+              <button class="btn btn-secondary btn-sm" onclick="toggleOrderHidden(${o.id}, ${!!o.hidden})">
+                <i class="fas fa-eye${o.hidden ? '' : '-slash'}"></i> ${o.hidden ? 'Unhide' : 'Hide'}
+              </button>
+            </div>
           </td>
         </tr>`;
       }).join('');
@@ -3036,6 +3056,33 @@ function changePayNowPage(p) {
   _refreshPayNowTable();
 }
 
+// Days between order placement and now — the Pay Now list is already
+// filtered to unpaid/partially-paid orders, so every row shown is overdue-eligible.
+function getOverdueDays(createdAt) {
+  if (!createdAt) return 0;
+  const diffMs = Date.now() - new Date(createdAt).getTime();
+  return Math.max(0, Math.floor(diffMs / 86400000));
+}
+
+async function toggleOrderHidden(orderId, currentlyHidden) {
+  const action = currentlyHidden ? 'unhide' : 'hide';
+  confirmDialog(`Are you sure you want to ${action} this order from the Pay Now list?`, async () => {
+    try {
+      await DB.updateOrder(orderId, { hidden: !currentlyHidden });
+      await DB.logAction(
+        currentlyHidden ? 'Order Unhidden' : 'Order Hidden',
+        `Order #${orderId} was ${currentlyHidden ? 'unhidden' : 'hidden'} in Pay Now`,
+        { order_id: orderId },
+        'Order'
+      );
+      toast(`Order ${currentlyHidden ? 'unhidden' : 'hidden'}.`);
+      await _refreshPayNowTable();
+    } catch (err) {
+      toast('Error: ' + (err.message || err), 'error');
+    }
+  }, currentlyHidden ? 'Unhide' : 'Hide', false);
+}
+
 async function toggleSelectAllPayNow(masterCheckbox) {
   if (masterCheckbox.checked) {
     // Select ALL unpaid orders across all pages, not just the visible ones
@@ -3044,7 +3091,8 @@ async function toggleSelectAllPayNow(masterCheckbox) {
     const allPendingIds = orders
       .filter(o => {
         const inv = invMap[o.id];
-        return inv ? inv.paid_status !== 'Paid' : o.status !== 'Paid';
+        const isPending = inv ? inv.paid_status !== 'Paid' : o.status !== 'Paid';
+        return isPending && (paynowShowHidden || !o.hidden);
       })
       .map(o => o.id);
     paynowSelectedIds = allPendingIds;
@@ -3218,7 +3266,7 @@ async function showPayNowOptionsModal(orderId) {
       <div style="display:grid; grid-template-columns:1fr 1fr 1fr; gap:12px; margin-bottom:12px;">
         <div class="form-group" style="margin:0;">
           <label class="form-label" style="color:var(--warning); font-weight:700;">Amount to Pay (LKR) *</label>
-          <input type="number" class="form-input" id="paynow-partial-amount" placeholder="e.g. 5000" min="0.01" max="${balance}" step="0.01"/>
+          <input type="number" class="form-input" id="paynow-partial-amount" placeholder="e.g. 5000" min="0.01" max="${balance}" step="0.01" oninput="recalcPayNowPartial(${balance})"/>
         </div>
         <div class="form-group" style="margin:0;">
           <label class="form-label">Payment Method *</label>
@@ -3237,6 +3285,15 @@ async function showPayNowOptionsModal(orderId) {
         <label class="form-label" style="font-weight:700; color:var(--warning);">Cheque Number *</label>
         <input class="form-input" id="pn-partial-cheque-num" placeholder="Enter cheque number..."/>
       </div>
+
+      <div style="background:#fffbeb; border:1px solid #fde68a; padding:12px 16px; border-radius:8px; margin-bottom:16px; font-size:0.9em; display:flex; flex-direction:column; gap:4px; font-weight:600;">
+        <div style="display:flex; justify-content:space-between;"><span>Unpaid Balance:</span> <span>${formatCurrency(balance)}</span></div>
+        <div style="display:flex; justify-content:space-between; color:#b45309;"><span>Amount to Pay:</span> <span id="lbl-paynow-partial-amount">LKR 0.00</span></div>
+        <div style="display:flex; justify-content:space-between; border-top:1px solid #fde68a; padding-top:6px; font-weight:700; font-size:1.05em; color:#1e40af;">
+          <span>Balance Remaining:</span> <span id="lbl-paynow-partial-remaining">${formatCurrency(balance)}</span>
+        </div>
+      </div>
+
       <button class="btn btn-warning" style="width:100%; justify-content:center;" onclick="confirmPartialPayment(${order.id}, ${inv.id}, ${balance})">
         <i class="fas fa-check"></i> Confirm Partial Payment
       </button>
@@ -3336,10 +3393,21 @@ function recalcPayNowDeduction(balance) {
   const deductAmount = parseFloat(deductInput.value) || 0;
   const lblCalcDeduct = document.getElementById('lbl-paynow-calc-deduct');
   const lblCalcFinal = document.getElementById('lbl-paynow-calc-final');
-  
+
   if (lblCalcDeduct) lblCalcDeduct.textContent = `- LKR ${deductAmount.toFixed(2)}`;
   const finalAmount = Math.max(0, balance - deductAmount);
   if (lblCalcFinal) lblCalcFinal.textContent = `LKR ${finalAmount.toFixed(2)}`;
+}
+
+function recalcPayNowPartial(balance) {
+  const amountInput = document.getElementById('paynow-partial-amount');
+  const amount = parseFloat(amountInput.value) || 0;
+  const lblAmount = document.getElementById('lbl-paynow-partial-amount');
+  const lblRemaining = document.getElementById('lbl-paynow-partial-remaining');
+
+  if (lblAmount) lblAmount.textContent = `LKR ${amount.toFixed(2)}`;
+  const remaining = Math.max(0, balance - amount);
+  if (lblRemaining) lblRemaining.textContent = `LKR ${remaining.toFixed(2)}`;
 }
 
 function confirmFullPayment(orderId, invoiceId, amount) {
@@ -3468,10 +3536,6 @@ async function processDeductionPayment(orderId, invoiceId, balance, deductionAmo
 
     await _refreshPayNowTable();
     await refreshCustomerDetailForOrder(orderId);
-
-    setTimeout(() => {
-      printInvoice(activeInvoiceId);
-    }, 250);
   } catch (err) {
     toast('Error: ' + (err.message || err), 'error');
   }
@@ -3517,10 +3581,6 @@ async function processFullPayment(orderId, invoiceId, amount, method, notes) {
 
     await _refreshPayNowTable();
     await refreshCustomerDetailForOrder(orderId);
-
-    setTimeout(() => {
-      printInvoice(activeInvoiceId);
-    }, 250);
   } catch (err) {
     toast('Error: ' + (err.message || err), 'error');
   }
@@ -3538,28 +3598,27 @@ async function processPartialPayment(orderId, invoiceId, maxAmount, amount, meth
     // the SAME canonical calculation, or they silently diverge (e.g. an invoice with a
     // deduction applied could be marked "Paid" while the order stayed stuck on
     // "Unpaid" because a raw `advance >= total_amount` check ignores the deduction).
+    // That calculation now also yields 'Partially Paid' (not just Paid/Unpaid), so a
+    // partial payment persists correctly instead of silently vanishing.
     let paidStatus;
 
     if (isTemp) {
       const provisional = { ...invObj, advance_payment: newAdvance };
       const finCheck = Financials.computeInvoiceFinancials(provisional, [], []);
-      const isNowPaid = finCheck.isPaid;
-      paidStatus = isNowPaid ? 'Paid' : 'Unpaid';
+      paidStatus = finCheck.status;
 
-      if (isNowPaid) {
-        invObj.advance_payment = newAdvance;
-        invObj.balance = 0;
-        invObj.paid_status = 'Paid';
-        invObj.payment_date = new Date().toISOString();
-        activeInvoiceId = await DB.addInvoice(invObj);
+      invObj.advance_payment = newAdvance;
+      invObj.balance = finCheck.balance;
+      invObj.paid_status = paidStatus;
+      invObj.payment_date = new Date().toISOString();
+      activeInvoiceId = await DB.addInvoice(invObj);
 
-        await DB.addPayment({
-          invoice_id: activeInvoiceId,
-          amount: amount,
-          method: method,
-          notes: notes
-        });
-      }
+      await DB.addPayment({
+        invoice_id: activeInvoiceId,
+        amount: amount,
+        method: method,
+        notes: notes
+      });
     } else {
       await DB.addPayment({
         invoice_id: invoiceId,
@@ -3570,13 +3629,11 @@ async function processPartialPayment(orderId, invoiceId, maxAmount, amount, meth
 
       const payments = await DB.getPaymentsByInvoice(invoiceId);
       const fin = Financials.computeInvoiceFinancials(invObj, [], payments);
-      const newBalance = fin.balance;
-      const newPaidStatus = fin.isPaid ? 'Paid' : 'Unpaid';
-      paidStatus = newPaidStatus;
+      paidStatus = fin.status;
 
       await DB.updateInvoice(invoiceId, {
-        balance: newBalance,
-        paid_status: newPaidStatus,
+        balance: fin.balance,
+        paid_status: paidStatus,
         payment_date: new Date().toISOString()
       });
     }
@@ -3596,12 +3653,6 @@ async function processPartialPayment(orderId, invoiceId, maxAmount, amount, meth
 
     await _refreshPayNowTable();
     refreshCustomerDetailIfOpen(order.customer_id);
-
-    if (paidStatus === 'Paid' && activeInvoiceId) {
-      setTimeout(() => {
-        printInvoice(activeInvoiceId);
-      }, 250);
-    }
   } catch (err) {
     toast('Error: ' + (err.message || err), 'error');
   }
@@ -3674,30 +3725,39 @@ async function showBatchPayConfirmModal() {
       invoiceNumber: invNum,
       amount: balance,
       orderId: oId,
-      invoiceId: inv.id
+      invoiceId: inv.id,
+      pickupDate: o.pickup_date
     });
 
     batchListHTML += `
       <tr style="border-bottom:1px solid var(--border);">
-        <td style="padding:8px 0;">${escapeHtml(cust?.hotel_name || '—')}</td>
         <td style="padding:8px 0; font-family:monospace; font-weight:700;">${o.batch_id || '—'}</td>
+        <td style="padding:8px 0;">${escapeHtml(cust?.hotel_name || '—')}</td>
         <td style="padding:8px 0; font-family:monospace;">${escapeHtml(invNum || '—')}</td>
         <td style="padding:8px 0; text-align:right; font-weight:600; color:var(--success);">${formatCurrency(balance)}</td>
+        <td style="padding:8px 0;">${formatDate(o.pickup_date)}</td>
       </tr>`;
   }
 
   window._currentBatchDetails = selectedBatchDetails;
   window._currentBatchTotal = totalBatchAmount;
   currentBatchPayOption = 'standard';
+  currentBatchInvoiceMode = 'separate';
 
   createModal('batch-pay-confirm-modal', 'Batch Payment Summary', `
-    <div style="display:flex;gap:8px;margin-bottom:14px;">
+    <div style="display:flex;gap:8px;margin-bottom:10px;">
       <button class="btn btn-sm" id="batch-opt-standard" onclick="selectBatchPayOption('standard')" style="background:var(--success);color:#fff;border-color:var(--success);font-weight:600;"><i class="fas fa-wallet"></i> Standard Batch Payment</button>
       <button class="btn btn-sm" id="batch-opt-deduct" onclick="selectBatchPayOption('deduct')" style="background:var(--secondary);color:var(--text);border-color:var(--border);font-weight:600;"><i class="fas fa-cut"></i> Batch Pay with Deductions</button>
     </div>
 
+    <div style="display:flex;gap:8px;margin-bottom:14px;">
+      <button class="btn btn-sm" id="batch-inv-separate" onclick="selectBatchInvoiceMode('separate')" style="background:#1a4d8f;color:#fff;border-color:#1a4d8f;font-weight:600;"><i class="fas fa-file-invoice"></i> Separate Invoice</button>
+      <button class="btn btn-sm" id="batch-inv-single" onclick="selectBatchInvoiceMode('single')" style="background:var(--secondary);color:var(--text);border-color:var(--border);font-weight:600;"><i class="fas fa-layer-group"></i> Single Invoice</button>
+    </div>
+    <p id="batch-inv-mode-hint" style="font-size:0.8em; color:var(--text-muted); margin-bottom:14px;">Each order will be saved under its own separate invoice number.</p>
+
     <p style="font-size:0.88em; color:var(--text-muted); margin-bottom:14px;">Please review the summary of selected orders before confirming payment.</p>
-    
+
     <div style="background:var(--bg); padding:16px; border-radius:10px; margin-bottom:18px;">
       <div style="font-size:0.9em; font-weight:700; margin-bottom:8px; text-transform:uppercase; letter-spacing:0.5px; color:var(--text-muted);">
         No of Orders Selected: ${selectedBatchDetails.length}
@@ -3705,10 +3765,11 @@ async function showBatchPayConfirmModal() {
       <table style="width:100%; border-collapse:collapse; font-size:0.9em;">
         <thead>
           <tr style="border-bottom:1.5px solid var(--border); text-transform:uppercase; font-size:0.75em; color:var(--text-muted); font-weight:700;">
-            <th style="padding:6px 0; text-align:left;">Customer Name</th>
-            <th style="padding:6px 0; text-align:left;">Order #</th>
-            <th style="padding:6px 0; text-align:left;">Invoice #</th>
+            <th style="padding:6px 0; text-align:left;">Order ID</th>
+            <th style="padding:6px 0; text-align:left;">Customer</th>
+            <th style="padding:6px 0; text-align:left;">Invoice No</th>
             <th style="padding:6px 0; text-align:right;">Amount (LKR)</th>
+            <th style="padding:6px 0; text-align:left;">Pickup Date</th>
           </tr>
         </thead>
         <tbody>
@@ -3833,8 +3894,12 @@ async function processBatchPayment(method = 'Cash', notes = 'Paid fully via Batc
 
     const createdInvoiceIds = [];
     const touchedCustomerIds = new Set();
+    const isSingleInvoice = currentBatchInvoiceMode === 'single';
+    const singleInvoiceDetails = [];
+    let singleInvoiceTotal = 0;
+    let singleInvoiceAdvance = 0;
+    const singleInvoiceNumber = isSingleInvoice ? await DB.generateInvoiceNumber() : null;
 
-    // Process each order individually — separate invoice per order
     for (const detail of details) {
       const oId = detail.orderId;
       const order = oMap[oId];
@@ -3854,57 +3919,69 @@ async function processBatchPayment(method = 'Cash', notes = 'Paid fully via Batc
         orderDeduction = Math.round((orderBalance / totalAmount) * deductionAmount * 100) / 100;
       }
 
-      // Delete any pre-existing invoice/payments for this order
+      // Delete any pre-existing invoice/payments for this order — both modes
+      // fold this order into a fresh invoice below (its own, or the shared one).
       const existingInv = existingInvMap[oId];
       if (existingInv) {
         await DB.deletePaymentsForInvoice(existingInv.id);
         await DB.deleteInvoice(existingInv.id);
       }
 
-      // Create individual invoice for this order
-      const invNum = await DB.generateInvoiceNumber();
-      const newInvId = await DB.addInvoice({
-        order_id:                 oId,
-        invoice_number:           invNum,
-        issue_date:               new Date().toISOString(),
-        delivery_date:            order.delivery_date || today(),
-        invoice_type:             'Standard',
-        total_amount:             orderTotal,
-        advance_payment:          orderAdvance,
-        extra_payment:            order.extra_payment || 0,
-        balance:                  0,
-        paid_status:              'Paid',
-        discount_rate:            order.discount_rate || 0,
-        discount_amount:          order.discount_amount || 0,
-        delivery_charge:          order.delivery_charge || 0,
-        subtotal_before_discount: itemsSubtotal > 0 ? itemsSubtotal : orderTotal,
-        deduction_amount:         orderDeduction,
-        payment_date:             new Date().toISOString()
-      });
-
-      createdInvoiceIds.push(newInvId);
-
-      // If deduction applies to this order, add a deduction record
-      if (orderDeduction > 0) {
-        await DB.addDeduction({
-          invoice_id: newInvId,
-          invoice_number: invNum,
-          original_amount: orderTotal,
-          deduction_amount: orderDeduction,
-          final_amount: orderTotal - orderDeduction,
-          reason: reason
-        });
-      }
-
-      // Add payment record for remaining balance after advance and deduction
       const payAmount = Math.max(0, orderBalance - orderDeduction);
-      if (payAmount > 0) {
-        await DB.addPayment({
-          invoice_id: newInvId,
-          amount: payAmount,
-          method: method,
-          notes: notes
+
+      if (isSingleInvoice) {
+        // All orders share one invoice number (different order IDs, one bill).
+        singleInvoiceTotal += orderTotal;
+        singleInvoiceAdvance += orderAdvance;
+        singleInvoiceDetails.push({
+          invoiceNumber: singleInvoiceNumber,
+          orderNumber: order.batch_id || ('#' + oId),
+          customerName: detail.customerName,
+          amount: orderBalance
         });
+      } else {
+        // Separate Invoice mode — one invoice per order (original behavior).
+        const invNum = await DB.generateInvoiceNumber();
+        const newInvId = await DB.addInvoice({
+          order_id:                 oId,
+          invoice_number:           invNum,
+          issue_date:               new Date().toISOString(),
+          delivery_date:            order.delivery_date || today(),
+          invoice_type:             'Standard',
+          total_amount:             orderTotal,
+          advance_payment:          orderAdvance,
+          extra_payment:            order.extra_payment || 0,
+          balance:                  0,
+          paid_status:              'Paid',
+          discount_rate:            order.discount_rate || 0,
+          discount_amount:          order.discount_amount || 0,
+          delivery_charge:          order.delivery_charge || 0,
+          subtotal_before_discount: itemsSubtotal > 0 ? itemsSubtotal : orderTotal,
+          deduction_amount:         orderDeduction,
+          payment_date:             new Date().toISOString()
+        });
+
+        createdInvoiceIds.push(newInvId);
+
+        if (orderDeduction > 0) {
+          await DB.addDeduction({
+            invoice_id: newInvId,
+            invoice_number: invNum,
+            original_amount: orderTotal,
+            deduction_amount: orderDeduction,
+            final_amount: orderTotal - orderDeduction,
+            reason: reason
+          });
+        }
+
+        if (payAmount > 0) {
+          await DB.addPayment({
+            invoice_id: newInvId,
+            amount: payAmount,
+            method: method,
+            notes: notes
+          });
+        }
       }
 
       // Mark order as Paid
@@ -3922,20 +3999,60 @@ async function processBatchPayment(method = 'Cash', notes = 'Paid fully via Batc
       );
     }
 
+    if (isSingleInvoice) {
+      // One consolidated invoice row covering every selected order, keyed to
+      // the first order but listing all order IDs — printInvoice() already
+      // knows how to render this via batch_order_ids/batch_invoice_details.
+      const primaryOrderId = details[0].orderId;
+      const primaryOrder = oMap[primaryOrderId];
+      const newInvId = await DB.addInvoice({
+        order_id:         primaryOrderId,
+        invoice_number:   singleInvoiceNumber,
+        issue_date:       new Date().toISOString(),
+        delivery_date:    primaryOrder?.delivery_date || today(),
+        invoice_type:     'Standard',
+        total_amount:     singleInvoiceTotal,
+        advance_payment:  singleInvoiceAdvance,
+        balance:          0,
+        paid_status:      'Paid',
+        deduction_amount: deductionAmount,
+        payment_date:     new Date().toISOString(),
+        batch_order_ids:      details.map(d => d.orderId).join(','),
+        batch_invoice_details: JSON.stringify(singleInvoiceDetails)
+      });
+      createdInvoiceIds.push(newInvId);
+
+      if (deductionAmount > 0) {
+        await DB.addDeduction({
+          invoice_id: newInvId,
+          invoice_number: singleInvoiceNumber,
+          original_amount: totalAmount,
+          deduction_amount: deductionAmount,
+          final_amount: totalAmount - deductionAmount,
+          reason: reason
+        });
+      }
+
+      const totalPayAmount = Math.max(0, totalAmount - deductionAmount);
+      if (totalPayAmount > 0) {
+        await DB.addPayment({
+          invoice_id: newInvId,
+          amount: totalPayAmount,
+          method: method,
+          notes: notes
+        });
+      }
+    }
+
     paynowSelectedIds = [];
 
     hideModal('batch-pay-confirm-modal');
-    toast(`Batch payment completed! ${createdInvoiceIds.length} separate invoices created.`);
+    toast(isSingleInvoice
+      ? `Batch payment completed! Orders saved under a single invoice (${singleInvoiceNumber}).`
+      : `Batch payment completed! ${createdInvoiceIds.length} separate invoices created.`);
 
     await _refreshPayNowTable();
     touchedCustomerIds.forEach(cid => refreshCustomerDetailIfOpen(cid));
-
-    // Print each invoice separately with a small delay between them
-    for (let i = 0; i < createdInvoiceIds.length; i++) {
-      setTimeout(() => {
-        printInvoice(createdInvoiceIds[i]);
-      }, 300 * (i + 1));
-    }
   } catch (err) {
     toast('Error: ' + (err.message || err), 'error');
   } finally {
@@ -4141,6 +4258,25 @@ function selectBatchPayOption(type) {
       optDeduct.style.color = '#fff';
     }
     document.getElementById('batch-deduct-amount')?.focus();
+  }
+}
+
+let currentBatchInvoiceMode = 'separate';
+
+function selectBatchInvoiceMode(mode) {
+  currentBatchInvoiceMode = mode;
+  const optSeparate = document.getElementById('batch-inv-separate');
+  const optSingle = document.getElementById('batch-inv-single');
+  const hint = document.getElementById('batch-inv-mode-hint');
+
+  if (mode === 'separate') {
+    if (optSeparate) { optSeparate.style.background = '#1a4d8f'; optSeparate.style.borderColor = '#1a4d8f'; optSeparate.style.color = '#fff'; }
+    if (optSingle) { optSingle.style.background = 'var(--secondary)'; optSingle.style.borderColor = 'var(--border)'; optSingle.style.color = 'var(--text)'; }
+    if (hint) hint.textContent = 'Each order will be saved under its own separate invoice number.';
+  } else {
+    if (optSingle) { optSingle.style.background = '#1a4d8f'; optSingle.style.borderColor = '#1a4d8f'; optSingle.style.color = '#fff'; }
+    if (optSeparate) { optSeparate.style.background = 'var(--secondary)'; optSeparate.style.borderColor = 'var(--border)'; optSeparate.style.color = 'var(--text)'; }
+    if (hint) hint.textContent = 'All selected orders will be saved under one shared invoice number (with their own order IDs).';
   }
 }
 
