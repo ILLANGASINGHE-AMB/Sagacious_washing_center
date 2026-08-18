@@ -708,9 +708,9 @@ async function openCustomerDetail(customerId, tab = 'orders') {
   customerInvoices.forEach(inv => {
     if (typeof Financials !== 'undefined' && Financials.computeInvoiceFinancials) {
       const fin = Financials.computeInvoiceFinancials(inv, [], payMap[inv.id] || []);
-      totalBilled += fin.finalTotal;
-      totalPaid += fin.paid;
-      totalPending += Math.max(0, fin.balanceDue);
+      totalBilled += fin.netPayableTotal;
+      totalPaid += fin.totalPaid;
+      totalPending += Math.max(0, fin.balance);
     } else {
       const invTotal = parseFloat(inv.total_amount) || 0;
       const invPaid = (payMap[inv.id] || []).reduce((sum, p) => sum + (parseFloat(p.amount) || 0), 0);
