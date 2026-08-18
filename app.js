@@ -3043,8 +3043,15 @@ function changePayNowPage(p) {
 // filtered to unpaid/partially-paid orders, so every row shown is overdue-eligible.
 function getOverdueDays(createdAt) {
   if (!createdAt) return 0;
-  const diffMs = Date.now() - new Date(createdAt).getTime();
-  return Math.max(0, Math.floor(diffMs / 86400000));
+  // Diff calendar dates (local midnight to local midnight), not raw
+  // timestamps — a raw ms diff floors away a day whenever the order's
+  // time-of-day is later than the current time-of-day (e.g. created 2:30pm,
+  // checked 9:00am 16 calendar days later reads as 15.77 -> floors to 15).
+  const start = new Date(createdAt);
+  const startDay = Date.UTC(start.getFullYear(), start.getMonth(), start.getDate());
+  const now = new Date();
+  const nowDay = Date.UTC(now.getFullYear(), now.getMonth(), now.getDate());
+  return Math.max(0, Math.round((nowDay - startDay) / 86400000));
 }
 
 async function toggleSelectAllPayNow(masterCheckbox) {
