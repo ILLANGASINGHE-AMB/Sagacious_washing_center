@@ -15,235 +15,405 @@ async function renderSettings() {
   const isAIFabVisible = showAIFab !== 'false';
 
   // Staff & Driver see only Appearance (Text size, Dark/Light mode)
-  // Admin sees everything
   if (!isAdmin()) {
     document.getElementById('content').innerHTML = `
-      <div class="section-header"><span class="section-title">Settings</span></div>
-      <div style="max-width:600px;">
-
-        <!-- Appearance -->
+      <div class="section-header">
+        <div>
+          <span class="section-title">Settings</span>
+          <div style="font-size:0.85em;color:var(--text-muted);margin-top:2px;">Personalize your display and interface preferences</div>
+        </div>
+      </div>
+      <div style="max-width:620px;margin-top:16px;">
         <div class="card">
-          <div style="font-family:'Playfair Display',serif;font-weight:700;margin-bottom:16px;font-size:1.05em;">
-            <i class="fas fa-palette" style="color:var(--primary);margin-right:8px;"></i>Appearance
+          <div style="display:flex;align-items:center;gap:10px;margin-bottom:18px;padding-bottom:12px;border-bottom:1px solid var(--border);">
+            <div style="width:36px;height:36px;border-radius:10px;background:rgba(26,77,143,0.1);color:var(--primary);display:flex;align-items:center;justify-content:center;font-size:1.1em;">
+              <i class="fas fa-palette"></i>
+            </div>
+            <div>
+              <div style="font-family:'Playfair Display',serif;font-weight:700;font-size:1.1em;color:var(--text);">Appearance & Display</div>
+              <div style="font-size:0.8em;color:var(--text-muted);">Adjust font size and color scheme</div>
+            </div>
           </div>
           <div class="form-group">
-            <label class="form-label">Text Size</label>
-            <div style="display:grid;grid-template-columns:repeat(4,1fr);gap:8px;margin-top:4px;">
+            <label class="form-label">Font Size</label>
+            <div style="display:grid;grid-template-columns:repeat(4,1fr);gap:8px;margin-top:6px;">
               ${['sm','md','lg','xl'].map(s => `<button class="btn ${textSize===s?'btn-primary':'btn-secondary'}" onclick="setTextSize('${s}')" id="ts-${s}">${{sm:'Small',md:'Medium',lg:'Large',xl:'XL'}[s]}</button>`).join('')}
             </div>
           </div>
-          <div class="form-group" style="margin-top:16px;">
-            <label class="form-label">Dark Mode</label>
-            <div style="display:flex;align-items:center;gap:12px;margin-top:8px;">
+          <div style="display:flex;align-items:center;justify-content:space-between;padding:14px 0;margin-top:10px;border-top:1px solid var(--border);">
+            <div>
+              <div style="font-weight:600;font-size:0.9em;color:var(--text);">Dark Mode</div>
+              <div style="font-size:0.8em;color:var(--text-muted);">Toggle between dark and light theme</div>
+            </div>
+            <div style="display:flex;align-items:center;gap:10px;">
               <label class="toggle">
                 <input type="checkbox" id="dark-toggle" ${darkMode==='true'?'checked':''} onchange="toggleDarkFromSettings(this.checked)"/>
                 <span class="toggle-slider"></span>
               </label>
-              <span id="dark-mode-label" style="font-size:0.9em;">${darkMode==='true'?'Dark Mode':'Light Mode'}</span>
+              <span id="dark-mode-label" style="font-size:0.85em;font-weight:600;color:var(--text-muted);min-width:70px;">${darkMode==='true'?'Dark Mode':'Light Mode'}</span>
             </div>
           </div>
         </div>
-
       </div>`;
     return;
   }
 
-  // Admin — full settings
+  // Admin — Full settings with clear modern layout
   document.getElementById('content').innerHTML = `
     <div class="section-header">
-      <span class="section-title">Settings</span>
+      <div>
+        <span class="section-title">System Settings</span>
+        <div style="font-size:0.85em;color:var(--text-muted);margin-top:2px;">Configure company details, branding, billing rules, preferences, and data backups</div>
+      </div>
     </div>
-    <div style="display:grid;grid-template-columns:1fr 1fr;gap:20px;">
 
-      <!-- Company Info -->
-      <div class="card" style="grid-column:1/-1;">
-        <div style="font-family:'Playfair Display',serif;font-weight:700;margin-bottom:16px;font-size:1.05em;">
-          <i class="fas fa-building" style="color:var(--primary);margin-right:8px;"></i>Company Information
+    <!-- Main 2-Column Responsive Layout -->
+    <div style="display:grid;grid-template-columns:repeat(auto-fit,minmax(380px,1fr));gap:20px;margin-top:8px;">
+
+      <!-- Column 1: Company Profile & Billing Rules -->
+      <div style="display:flex;flex-direction:column;gap:20px;">
+
+        <!-- Company Information -->
+        <div class="card">
+          <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:18px;padding-bottom:12px;border-bottom:1px solid var(--border);">
+            <div style="display:flex;align-items:center;gap:10px;">
+              <div style="width:36px;height:36px;border-radius:10px;background:rgba(26,77,143,0.1);color:var(--primary);display:flex;align-items:center;justify-content:center;font-size:1.1em;">
+                <i class="fas fa-building"></i>
+              </div>
+              <div>
+                <div style="font-family:'Playfair Display',serif;font-weight:700;font-size:1.1em;color:var(--text);">Company Profile</div>
+                <div style="font-size:0.8em;color:var(--text-muted);">Business identity and invoice header information</div>
+              </div>
+            </div>
+          </div>
+
+          <div style="display:grid;grid-template-columns:1fr 1fr;gap:12px;">
+            <div class="form-group" style="grid-column:1/-1;">
+              <label class="form-label">Company Name *</label>
+              <input class="form-input" id="s-company" value="${escapeHtml(companyName||'')}" placeholder="e.g. Sagacious Washing Center"/>
+            </div>
+            <div class="form-group">
+              <label class="form-label">Contact Phone</label>
+              <input class="form-input" id="s-phone" value="${escapeHtml(phone||'')}" placeholder="e.g. 077 123 4567"/>
+            </div>
+            <div class="form-group">
+              <label class="form-label">Email Address</label>
+              <input class="form-input" id="s-email" value="${escapeHtml(email||'')}" placeholder="e.g. contact@sagacious.com"/>
+            </div>
+            <div class="form-group" style="grid-column:1/-1;">
+              <label class="form-label">Business Address</label>
+              <input class="form-input" id="s-address" value="${escapeHtml(address||'')}" placeholder="e.g. 123 Main Street, Colombo"/>
+            </div>
+            <div class="form-group">
+              <label class="form-label">Invoice Prefix</label>
+              <input class="form-input" id="s-prefix" value="${escapeHtml(invPrefix||'INV')}" placeholder="e.g. INV"/>
+            </div>
+            <div class="form-group">
+              <label class="form-label">Invoice Footer Message</label>
+              <input class="form-input" id="s-footer" value="${escapeHtml(footer||'')}" placeholder="e.g. Thank you for your business!"/>
+            </div>
+          </div>
+
+          <div style="margin-top:16px;padding-top:14px;border-top:1px solid var(--border);display:flex;justify-content:flex-end;">
+            <button class="btn btn-primary" onclick="saveCompanySettings()"><i class="fas fa-save"></i> Save Company Info</button>
+          </div>
         </div>
-        <div style="display:grid;grid-template-columns:1fr 1fr;gap:14px;">
-          <div class="form-group"><label class="form-label">Company Name</label>
-            <input class="form-input" id="s-company" value="${companyName||''}"/></div>
-          <div class="form-group"><label class="form-label">Phone</label>
-            <input class="form-input" id="s-phone" value="${phone||''}"/></div>
-          <div class="form-group" style="grid-column:1/-1;"><label class="form-label">Address</label>
-            <input class="form-input" id="s-address" value="${address||''}"/></div>
-          <div class="form-group"><label class="form-label">Email</label>
-            <input class="form-input" id="s-email" value="${email||''}"/></div>
-          <div class="form-group"><label class="form-label">Invoice Prefix</label>
-            <input class="form-input" id="s-prefix" value="${invPrefix||'INV'}"/></div>
-          <div class="form-group" style="grid-column:1/-1;"><label class="form-label">Invoice Footer Message</label>
-            <input class="form-input" id="s-footer" value="${footer||''}"/></div>
+
+        <!-- Billing & Pricing Defaults -->
+        <div class="card">
+          <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:18px;padding-bottom:12px;border-bottom:1px solid var(--border);">
+            <div style="display:flex;align-items:center;gap:10px;">
+              <div style="width:36px;height:36px;border-radius:10px;background:rgba(16,185,129,0.1);color:#10b981;display:flex;align-items:center;justify-content:center;font-size:1.1em;">
+                <i class="fas fa-file-invoice-dollar"></i>
+              </div>
+              <div>
+                <div style="font-family:'Playfair Display',serif;font-weight:700;font-size:1.1em;color:var(--text);">Billing & Pricing Defaults</div>
+                <div style="font-size:0.8em;color:var(--text-muted);">Rules for discount qualification and delivery fees</div>
+              </div>
+            </div>
+          </div>
+
+          <div style="display:grid;grid-template-columns:1fr 1fr;gap:12px;">
+            <div class="form-group">
+              <label class="form-label">Discount Threshold (LKR)</label>
+              <input type="number" class="form-input" id="s-min-discount" value="${minDiscountAmt||'30000'}" min="0" step="100"/>
+              <span style="font-size:0.78em;color:var(--text-muted);margin-top:2px;">Discounts apply on bills ≥ this value</span>
+            </div>
+            <div class="form-group">
+              <label class="form-label">Default Delivery Fee (LKR)</label>
+              <input type="number" class="form-input" id="s-delivery-charge" value="${deliveryCharge||'0'}" min="0" step="0.01"/>
+              <span style="font-size:0.78em;color:var(--text-muted);margin-top:2px;">Pre-filled on new bills (editable)</span>
+            </div>
+          </div>
+
+          <div style="margin-top:16px;padding-top:14px;border-top:1px solid var(--border);display:flex;justify-content:flex-end;">
+            <button class="btn btn-primary" onclick="saveBillingSettings()"><i class="fas fa-save"></i> Save Billing Settings</button>
+          </div>
         </div>
-        <button class="btn btn-primary" onclick="saveCompanySettings()"><i class="fas fa-save"></i> Save Company Info</button>
+
       </div>
 
-      <!-- Billing Settings -->
-      <div class="card" style="grid-column:1/-1;">
-        <div style="font-family:'Playfair Display',serif;font-weight:700;margin-bottom:16px;font-size:1.05em;">
-          <i class="fas fa-sliders-h" style="color:var(--primary);margin-right:8px;"></i>Billing Settings
-        </div>
-        <div style="display:grid;grid-template-columns:1fr 1fr;gap:14px;">
-          <div class="form-group">
-            <label class="form-label">Minimum Order Amount for Discount (LKR)</label>
-            <input type="number" class="form-input" id="s-min-discount" value="${minDiscountAmt||'30000'}" min="0" step="100"/>
-            <span style="font-size:0.78em;color:var(--text-muted);">Discount option only appears on bills ≥ this amount</span>
+      <!-- Column 2: Branding, Appearance & AI Integration -->
+      <div style="display:flex;flex-direction:column;gap:20px;">
+
+        <!-- App Logo & Branding -->
+        <div class="card">
+          <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:18px;padding-bottom:12px;border-bottom:1px solid var(--border);">
+            <div style="display:flex;align-items:center;gap:10px;">
+              <div style="width:36px;height:36px;border-radius:10px;background:rgba(0,180,216,0.1);color:var(--accent);display:flex;align-items:center;justify-content:center;font-size:1.1em;">
+                <i class="fas fa-image"></i>
+              </div>
+              <div>
+                <div style="font-family:'Playfair Display',serif;font-weight:700;font-size:1.1em;color:var(--text);">Brand & Logo</div>
+                <div style="font-size:0.8em;color:var(--text-muted);">Application and invoice print emblem</div>
+              </div>
+            </div>
           </div>
-          <div class="form-group">
-            <label class="form-label">Default Delivery Charge (LKR)</label>
-            <input type="number" class="form-input" id="s-delivery-charge" value="${deliveryCharge||'0'}" min="0" step="0.01"/>
-            <span style="font-size:0.78em;color:var(--text-muted);">Pre-filled in invoice generator (editable per bill)</span>
+
+          <div style="display:flex;align-items:center;gap:18px;margin-bottom:16px;background:var(--bg);padding:14px;border-radius:12px;border:1px solid var(--border);">
+            <div>
+              ${logoData
+                ? `<img src="${logoData}" style="width:72px;height:72px;border-radius:14px;object-fit:cover;border:2px solid var(--border);box-shadow:0 2px 8px rgba(0,0,0,0.08);"/>`
+                : `<div style="width:72px;height:72px;border-radius:14px;background:linear-gradient(135deg,#00b4d8,#1a4d8f);display:flex;align-items:center;justify-content:center;color:#fff;font-size:1.8em;box-shadow:0 2px 8px rgba(0,0,0,0.1);"><i class="fas fa-soap"></i></div>`}
+            </div>
+            <div style="flex:1;">
+              <div style="font-weight:700;font-size:0.95em;color:var(--text);">${companyName || 'Sagacious Washing Center'}</div>
+              <div style="font-size:0.8em;color:var(--text-muted);margin-top:2px;">PNG, JPG, SVG or WEBP formats accepted. Max 2MB recommended.</div>
+              ${logoData ? `<button class="btn btn-danger btn-sm" onclick="removeLogo()" style="margin-top:8px;padding:4px 10px;font-size:0.78em;"><i class="fas fa-trash"></i> Remove Custom Logo</button>` : ''}
+            </div>
+          </div>
+
+          <div class="form-group" style="margin-bottom:0;">
+            <label class="form-label">Upload New Logo</label>
+            <input type="file" class="form-input" id="logo-upload" accept="image/*" onchange="handleLogoUpload(event)" style="padding:8px;cursor:pointer;"/>
           </div>
         </div>
-        <button class="btn btn-primary" onclick="saveBillingSettings()"><i class="fas fa-save"></i> Save Billing Settings
+
+        <!-- Appearance & Preferences -->
+        <div class="card">
+          <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:18px;padding-bottom:12px;border-bottom:1px solid var(--border);">
+            <div style="display:flex;align-items:center;gap:10px;">
+              <div style="width:36px;height:36px;border-radius:10px;background:rgba(147,51,234,0.1);color:#9333ea;display:flex;align-items:center;justify-content:center;font-size:1.1em;">
+                <i class="fas fa-sliders-h"></i>
+              </div>
+              <div>
+                <div style="font-family:'Playfair Display',serif;font-weight:700;font-size:1.1em;color:var(--text);">Interface Preferences</div>
+                <div style="font-size:0.8em;color:var(--text-muted);">Text sizing, themes, and interactive controls</div>
+              </div>
+            </div>
+          </div>
+
+          <!-- Text Size -->
+          <div class="form-group" style="margin-bottom:16px;">
+            <label class="form-label">Font Scale</label>
+            <div style="display:grid;grid-template-columns:repeat(4,1fr);gap:8px;margin-top:4px;">
+              ${['sm','md','lg','xl'].map(s => `<button class="btn ${textSize===s?'btn-primary':'btn-secondary'}" onclick="setTextSize('${s}')" id="ts-${s}">${{sm:'Small',md:'Medium',lg:'Large',xl:'XL'}[s]}</button>`).join('')}
+            </div>
+          </div>
+
+          <!-- Toggles List -->
+          <div style="display:flex;flex-direction:column;gap:12px;border-top:1px solid var(--border);padding-top:12px;">
+
+            <!-- Dark Mode Toggle -->
+            <div style="display:flex;align-items:center;justify-content:space-between;">
+              <div>
+                <div style="font-weight:600;font-size:0.9em;color:var(--text);">Dark Mode</div>
+                <div style="font-size:0.78em;color:var(--text-muted);">Toggle dark/light visual theme</div>
+              </div>
+              <div style="display:flex;align-items:center;gap:10px;">
+                <label class="toggle">
+                  <input type="checkbox" id="dark-toggle" ${darkMode==='true'?'checked':''} onchange="toggleDarkFromSettings(this.checked)"/>
+                  <span class="toggle-slider"></span>
+                </label>
+                <span id="dark-mode-label" style="font-size:0.85em;font-weight:600;color:var(--text-muted);min-width:65px;">${darkMode==='true'?'Dark Mode':'Light Mode'}</span>
+              </div>
+            </div>
+
+            <!-- Undo Payment Button Toggle -->
+            <div style="display:flex;align-items:center;justify-content:space-between;border-top:1px solid var(--border);padding-top:12px;">
+              <div>
+                <div style="font-weight:600;font-size:0.9em;color:var(--text);">Show Undo Payment Button</div>
+                <div style="font-size:0.78em;color:var(--text-muted);">Display reversal action on paid bills</div>
+              </div>
+              <div style="display:flex;align-items:center;gap:10px;">
+                <label class="toggle">
+                  <input type="checkbox" id="undo-toggle" ${isUndoVisible?'checked':''} onchange="toggleUndoFromSettings(this.checked)"/>
+                  <span class="toggle-slider"></span>
+                </label>
+                <span id="undo-toggle-label" style="font-size:0.85em;font-weight:600;color:var(--text-muted);min-width:65px;">${isUndoVisible?'Visible':'Hidden'}</span>
+              </div>
+            </div>
+
+            <!-- SAGA AI FAB Toggle -->
+            <div style="display:flex;align-items:center;justify-content:space-between;border-top:1px solid var(--border);padding-top:12px;">
+              <div>
+                <div style="font-weight:600;font-size:0.9em;color:var(--text);">SAGA AI Floating Assistant</div>
+                <div style="font-size:0.78em;color:var(--text-muted);">Floating quick-access chat trigger</div>
+              </div>
+              <div style="display:flex;align-items:center;gap:10px;">
+                <label class="toggle">
+                  <input type="checkbox" class="ai-fab-toggle" ${isAIFabVisible?'checked':''} onchange="toggleAIFabFromSettings(this.checked)"/>
+                  <span class="toggle-slider"></span>
+                </label>
+                <span class="ai-fab-toggle-label" style="font-size:0.85em;font-weight:600;color:var(--text-muted);min-width:65px;">${isAIFabVisible?'Visible':'Hidden'}</span>
+              </div>
+            </div>
+
+          </div>
+        </div>
+
+        <!-- Google Gemini AI Configuration -->
+        <div class="card">
+          <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:18px;padding-bottom:12px;border-bottom:1px solid var(--border);">
+            <div style="display:flex;align-items:center;gap:10px;">
+              <div style="width:36px;height:36px;border-radius:10px;background:rgba(139,92,246,0.1);color:#8b5cf6;display:flex;align-items:center;justify-content:center;font-size:1.1em;">
+                <i class="fas fa-brain"></i>
+              </div>
+              <div>
+                <div style="font-family:'Playfair Display',serif;font-weight:700;font-size:1.1em;color:var(--text);">Gemini AI Integration</div>
+                <div style="font-size:0.8em;color:var(--text-muted);">Configure business intelligence and conversational AI</div>
+              </div>
+            </div>
+          </div>
+
+          <div class="form-group" style="margin-bottom:10px;">
+            <label class="form-label">Gemini API Key</label>
+            <div style="position:relative;display:flex;align-items:center;">
+              <input type="password" class="form-input" id="s-gemini-key" value="${escapeHtml(geminiApiKey||'')}" placeholder="Paste API Key (AIzaSy...)" style="padding-right:42px;font-family:monospace;font-size:0.9em;"/>
+              <button type="button" onclick="const f=document.getElementById('s-gemini-key');const icon=this.querySelector('i');if(f.type==='password'){f.type='text';icon.className='fas fa-eye-slash';}else{f.type='password';icon.className='fas fa-eye';}" style="position:absolute;right:8px;background:none;border:none;color:var(--text-muted);cursor:pointer;padding:6px 8px;border-radius:6px;" title="Toggle visibility">
+                <i class="fas fa-eye"></i>
+              </button>
+            </div>
+          </div>
+          <div style="font-size:0.8em;color:var(--text-muted);line-height:1.4;">
+            Free API keys are available from <a href="https://aistudio.google.com/" target="_blank" style="color:var(--accent);text-decoration:underline;font-weight:600;"><i class="fas fa-external-link-alt" style="font-size:0.85em;"></i> Google AI Studio</a>.
+          </div>
+
+          <div style="margin-top:14px;padding-top:12px;border-top:1px solid var(--border);display:flex;justify-content:flex-end;">
+            <button class="btn btn-primary btn-sm" onclick="saveGeminiSettings()"><i class="fas fa-save"></i> Save AI Settings</button>
+          </div>
+        </div>
+
       </div>
 
-      <!-- Appearance -->
-      <div class="card">
-        <div style="font-family:'Playfair Display',serif;font-weight:700;margin-bottom:16px;font-size:1.05em;">
-          <i class="fas fa-palette" style="color:var(--primary);margin-right:8px;"></i>Appearance
-        </div>
-        <div class="form-group">
-          <label class="form-label">Text Size</label>
-          <div style="display:grid;grid-template-columns:repeat(4,1fr);gap:8px;margin-top:4px;">
-            ${['sm','md','lg','xl'].map(s => `<button class="btn ${textSize===s?'btn-primary':'btn-secondary'}" onclick="setTextSize('${s}')" id="ts-${s}">${{sm:'Small',md:'Medium',lg:'Large',xl:'XL'}[s]}</button>`).join('')}
-          </div>
-        </div>
-        <div class="form-group" style="margin-top:12px;">
-          <label class="form-label">Dark Mode</label>
-          <div style="display:flex;align-items:center;gap:12px;margin-top:8px;">
-            <label class="toggle">
-              <input type="checkbox" id="dark-toggle" ${darkMode==='true'?'checked':''} onchange="toggleDarkFromSettings(this.checked)"/>
-              <span class="toggle-slider"></span>
-            </label>
-            <span id="dark-mode-label" style="font-size:0.9em;">${darkMode==='true'?'Dark Mode':'Light Mode'}</span>
-          </div>
-        </div>
-        <div class="form-group" style="margin-top:16px; border-top:1.5px dashed var(--border); padding-top:12px;">
-          <label class="form-label">Show Undo Payment Button</label>
-          <div style="display:flex;align-items:center;gap:12px;margin-top:8px;">
-            <label class="toggle">
-              <input type="checkbox" id="undo-toggle" ${isUndoVisible?'checked':''} onchange="toggleUndoFromSettings(this.checked)"/>
-              <span class="toggle-slider"></span>
-            </label>
-            <span id="undo-toggle-label" style="font-size:0.9em;">${isUndoVisible?'Visible':'Hidden'}</span>
-          </div>
-        <div class="form-group" style="margin-top:16px; border-top:1.5px dashed var(--border); padding-top:12px;">
-          <label class="form-label">Show SAGA AI Floating Button</label>
-          <div style="display:flex;align-items:center;gap:12px;margin-top:8px;">
-            <label class="toggle">
-              <input type="checkbox" class="ai-fab-toggle" ${isAIFabVisible?'checked':''} onchange="toggleAIFabFromSettings(this.checked)"/>
-              <span class="toggle-slider"></span>
-            </label>
-            <span class="ai-fab-toggle-label" style="font-size:0.9em;">${isAIFabVisible?'Visible':'Hidden'}</span>
-          </div>
-        </div>
-      </div>
+    </div>
 
-      <!-- Logo -->
-      <div class="card">
-        <div style="font-family:'Playfair Display',serif;font-weight:700;margin-bottom:16px;font-size:1.05em;">
-          <i class="fas fa-image" style="color:var(--primary);margin-right:8px;"></i>App Logo
+    <!-- User Management Section (Full Width) -->
+    <div class="card" style="margin-top:24px;">
+      <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:16px;padding-bottom:12px;border-bottom:1px solid var(--border);flex-wrap:wrap;gap:10px;">
+        <div style="display:flex;align-items:center;gap:10px;">
+          <div style="width:36px;height:36px;border-radius:10px;background:rgba(26,77,143,0.1);color:var(--primary);display:flex;align-items:center;justify-content:center;font-size:1.1em;">
+            <i class="fas fa-users-cog"></i>
+          </div>
+          <div>
+            <div style="font-family:'Playfair Display',serif;font-weight:700;font-size:1.15em;color:var(--text);">User Management</div>
+            <div style="font-size:0.8em;color:var(--text-muted);">Manage system logins, credentials, and role-based permissions</div>
+          </div>
         </div>
-        <div style="margin-bottom:14px;">
-          ${logoData
-            ? `<img src="${logoData}" style="width:80px;height:80px;border-radius:14px;object-fit:cover;border:2px solid var(--border);"/>`
-            : `<div style="width:80px;height:80px;border-radius:14px;background:linear-gradient(135deg,#00b4d8,#1a4d8f);display:flex;align-items:center;justify-content:center;color:#fff;font-size:2em;"><i class="fas fa-soap"></i></div>`}
-        </div>
-        <div class="form-group">
-          <label class="form-label">Upload Logo</label>
-          <input type="file" class="form-input" id="logo-upload" accept="image/*" onchange="handleLogoUpload(event)" style="padding:6px;"/>
-        </div>
-        ${logoData ? `<button class="btn btn-danger btn-sm" onclick="removeLogo()"><i class="fas fa-trash"></i> Remove Logo</button>` : ''}
-      </div>
-
-      <!-- Users (admin only) -->
-      <div class="card" style="grid-column:1/-1;">
-        <div style="font-family:'Playfair Display',serif;font-weight:700;margin-bottom:16px;font-size:1.05em;">
-          <i class="fas fa-users" style="color:var(--primary);margin-right:8px;"></i>User Management
-        </div>
-        <div id="users-section"></div>
-        <button class="btn btn-primary btn-sm" onclick="showAddUserModal()" style="margin-top:14px;">
-          <i class="fas fa-plus"></i> Add User
+        <button class="btn btn-primary btn-sm" onclick="showAddUserModal()">
+          <i class="fas fa-plus"></i> Add New User
         </button>
       </div>
 
-      <!-- Database -->
-      <div class="card" style="grid-column:1/-1;">
-        <div style="font-family:'Playfair Display',serif;font-weight:700;margin-bottom:16px;font-size:1.05em;">
-          <i class="fas fa-database" style="color:var(--primary);margin-right:8px;"></i>Database Management
+      <div id="users-section">
+        <div style="text-align:center;padding:24px;color:var(--text-muted);"><i class="fas fa-spinner fa-spin"></i> Loading users...</div>
+      </div>
+    </div>
+
+    <!-- Data Management & Backups (Full Width) -->
+    <div class="card" style="margin-top:24px;">
+      <div style="display:flex;align-items:center;gap:10px;margin-bottom:18px;padding-bottom:12px;border-bottom:1px solid var(--border);">
+        <div style="width:36px;height:36px;border-radius:10px;background:rgba(240,165,0,0.1);color:var(--accent2);display:flex;align-items:center;justify-content:center;font-size:1.1em;">
+          <i class="fas fa-database"></i>
         </div>
-        <div style="display:grid;grid-template-columns:repeat(auto-fit,minmax(200px,1fr));gap:12px;">
-          <div class="card" style="border:1.5px solid var(--border);padding:16px;">
-            <div style="font-weight:700;margin-bottom:6px;"><i class="fas fa-download" style="color:var(--success);"></i> Export Database</div>
-            <div style="font-size:0.83em;color:var(--text-muted);margin-bottom:12px;">Download full backup as JSON</div>
-            <button class="btn btn-success btn-sm" style="width:100%;justify-content:center;" onclick="exportDatabase()">Export</button>
+        <div>
+          <div style="font-family:'Playfair Display',serif;font-weight:700;font-size:1.15em;color:var(--text);">Database & Backup Center</div>
+          <div style="font-size:0.8em;color:var(--text-muted);">Export backups, restore data from JSON, cloud sync, or reset system</div>
+        </div>
+      </div>
+
+      <div style="display:grid;grid-template-columns:repeat(auto-fit,minmax(200px,1fr));gap:14px;">
+
+        <!-- Export -->
+        <div style="background:var(--bg);border:1px solid var(--border);border-radius:12px;padding:16px;display:flex;flex-direction:column;justify-content:space-between;gap:12px;">
+          <div>
+            <div style="display:flex;align-items:center;gap:8px;font-weight:700;color:var(--text);margin-bottom:4px;font-size:0.95em;">
+              <i class="fas fa-file-export" style="color:var(--success);"></i> Export Data
+            </div>
+            <div style="font-size:0.8em;color:var(--text-muted);">Download a complete JSON backup of system records</div>
           </div>
-          <div class="card" style="border:1.5px solid var(--border);padding:16px;">
-            <div style="font-weight:700;margin-bottom:6px;"><i class="fas fa-upload" style="color:var(--info);"></i> Import Database</div>
-            <div style="font-size:0.83em;color:var(--text-muted);margin-bottom:12px;">Restore from JSON backup</div>
-            <input type="file" id="db-import-file" accept=".json" style="display:none;" onchange="importDatabase(event)"/>
-            <button class="btn btn-accent btn-sm" style="width:100%;justify-content:center;" onclick="document.getElementById('db-import-file').click()">Import</button>
+          <button class="btn btn-success btn-sm" style="width:100%;justify-content:center;" onclick="exportDatabase()"><i class="fas fa-download"></i> Backup JSON</button>
+        </div>
+
+        <!-- Import -->
+        <div style="background:var(--bg);border:1px solid var(--border);border-radius:12px;padding:16px;display:flex;flex-direction:column;justify-content:space-between;gap:12px;">
+          <div>
+            <div style="display:flex;align-items:center;gap:8px;font-weight:700;color:var(--text);margin-bottom:4px;font-size:0.95em;">
+              <i class="fas fa-file-import" style="color:var(--accent);"></i> Import Data
+            </div>
+            <div style="font-size:0.8em;color:var(--text-muted);">Restore system state from a JSON backup file</div>
           </div>
-          <div class="card" style="border:1.5px solid var(--border);padding:16px;">
-            <div style="font-weight:700;margin-bottom:6px;"><i class="fas fa-cloud-upload-alt" style="color:var(--primary);"></i> Upload to Cloud</div>
-            <div style="font-size:0.83em;color:var(--text-muted);margin-bottom:12px;">Push database to server endpoint</div>
-            <button class="btn btn-primary btn-sm" style="width:100%;justify-content:center;" onclick="uploadToCloud()">Upload</button>
+          <input type="file" id="db-import-file" accept=".json" style="display:none;" onchange="importDatabase(event)"/>
+          <button class="btn btn-accent btn-sm" style="width:100%;justify-content:center;" onclick="document.getElementById('db-import-file').click()"><i class="fas fa-upload"></i> Restore JSON</button>
+        </div>
+
+        <!-- Upload to Cloud -->
+        <div style="background:var(--bg);border:1px solid var(--border);border-radius:12px;padding:16px;display:flex;flex-direction:column;justify-content:space-between;gap:12px;">
+          <div>
+            <div style="display:flex;align-items:center;gap:8px;font-weight:700;color:var(--text);margin-bottom:4px;font-size:0.95em;">
+              <i class="fas fa-cloud-upload-alt" style="color:var(--primary);"></i> Push to Cloud
+            </div>
+            <div style="font-size:0.8em;color:var(--text-muted);">Push database backup payload to HTTPS endpoint</div>
           </div>
-          <div class="card" style="border:1.5px solid var(--border);padding:16px;">
-            <div style="font-weight:700;margin-bottom:6px;"><i class="fas fa-cloud-download-alt" style="color:var(--accent);"></i> Import from Cloud</div>
-            <div style="font-size:0.83em;color:var(--text-muted);margin-bottom:12px;">Fetch and restore from server</div>
-            <button class="btn btn-accent btn-sm" style="width:100%;justify-content:center;" onclick="importFromCloud()">Import</button>
+          <button class="btn btn-primary btn-sm" style="width:100%;justify-content:center;" onclick="uploadToCloud()"><i class="fas fa-cloud-upload-alt"></i> Upload</button>
+        </div>
+
+        <!-- Import from Cloud -->
+        <div style="background:var(--bg);border:1px solid var(--border);border-radius:12px;padding:16px;display:flex;flex-direction:column;justify-content:space-between;gap:12px;">
+          <div>
+            <div style="display:flex;align-items:center;gap:8px;font-weight:700;color:var(--text);margin-bottom:4px;font-size:0.95em;">
+              <i class="fas fa-cloud-download-alt" style="color:#0ea5e9;"></i> Pull from Cloud
+            </div>
+            <div style="font-size:0.8em;color:var(--text-muted);">Fetch and restore database from HTTPS URL</div>
           </div>
-          <div class="card" style="border:1.5px dashed var(--danger);padding:16px;background:rgba(239,68,68,0.03);">
-            <div style="font-weight:700;margin-bottom:6px;color:var(--danger);">
+          <button class="btn btn-secondary btn-sm" style="width:100%;justify-content:center;" onclick="importFromCloud()"><i class="fas fa-cloud-download-alt"></i> Fetch & Sync</button>
+        </div>
+
+        <!-- Danger Zone: Reset -->
+        <div style="background:rgba(239,68,68,0.04);border:1.5px dashed var(--danger);border-radius:12px;padding:16px;display:flex;flex-direction:column;justify-content:space-between;gap:12px;">
+          <div>
+            <div style="display:flex;align-items:center;gap:8px;font-weight:700;color:var(--danger);margin-bottom:4px;font-size:0.95em;">
               <i class="fas fa-exclamation-triangle"></i> Reset Database
             </div>
-            <div style="font-size:0.83em;color:var(--text-muted);margin-bottom:12px;">Clear all data (irreversible)</div>
-            <button class="btn btn-danger btn-sm" style="width:100%;justify-content:center;" onclick="resetDatabase()">Reset All Data</button>
+            <div style="font-size:0.8em;color:var(--text-muted);">Irreversibly clear operational data and seed demo records</div>
           </div>
+          <button class="btn btn-danger btn-sm" style="width:100%;justify-content:center;" onclick="resetDatabase()"><i class="fas fa-trash-alt"></i> Reset All Data</button>
         </div>
-      </div>
 
-      <!-- Gemini AI Configuration -->
-      <div class="card" style="grid-column:1/-1;">
-        <div style="font-family:'Playfair Display',serif;font-weight:700;margin-bottom:16px;font-size:1.05em;">
-          <i class="fas fa-brain" style="color:#8b5cf6;margin-right:8px;"></i>Gemini AI Integration
-        </div>
-        <div class="form-group" style="margin-bottom:14px;max-width:480px;">
-          <label class="form-label">Gemini API Key</label>
-          <input type="password" class="form-input" id="s-gemini-key" value="${geminiApiKey||''}" placeholder="Paste Gemini API Key here..."/>
-        </div>
-        <div style="font-size:0.82em;color:var(--text-muted);margin-bottom:16px;">
-          Uses Google Gemini AI for business forecasting and operations assistance. Get your API key for free from <a href="https://aistudio.google.com/" target="_blank" style="color:var(--accent);text-decoration:underline;">Google AI Studio</a>.
-        </div>
-        <div class="form-group" style="margin-top:16px; border-top:1.5px dashed var(--border); padding-top:12px; max-width:480px;">
-          <label class="form-label">Show SAGA AI Floating Button</label>
-          <div style="display:flex;align-items:center;gap:12px;margin-top:8px;">
-            <label class="toggle">
-              <input type="checkbox" class="ai-fab-toggle" ${isAIFabVisible?'checked':''} onchange="toggleAIFabFromSettings(this.checked)"/>
-              <span class="toggle-slider"></span>
-            </label>
-            <span class="ai-fab-toggle-label" style="font-size:0.9em;">${isAIFabVisible?'Visible':'Hidden'}</span>
+      </div>
+    </div>
+
+    <!-- About & System Info (Full Width) -->
+    <div class="card" style="margin-top:24px;border-left:4px solid var(--primary);">
+      <div style="display:flex;align-items:center;justify-content:space-between;flex-wrap:wrap;gap:16px;">
+        <div style="display:flex;align-items:center;gap:16px;">
+          <div style="width:54px;height:54px;border-radius:14px;background:linear-gradient(135deg,#00b4d8,#1a4d8f);display:flex;align-items:center;justify-content:center;color:#fff;font-size:1.6em;flex-shrink:0;box-shadow:0 4px 14px rgba(0,180,216,0.25);">
+            <i class="fas fa-soap"></i>
           </div>
-        </div>
-        <button class="btn btn-primary" onclick="saveGeminiSettings()" style="margin-top:12px;"><i class="fas fa-save"></i> Save AI Settings</button>
-      </div>
-
-      <!-- About -->
-      <div class="card" style="grid-column:1/-1;">
-        <div style="font-family:'Playfair Display',serif;font-weight:700;margin-bottom:14px;font-size:1.05em;">
-          <i class="fas fa-info-circle" style="color:var(--primary);margin-right:8px;"></i>About
-        </div>
-        <div style="display:flex;align-items:center;gap:20px;">
-          <div style="width:60px;height:60px;border-radius:14px;background:linear-gradient(135deg,#00b4d8,#1a4d8f);display:flex;align-items:center;justify-content:center;color:#fff;font-size:1.8em;flex-shrink:0;"><i class="fas fa-soap"></i></div>
           <div>
-            <div style="font-family:'Playfair Display',serif;font-size:1.3em;font-weight:700;">Sagacious Washing Center</div>
-            <div style="color:var(--text-muted);font-size:0.88em;">Laundry POS & Management System v2.0</div>
-            <div style="color:var(--text-muted);font-size:0.82em;margin-top:4px;">Powered by Supabase · TailwindCSS · Chart.js · SheetJS</div>
+            <div style="font-family:'Playfair Display',serif;font-size:1.25em;font-weight:700;color:var(--text);">Sagacious Washing Center</div>
+            <div style="color:var(--text-muted);font-size:0.85em;">Commercial Laundry POS & Fleet Management Suite · Version 6.2 (Auth Enhanced)</div>
           </div>
         </div>
+        <div style="display:flex;gap:8px;flex-wrap:wrap;">
+          <span class="badge badge-blue">Supabase Cloud</span>
+          <span class="badge badge-green">Chart.js</span>
+          <span class="badge badge-purple">Gemini AI</span>
+          <span class="badge badge-cyan">SheetJS</span>
+        </div>
       </div>
-    </div>`;
+    </div>
+  `;
 
   loadUsersTable();
 }
@@ -255,53 +425,89 @@ async function loadUsersTable() {
   const users = await DB.getUsers();
   const el = document.getElementById('users-section');
   if (!el) return;
+
   el.innerHTML = `
     <div class="table-wrap">
       <table>
-        <thead><tr><th>Username</th><th>Email</th><th>Display Name</th><th>Role</th><th>Actions</th></tr></thead>
+        <thead>
+          <tr>
+            <th style="width:220px;">User</th>
+            <th>Email</th>
+            <th>Display Name</th>
+            <th style="width:140px;">Role</th>
+            <th style="width:120px;text-align:right;">Actions</th>
+          </tr>
+        </thead>
         <tbody>
-          ${users.map(u => `<tr>
-            <td><strong>${escapeHtml(u.username)}</strong></td>
-            <td>${escapeHtml(u.email || '—')}</td>
-            <td>${escapeHtml(u.display_name || '—')}</td>
-            <td>
-              <span class="badge ${u.role==='admin'?'badge-yellow':'badge-blue'}" style="text-transform:capitalize;">
-                ${u.role==='admin'?'<i class="fas fa-crown" style="font-size:0.85em;margin-right:3px;"></i>':''} ${escapeHtml(u.role)}
-              </span>
-            </td>
-            <td><div style="display:flex;gap:6px;">
-              <button class="btn btn-primary btn-sm" onclick="showEditUserModal('${u.id}')"><i class="fas fa-edit"></i></button>
-              ${u.id !== currentUser?.id
-                ? `<button class="btn btn-danger btn-sm" onclick="deleteUserConfirm('${u.id}','${escapeHtml(u.username)}')"><i class="fas fa-trash"></i></button>`
-                : `<button class="btn btn-secondary btn-sm" disabled title="Cannot delete current user"><i class="fas fa-lock"></i></button>`}
-            </div></td>
-          </tr>`).join('') || `<tr><td colspan="5" style="text-align:center;color:var(--text-muted);padding:20px;">No users</td></tr>`}
+          ${users.map(u => {
+            const initial = (u.display_name || u.username || 'U').charAt(0).toUpperCase();
+            return `<tr>
+              <td>
+                <div style="display:flex;align-items:center;gap:10px;">
+                  <div style="width:32px;height:32px;border-radius:50%;background:linear-gradient(135deg,var(--primary),var(--accent));color:#fff;display:flex;align-items:center;justify-content:center;font-weight:700;font-size:0.85em;flex-shrink:0;">
+                    ${escapeHtml(initial)}
+                  </div>
+                  <div>
+                    <strong style="color:var(--text);font-size:0.95em;">${escapeHtml(u.username)}</strong>
+                  </div>
+                </div>
+              </td>
+              <td style="color:var(--text-muted);">${escapeHtml(u.email || '—')}</td>
+              <td>${escapeHtml(u.display_name || '—')}</td>
+              <td>
+                <span class="badge ${u.role==='admin'?'badge-yellow':u.role==='driver'?'badge-purple':'badge-blue'}" style="text-transform:capitalize;font-weight:600;font-size:0.8em;padding:4px 10px;">
+                  ${u.role==='admin'?'<i class="fas fa-crown" style="font-size:0.85em;margin-right:4px;"></i>':u.role==='driver'?'<i class="fas fa-car" style="font-size:0.85em;margin-right:4px;"></i>':''}${escapeHtml(u.role)}
+                </span>
+              </td>
+              <td style="text-align:right;">
+                <div style="display:inline-flex;gap:6px;align-items:center;">
+                  <button class="btn btn-primary btn-sm" onclick="showEditUserModal('${u.id}')" title="Edit User"><i class="fas fa-edit"></i> Edit</button>
+                  ${u.id !== currentUser?.id
+                    ? `<button class="btn btn-danger btn-sm" onclick="deleteUserConfirm('${u.id}','${escapeHtml(u.username)}')" title="Delete User"><i class="fas fa-trash"></i></button>`
+                    : `<button class="btn btn-secondary btn-sm" disabled title="Cannot delete currently logged-in account" style="opacity:0.5;cursor:not-allowed;"><i class="fas fa-lock"></i></button>`}
+                </div>
+              </td>
+            </tr>`;
+          }).join('') || `<tr><td colspan="5" style="text-align:center;color:var(--text-muted);padding:28px;">No users registered</td></tr>`}
         </tbody>
       </table>
     </div>`;
 }
 
 function showAddUserModal() {
-  createModal('add-user-modal', 'Add User', `
-    <div class="form-group"><label class="form-label">Email * <span style="color:var(--text-muted);font-weight:400;">(used to sign in)</span></label>
-      <input type="email" class="form-input" id="u-email" placeholder="e.g. john@company.com"/></div>
-    <div class="form-group"><label class="form-label">Username *</label>
-      <input class="form-input" id="u-username" placeholder="e.g. john"/></div>
-    <div class="form-group"><label class="form-label">Display Name</label>
-      <input class="form-input" id="u-display" placeholder="e.g. John Silva"/></div>
-    <div class="form-group"><label class="form-label">Password * <span style="color:var(--text-muted);font-weight:400;">(min 6 characters)</span></label>
-      <input type="password" class="form-input" id="u-pass" placeholder="Set password"/></div>
-    <div class="form-group"><label class="form-label">Role</label>
-      <select class="form-input form-select" id="u-role">
-        <option value="user">User — Standard access</option>
-        <option value="admin">Admin — Full access</option>
-        <option value="driver">Driver — Transport access</option>
-      </select></div>
-    <div style="display:flex;gap:10px;justify-content:flex-end;margin-top:10px;">
+  createModal('add-user-modal', 'Add New User', `
+    <div style="display:grid;grid-template-columns:1fr 1fr;gap:14px;">
+      <div class="form-group" style="grid-column:1/-1;">
+        <label class="form-label">Email Address * <span style="color:var(--text-muted);font-weight:400;font-size:0.82em;">(Used to sign in)</span></label>
+        <input type="email" class="form-input" id="u-email" placeholder="e.g. user@sagacious.com"/>
+      </div>
+      <div class="form-group">
+        <label class="form-label">Username *</label>
+        <input class="form-input" id="u-username" placeholder="e.g. john_silva"/>
+      </div>
+      <div class="form-group">
+        <label class="form-label">Display Name</label>
+        <input class="form-input" id="u-display" placeholder="e.g. John Silva"/>
+      </div>
+      <div class="form-group">
+        <label class="form-label">Password * <span style="color:var(--text-muted);font-weight:400;font-size:0.82em;">(min 6 characters)</span></label>
+        <input type="password" class="form-input" id="u-pass" placeholder="Set secure password"/>
+      </div>
+      <div class="form-group">
+        <label class="form-label">System Role</label>
+        <select class="form-input form-select" id="u-role">
+          <option value="user">User — Standard staff access</option>
+          <option value="admin">Admin — Full system access</option>
+          <option value="driver">Driver — Transport trip access</option>
+        </select>
+      </div>
+    </div>
+    <div style="display:flex;gap:10px;justify-content:flex-end;margin-top:18px;padding-top:14px;border-top:1px solid var(--border);">
       <button class="btn btn-secondary" onclick="hideModal('add-user-modal')">Cancel</button>
       <button class="btn btn-primary" onclick="saveNewUser()"><i class="fas fa-save"></i> Save User</button>
-    </div>`);
+    </div>`, 'modal-md');
   showModal('add-user-modal');
+  setTimeout(() => document.getElementById('u-email')?.focus(), 100);
 }
 
 async function saveNewUser() {
@@ -327,24 +533,36 @@ async function saveNewUser() {
 async function showEditUserModal(id) {
   const u = await DB.getUser(id); if (!u) return;
   createModal('edit-user-modal', `Edit User: ${escapeHtml(u.username)}`, `
-    <div class="form-group"><label class="form-label">Email * <span style="color:var(--text-muted);font-weight:400;">(used to sign in)</span></label>
-      <input type="email" class="form-input" id="eu-email" value="${escapeHtml(u.email||'')}"/></div>
-    <div class="form-group"><label class="form-label">Username *</label>
-      <input class="form-input" id="eu-username" value="${escapeHtml(u.username||'')}"/></div>
-    <div class="form-group"><label class="form-label">Display Name</label>
-      <input class="form-input" id="eu-display" value="${escapeHtml(u.display_name||'')}"/></div>
-    <div class="form-group"><label class="form-label">New Password <span style="color:var(--text-muted);font-weight:400;">(leave blank to keep)</span></label>
-      <input type="password" class="form-input" id="eu-pass" placeholder="Enter new password or leave blank"/></div>
-    <div class="form-group"><label class="form-label">Role</label>
-      <select class="form-input form-select" id="eu-role">
-        <option value="user"   ${u.role==='user'  ?'selected':''}>User — Standard access</option>
-        <option value="admin"  ${u.role==='admin' ?'selected':''}>Admin — Full access</option>
-        <option value="driver" ${u.role==='driver'?'selected':''}>Driver — Transport access</option>
-      </select></div>
-    <div style="display:flex;gap:10px;justify-content:flex-end;margin-top:10px;">
+    <div style="display:grid;grid-template-columns:1fr 1fr;gap:14px;">
+      <div class="form-group" style="grid-column:1/-1;">
+        <label class="form-label">Email Address * <span style="color:var(--text-muted);font-weight:400;font-size:0.82em;">(Used to sign in)</span></label>
+        <input type="email" class="form-input" id="eu-email" value="${escapeHtml(u.email||'')}"/>
+      </div>
+      <div class="form-group">
+        <label class="form-label">Username *</label>
+        <input class="form-input" id="eu-username" value="${escapeHtml(u.username||'')}"/>
+      </div>
+      <div class="form-group">
+        <label class="form-label">Display Name</label>
+        <input class="form-input" id="eu-display" value="${escapeHtml(u.display_name||'')}"/>
+      </div>
+      <div class="form-group">
+        <label class="form-label">New Password <span style="color:var(--text-muted);font-weight:400;font-size:0.82em;">(Leave blank to keep current)</span></label>
+        <input type="password" class="form-input" id="eu-pass" placeholder="Enter new password or leave blank"/>
+      </div>
+      <div class="form-group">
+        <label class="form-label">System Role</label>
+        <select class="form-input form-select" id="eu-role">
+          <option value="user"   ${u.role==='user'  ?'selected':''}>User — Standard staff access</option>
+          <option value="admin"  ${u.role==='admin' ?'selected':''}>Admin — Full system access</option>
+          <option value="driver" ${u.role==='driver'?'selected':''}>Driver — Transport trip access</option>
+        </select>
+      </div>
+    </div>
+    <div style="display:flex;gap:10px;justify-content:flex-end;margin-top:18px;padding-top:14px;border-top:1px solid var(--border);">
       <button class="btn btn-secondary" onclick="hideModal('edit-user-modal')">Cancel</button>
-      <button class="btn btn-primary" onclick="saveEditUser('${id}')"><i class="fas fa-save"></i> Save</button>
-    </div>`);
+      <button class="btn btn-primary" onclick="saveEditUser('${id}')"><i class="fas fa-save"></i> Save Changes</button>
+    </div>`, 'modal-md');
   showModal('edit-user-modal');
 }
 
@@ -394,13 +612,14 @@ async function deleteUserConfirm(id, username) {
 }
 
 // ─────────────────────────────────────────────
-// COMPANY / APPEARANCE / LOGO
+// COMPANY / APPEARANCE / LOGO / AI
 // ─────────────────────────────────────────────
 async function saveBillingSettings() {
   const minDisc = document.getElementById('s-min-discount')?.value;
   const delivery = document.getElementById('s-delivery-charge')?.value;
-  if(minDisc!==undefined) await DB.setSetting('min_discount_amount', minDisc);
-  if(delivery!==undefined) await DB.setSetting('delivery_charge', delivery);
+  if (minDisc !== undefined) await DB.setSetting('min_discount_amount', minDisc);
+  if (delivery !== undefined) await DB.setSetting('delivery_charge', delivery);
+  await DB.logAction('Settings Updated', 'Updated billing and pricing defaults', { min_discount: minDisc, delivery_charge: delivery }, 'System');
   toast('Billing settings saved!');
 }
 
@@ -411,7 +630,7 @@ async function saveGeminiSettings() {
   }
   await DB.setSetting('ai_provider', 'gemini');
   await DB.logAction('Settings Updated', 'Updated Gemini AI settings', {}, 'System');
-  toast('Gemini settings saved!');
+  toast('Gemini AI settings saved!');
 }
 
 async function saveCompanySettings() {
@@ -438,7 +657,7 @@ function setTextSize(size) {
   const active = document.getElementById(`ts-${size}`);
   if (active) active.className = active.className.replace('btn-secondary','btn-primary');
   DB.setSetting('text_size', size);
-  toast('Text size updated');
+  toast('Font size updated');
 }
 
 function toggleDarkFromSettings(checked) {
@@ -475,12 +694,12 @@ async function removeLogo() {
 }
 
 // ─────────────────────────────────────────────
-// DATABASE
+// DATABASE & BACKUP ACTIONS
 // ─────────────────────────────────────────────
 async function exportDatabase() {
   const data = await DB.exportAll();
   downloadJSON(data, 'sagacious_washing_backup.json');
-  toast('Database exported!');
+  toast('Database backup downloaded!');
 }
 
 async function importDatabase(event) {
@@ -491,10 +710,10 @@ async function importDatabase(event) {
       const data = JSON.parse(e.target.result);
       confirmDialog('This will replace ALL existing data. Continue?', async () => {
         await DB.importAll(data);
-        toast('Database restored!');
+        toast('Database restored successfully!');
         navigate('dashboard');
       });
-    } catch { toast('Invalid backup file', 'error'); }
+    } catch { toast('Invalid backup JSON file', 'error'); }
   };
   reader.readAsText(file);
 }
@@ -505,7 +724,7 @@ async function uploadToCloud() {
   if (!endpoint.toLowerCase().startsWith('https://')) {
     return toast('Cloud endpoint must use secure HTTPS protocol', 'error');
   }
-  const data = await DB.exportAll(); // Login accounts are never included — see db.js exportAll()
+  const data = await DB.exportAll();
   try {
     const res = await fetch(endpoint, { method:'POST', headers:{'Content-Type':'application/json'}, body:JSON.stringify(data) });
     if (res.ok) toast('Database uploaded to cloud!'); else toast('Upload failed: '+res.statusText,'error');
@@ -521,13 +740,12 @@ async function importFromCloud() {
   try {
     const res = await fetch(endpoint); if (!res.ok) throw new Error(res.statusText);
     const data = await res.json();
-    confirmDialog('This will replace ALL existing data. Continue?', async () => {
+    confirmDialog('This will replace ALL existing data with cloud version. Continue?', async () => {
       await DB.importAll(data); toast('Database imported from cloud!'); navigate('dashboard');
     });
   } catch(err) { toast('Import failed: '+err.message,'error'); }
 }
 
-// Admin-only reset
 async function resetDatabase() {
   if (!requireAdmin()) return;
   confirmDialog('⚠️ DELETE ALL DATA permanently — are you absolutely sure?', async () => {
@@ -562,3 +780,4 @@ async function toggleAIFabFromSettings(checked) {
   }
   toast(`SAGA AI button ${checked ? 'shown' : 'hidden'}`);
 }
+
