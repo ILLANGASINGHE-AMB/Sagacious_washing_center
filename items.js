@@ -25,7 +25,7 @@ async function renderItems() {
       <div style="display:flex;gap:8px;flex-wrap:wrap;">
         ${canUseQuotation()?'<button class="btn btn-primary" onclick="showGenerateQuotationModal()"><i class="fas fa-file-invoice"></i> Generate Quotation</button>':''}
         ${canUseQuotation()?'<button class="btn btn-secondary" onclick="showDefaultTermsModal()"><i class="fas fa-file-contract"></i> Terms &amp; Conditions</button>':''}
-        ${isAdmin()?'<button class="btn btn-secondary" onclick="printItemsCatalog()"><i class="fas fa-print"></i> Print Catalog</button>':''}
+
         ${isAdmin()?'<button class="btn btn-secondary" onclick="exportItems()"><i class="fas fa-download"></i> Backup</button>':''}
         ${isAdmin()?'<button class="btn btn-secondary" onclick="document.getElementById(\'items-import-file\').click()"><i class="fas fa-upload"></i> Import</button>':''}
         <input type="file" id="items-import-file" accept=".json" style="display:none" onchange="importItems(this)"/>
