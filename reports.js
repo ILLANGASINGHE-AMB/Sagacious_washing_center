@@ -515,16 +515,6 @@ async function printFullReport() {
           </tr>
         </tbody>
       </table>
-      <div style="margin-top:40px;display:flex;justify-content:space-between;align-items:flex-end;">
-        <div style="text-align:center;min-width:180px;">
-          <div style="height:50px;border-bottom:1.5px solid #1e293b;margin-bottom:6px;"></div>
-          <div style="font-size:0.85em;font-weight:700;color:#1e293b;text-transform:uppercase;letter-spacing:0.5px;">Issued By:-</div>
-        </div>
-        <div style="text-align:center;min-width:180px;">
-          <div style="height:50px;border-bottom:1.5px solid #1e293b;margin-bottom:6px;"></div>
-          <div style="font-size:0.85em;font-weight:700;color:#1e293b;text-transform:uppercase;letter-spacing:0.5px;">Checked By:-</div>
-        </div>
-      </div>
       <div style="margin-top:18px;text-align:center;font-size:0.82em;color:#94a3b8;border-top:1px solid #e2e8f0;padding-top:10px;">
         ${settings.company_name} &mdash; Full Report &mdash; ${formatDate(meta.from)} to ${formatDate(meta.to)}
       </div>
@@ -1019,16 +1009,6 @@ async function printCustomerSummary() {
           </tr>
         </tbody>
       </table>
-      <div style="margin-top:40px;display:flex;justify-content:space-between;align-items:flex-end;">
-        <div style="text-align:center;min-width:180px;">
-          <div style="height:50px;border-bottom:1.5px solid #1e293b;margin-bottom:6px;"></div>
-          <div style="font-size:0.85em;font-weight:700;color:#1e293b;text-transform:uppercase;letter-spacing:0.5px;">Issued By:-</div>
-        </div>
-        <div style="text-align:center;min-width:180px;">
-          <div style="height:50px;border-bottom:1.5px solid #1e293b;margin-bottom:6px;"></div>
-          <div style="font-size:0.85em;font-weight:700;color:#1e293b;text-transform:uppercase;letter-spacing:0.5px;">Checked By:-</div>
-        </div>
-      </div>
       <div style="margin-top:18px;text-align:center;font-size:0.82em;color:#94a3b8;border-top:1px solid #e2e8f0;padding-top:10px;">
         ${settings.company_name} &mdash; Customer Summary Report &mdash; ${formatDate(meta.from)} to ${formatDate(meta.to)}
       </div>
@@ -1264,16 +1244,6 @@ async function printMonthlyBills() {
             </tr>
           </tbody>
         </table>
-        <div style="margin-top:40px;display:flex;justify-content:space-between;align-items:flex-end;">
-          <div style="text-align:center;min-width:180px;">
-            <div style="height:50px;border-bottom:1.5px solid #1e293b;margin-bottom:6px;"></div>
-            <div style="font-size:0.85em;font-weight:700;color:#1e293b;text-transform:uppercase;letter-spacing:0.5px;">Issued By:-</div>
-          </div>
-          <div style="text-align:center;min-width:180px;">
-            <div style="height:50px;border-bottom:1.5px solid #1e293b;margin-bottom:6px;"></div>
-            <div style="font-size:0.85em;font-weight:700;color:#1e293b;text-transform:uppercase;letter-spacing:0.5px;">Checked By:-</div>
-          </div>
-        </div>
         <div style="margin-top:18px;text-align:center;font-size:0.82em;color:#94a3b8;border-top:1px solid #e2e8f0;padding-top:10px;">
           ${settings.company_name} &mdash; Monthly Bills &mdash; ${monthLabel}
         </div>

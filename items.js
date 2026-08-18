@@ -325,16 +325,6 @@ async function printItemsCatalog() {
     <div style="margin-top:16px;padding-top:10px;border-top:1px solid #e2e8f0;display:flex;justify-content:space-between;font-size:0.72em;color:#94a3b8;">
       <span>${escapeHtml(company)} — Items Catalog</span><span>Generated on ${printDate}</span>
     </div>
-    <div style="margin-top:40px;display:flex;justify-content:space-between;align-items:flex-end;">
-      <div style="text-align:center;min-width:180px;">
-        <div style="height:50px;border-bottom:1.5px solid #1e293b;margin-bottom:6px;"></div>
-        <div style="font-size:0.85em;font-weight:700;color:#1e293b;text-transform:uppercase;letter-spacing:0.5px;">Issued By:-</div>
-      </div>
-      <div style="text-align:center;min-width:180px;">
-        <div style="height:50px;border-bottom:1.5px solid #1e293b;margin-bottom:6px;"></div>
-        <div style="font-size:0.85em;font-weight:700;color:#1e293b;text-transform:uppercase;letter-spacing:0.5px;">Checked By:-</div>
-      </div>
-    </div>
     <script>window.onload=()=>window.print();<\/script></body></html>`;
     const w=window.open('','_blank');
     if(!w) {
@@ -587,10 +577,6 @@ async function showGenerateQuotationModal() {
         <label class="form-label">Valid Until *</label>
         <input type="date" class="form-input" id="gq-valid-until" value="${validUntilStr}"/>
       </div>
-      <div class="form-group">
-        <label class="form-label">Issued By (Name &amp; Designation)</label>
-        <input class="form-input" id="gq-issued-by" value="Manager - Sagacious Washing Center"/>
-      </div>
     </div>
 
     <!-- ITEMS & PRICING TABLE -->
@@ -745,7 +731,7 @@ async function processGenerateQuotation() {
   const rawDate = document.getElementById('gq-date').value;
   const rawValidUntil = document.getElementById('gq-valid-until').value;
   const footerNotes = document.getElementById('gq-footer-notes').value.trim();
-  const issuedBy = document.getElementById('gq-issued-by').value.trim();
+  const issuedBy = document.getElementById('gq-issued-by')?.value?.trim() || '';
 
   const quoteDate = formatDate(rawDate);
   const validUntil = formatDate(rawValidUntil);
@@ -870,14 +856,6 @@ async function renderQuotationView(quoteData) {
         <ul style="margin:0;padding-left:22px;list-style-type:disc;">
           ${notesHTML}
         </ul>
-      </div>
-
-      <!-- ISSUED BY / SIGNATURE BLOCK -->
-      <div style="display:flex;justify-content:space-between;align-items:flex-end;margin-top:40px;margin-bottom:20px;padding-top:10px;">
-        <div>
-          <div style="border-bottom:1.5px dotted #64748b;width:220px;margin-bottom:8px;"></div>
-          <div style="font-size:0.88em;font-weight:600;color:#1e293b;">${escapeHtml(quoteData.issued_by || 'Manager - Sagacious Washing Center')}</div>
-        </div>
       </div>
 
       <!-- CLOSING LINE -->
