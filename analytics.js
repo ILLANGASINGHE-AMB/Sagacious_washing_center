@@ -433,8 +433,12 @@ async function calculateAnalyticsData(filters) {
   const expenseCalc = Financials.computeExpenseTotals(flatExpenses, start, end);
   const totalCashBookExpenses = expenseCalc.total;
 
-  // Total Expenses & Net Profit
-  const totalExpenses = totalCashBookExpenses + totalTransportFuelExpenses;
+  // Total Expenses & Net Profit — sourced ONLY from the Expenses tab's Cash
+  // Book data, so this figure always matches the Expenses tab's own totals.
+  // Transport fuel cost is tracked separately (see totalTransportFuelExpenses
+  // below) but is a computed trip cost, not an Expenses-tab entry, so it does
+  // NOT count toward "Total Expenses" here.
+  const totalExpenses = totalCashBookExpenses;
   const netProfit = netBookedRevenue - totalExpenses;
   const profitMargin = netBookedRevenue > 0 ? (netProfit / netBookedRevenue) * 100 : 0;
   const costRatio = netBookedRevenue > 0 ? (totalExpenses / netBookedRevenue) * 100 : 0;
@@ -507,14 +511,12 @@ async function calculateAnalyticsData(filters) {
 
   const itemStatsList = Object.values(itemStatsMap).sort((a, b) => b.revenue - a.revenue);
 
-  // Expense Categories Breakdown
+  // Expense Categories Breakdown — Cash Book categories only (see note above
+  // on why transport fuel is excluded from "Total Expenses").
   const expenseCatMap = {};
   Object.values(expenseCalc.byCategory).forEach(c => {
     expenseCatMap[c.name] = (expenseCatMap[c.name] || 0) + c.total;
   });
-  if (totalTransportFuelExpenses > 0) {
-    expenseCatMap['Transport Fuel Cost'] = totalTransportFuelExpenses;
-  }
 
   // Time Bucket Grouping
   const timeBuckets = groupDataByTimeGrain(filteredOrders, flatExpenses, filteredCompletedTrips, fuelConfig, filters.grain, start, end);

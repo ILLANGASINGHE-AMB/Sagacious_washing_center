@@ -195,8 +195,12 @@ const SAGABot = {
         totalTransportFuelExpenses += (parseFloat(t.distance_km) || 0) * ratePerKm;
       });
 
+    // "Total expenses" is sourced ONLY from the Expenses tab's Cash Book data,
+    // so it always agrees with the Expenses tab's own totals. Transport fuel
+    // is a separately computed trip cost, not an Expenses-tab entry, so it's
+    // still answerable via its own question but doesn't count toward this.
     const totalCashBookExpenses = expenseCalc.total || 0;
-    const totalExpenses = totalCashBookExpenses + totalTransportFuelExpenses;
+    const totalExpenses = totalCashBookExpenses;
     const netProfit = netBookedRevenue - totalExpenses;
     const orderCount = filteredOrders.length;
     const avgOrderValue = orderCount > 0 ? netBookedRevenue / orderCount : 0;
@@ -250,7 +254,7 @@ SAGABot._intents.push({
     const { start, end, label } = SAGABot.periodOrDefault(t);
     const m = await SAGABot.computeMetrics(start, end);
     const marginPct = m.netBookedRevenue > 0 ? (m.netProfit / m.netBookedRevenue) * 100 : 0;
-    return `**Net profit for ${label}:** ${formatCurrency(m.netProfit)}\n(Net booked revenue ${formatCurrency(m.netBookedRevenue)} − total expenses ${formatCurrency(m.totalExpenses)}, ${marginPct.toFixed(1)}% margin)\n\nNote: this reflects revenue booked and expenses logged in the system — it won't include costs like staff wages or rent unless you've entered them as general expenses.`;
+    return `**Net profit for ${label}:** ${formatCurrency(m.netProfit)}\n(Net booked revenue ${formatCurrency(m.netBookedRevenue)} − total expenses ${formatCurrency(m.totalExpenses)}, ${marginPct.toFixed(1)}% margin)\n\nNote: this reflects revenue booked and expenses logged in the Expenses tab — it won't include costs like staff wages, rent, or transport fuel unless you've entered them there.`;
   }
 });
 
@@ -274,7 +278,7 @@ SAGABot._intents.push({
       .sort((a, b) => b.total - a.total)
       .map(c => `• ${c.name}: ${formatCurrency(c.total)}`)
       .join('\n');
-    return `**Total expenses for ${label}:** ${formatCurrency(m.totalExpenses)}\n${categoryLines}${categoryLines ? '\n' : ''}• Transport/fuel: ${formatCurrency(m.totalTransportFuelExpenses)}`;
+    return `**Total expenses for ${label}:** ${formatCurrency(m.totalExpenses)} (from the Expenses tab)\n${categoryLines}`;
   }
 });
 
