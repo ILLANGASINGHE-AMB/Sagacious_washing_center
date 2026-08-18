@@ -3,7 +3,11 @@
 const TransportModule = {
   selectedCustomerSeq: [], // [{ customer_id, hotel_name, visit_order }]
   allCustomersCache: [],
+  driversCache: [],
+  vehiclesCache: [],
   selectedStatsMonth: null, // Stores selected 'YYYY-MM' month string
+  tripFilter: 'ongoing', // 'ongoing' | 'completed'
+  _startTripAllTrips: [],
 
   async init() {
     this.renderLayout();
@@ -27,13 +31,8 @@ const TransportModule = {
               Track vehicle trips, starting/final KM, customer visit sequences, and distance travelled.
             </p>
           </div>
-          
+
           <div class="flex items-center gap-2">
-            ${isAdmin() ? `
-              <button onclick="TransportModule.openFuelPriceModal()" class="px-3.5 py-2.5 bg-purple-600 hover:bg-purple-700 text-white rounded-xl font-bold text-xs sm:text-sm transition-all shadow-sm flex items-center gap-1.5">
-                <i class="fa-solid fa-gas-pump"></i> Fuel Price
-              </button>
-            ` : ''}
             ${canEditTransport() ? `
               <button onclick="TransportModule.openStartTripModal()" class="px-4 py-2.5 bg-indigo-600 hover:bg-indigo-700 text-white rounded-xl font-bold text-xs sm:text-sm transition-all shadow-sm flex items-center gap-2">
                 <i class="fa-solid fa-plus-circle"></i> New Trip
@@ -42,7 +41,7 @@ const TransportModule = {
           </div>
         </div>
 
-        <!-- Summary Stats Cards (5 Cards) -->
+        <!-- Summary Stats Cards -->
         <div id="transport-stats-container" class="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-5 gap-4">
           <!-- Dynamic Stats Cards -->
         </div>
@@ -60,10 +59,23 @@ const TransportModule = {
 
     mainContainer.innerHTML = `<div class="p-8 text-center text-slate-500"><i class="fa-solid fa-spinner fa-spin text-2xl mb-2"></i><p>Loading Transport Trips...</p></div>`;
 
-    const [trips, fuelConfig] = await Promise.all([
+    const [rawTrips, drivers, vehicles] = await Promise.all([
       DB.getTrips(),
-      DB.getFuelPriceSettings()
+      DB.getDrivers(),
+      DB.getVehicles()
     ]);
+
+    this.driversCache = drivers || [];
+    this.vehiclesCache = vehicles || [];
+
+    // Order trips by start date (most recent first); created_at breaks ties
+    // between trips started on the same date.
+    const trips = [...(rawTrips || [])].sort((a, b) => {
+      const dateA = a.start_date || (a.created_at ? String(a.created_at).slice(0, 10) : '');
+      const dateB = b.start_date || (b.created_at ? String(b.created_at).slice(0, 10) : '');
+      if (dateA !== dateB) return dateB.localeCompare(dateA);
+      return new Date(b.created_at || 0) - new Date(a.created_at || 0);
+    });
 
     let inProgressCount = 0;
     let completedCount = 0;
@@ -102,23 +114,9 @@ const TransportModule = {
       monthlyStatsMap[currentMonthKey] = { distance: 0, count: 0 };
     }
 
-    // Calculate Monthly Fuel Cost & Full Cost (sum of monthly fuel costs)
-    let fullFuelCostLKR = 0;
-    Object.keys(monthlyStatsMap).forEach(mKey => {
-      const mDist = monthlyStatsMap[mKey].distance;
-      const mPriceConfig = (fuelConfig.monthly_prices && fuelConfig.monthly_prices[mKey]) 
-        ? fuelConfig.monthly_prices[mKey] 
-        : fuelConfig;
-      const ratePerKm = parseFloat(mPriceConfig.cost_per_km || (mPriceConfig.current_price / (mPriceConfig.km_per_litre || 1)) || 37);
-      const mCost = mDist * ratePerKm;
-      monthlyStatsMap[mKey].fuelCost = mCost;
-      monthlyStatsMap[mKey].ratePerKm = ratePerKm;
-      fullFuelCostLKR += mCost;
-    });
-
     const availableMonths = Object.keys(monthlyStatsMap).sort().reverse();
     const selectedMonth = availableMonths.includes(this.selectedStatsMonth) ? this.selectedStatsMonth : currentMonthKey;
-    const selectedMonthData = monthlyStatsMap[selectedMonth] || { distance: 0, count: 0, fuelCost: 0, ratePerKm: fuelConfig.cost_per_km || 37 };
+    const selectedMonthData = monthlyStatsMap[selectedMonth] || { distance: 0, count: 0 };
 
     const formatMonthLabel = (mKey) => {
       const [yr, mo] = mKey.split('-');
@@ -173,7 +171,7 @@ const TransportModule = {
             <div class="text-xs font-semibold text-purple-600 dark:text-purple-400 uppercase flex items-center gap-1">
               <i class="fa-solid fa-calendar-days text-[11px]"></i> Monthly Distance
             </div>
-            <button onclick="TransportModule.openMonthlyDistanceModal()" class="px-2 py-0.5 bg-purple-50 hover:bg-purple-100 dark:bg-purple-950/40 dark:hover:bg-purple-900/50 text-purple-600 dark:text-purple-300 rounded-lg text-[10px] font-bold flex items-center gap-1 transition-all border border-purple-200/60 dark:border-purple-800/40 shrink-0" title="View Full Monthly Distance & Fuel Cost History">
+            <button onclick="TransportModule.openMonthlyDistanceModal()" class="px-2 py-0.5 bg-purple-50 hover:bg-purple-100 dark:bg-purple-950/40 dark:hover:bg-purple-900/50 text-purple-600 dark:text-purple-300 rounded-lg text-[10px] font-bold flex items-center gap-1 transition-all border border-purple-200/60 dark:border-purple-800/40 shrink-0" title="View Full Monthly Distance History">
               <i class="fa-solid fa-clock-rotate-left text-[10px]"></i> History
             </button>
           </div>
@@ -193,25 +191,28 @@ const TransportModule = {
               </select>
             </div>
 
-            <div class="text-[10px] font-semibold text-purple-700 dark:text-purple-300 mt-1 font-mono">
-              Monthly Fuel Cost: LKR ${selectedMonthData.fuelCost.toLocaleString('en-US', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}
+            <div class="text-[10px] font-semibold text-purple-700 dark:text-purple-300 mt-1">
+              ${selectedMonthData.count} trip${selectedMonthData.count !== 1 ? 's' : ''} completed this period
             </div>
           </div>
         </div>
       `;
     }
 
+    if (!this.tripFilter) this.tripFilter = 'ongoing';
+    const displayTrips = trips.filter(t => this.tripFilter === 'completed' ? t.status === 'Completed' : t.status !== 'Completed');
+
     let rowsHTML = '';
-    if (trips.length === 0) {
+    if (displayTrips.length === 0) {
       rowsHTML = `
         <tr>
           <td colspan="7" class="px-4 py-8 text-center text-xs text-slate-400">
-            No vehicle trips recorded yet. Click <strong>"New Trip"</strong> above to start a trip.
+            ${this.tripFilter === 'completed' ? 'No completed trips yet.' : `No ongoing trips. Click <strong>"New Trip"</strong> above to start a trip.`}
           </td>
         </tr>
       `;
     } else {
-      trips.forEach(t => {
+      displayTrips.forEach(t => {
         const isCompleted = t.status === 'Completed';
 
         // Render customer visit order badges
@@ -270,7 +271,8 @@ const TransportModule = {
               ${t.trip_id}
             </td>
             <td class="px-4 py-3 text-xs font-bold text-slate-800 dark:text-white whitespace-nowrap">
-              <i class="fa-solid fa-user-circle text-slate-400 mr-1"></i> ${t.driver_name || 'Driver'}
+              <div><i class="fa-solid fa-user-circle text-slate-400 mr-1"></i> ${t.driver_name || 'Driver'}</div>
+              ${t.vehicle_no ? `<div class="text-[10px] font-semibold text-slate-400 mt-0.5"><i class="fa-solid fa-car-side mr-1"></i>${escapeHtml(t.vehicle_no)}</div>` : ''}
             </td>
             <td class="px-4 py-3 text-xs text-slate-600 dark:text-slate-300 whitespace-nowrap font-mono">
               <div>${t.start_date}</div>
@@ -302,12 +304,21 @@ const TransportModule = {
 
     mainContainer.innerHTML = `
       <div class="bg-white dark:bg-slate-800 rounded-2xl shadow-sm border border-slate-200 dark:border-slate-700 overflow-hidden">
-        <div class="p-4 border-b border-slate-200 dark:border-slate-700 flex items-center justify-between">
+        <div class="p-4 border-b border-slate-200 dark:border-slate-700 flex flex-col sm:flex-row sm:items-center sm:justify-between gap-3">
           <div>
             <h2 class="text-base font-bold text-slate-800 dark:text-white flex items-center gap-2">
               <i class="fa-solid fa-truck text-indigo-500"></i> Vehicle Trips Register
             </h2>
             <p class="text-xs text-slate-500">Complete trip lifecycle log with sequence order customer visits.</p>
+          </div>
+
+          <div class="flex items-center gap-1.5 bg-slate-100 dark:bg-slate-900 p-1 rounded-xl shrink-0">
+            <button onclick="TransportModule.setTripFilter('ongoing')" class="px-3.5 py-1.5 rounded-lg text-xs font-bold transition-all ${this.tripFilter === 'ongoing' ? 'bg-white dark:bg-slate-700 text-indigo-600 dark:text-indigo-400 shadow-sm' : 'text-slate-500 dark:text-slate-400'}">
+              <i class="fa-solid fa-spinner mr-1"></i> Ongoing (${inProgressCount})
+            </button>
+            <button onclick="TransportModule.setTripFilter('completed')" class="px-3.5 py-1.5 rounded-lg text-xs font-bold transition-all ${this.tripFilter === 'completed' ? 'bg-white dark:bg-slate-700 text-emerald-600 dark:text-emerald-400 shadow-sm' : 'text-slate-500 dark:text-slate-400'}">
+              <i class="fa-solid fa-circle-check mr-1"></i> Completed (${completedCount})
+            </button>
           </div>
         </div>
 
@@ -333,25 +344,43 @@ const TransportModule = {
     `;
   },
 
+  setTripFilter(filter) {
+    this.tripFilter = filter;
+    this.renderTripsList();
+  },
+
   // ──────────────────────────────────────────
-  // STEP 4-8: START NEW TRIP MODAL
+  // START NEW TRIP MODAL
   // ──────────────────────────────────────────
   async openStartTripModal() {
     if (!canEditTransport()) return showToast('Driver or Admin permission required to start trips');
     const todayDate = new Date().toISOString().split('T')[0];
-    const defaultTime = new Date().toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' });
-    const tripId = await DB.generateTripId();
-    const currentDriver = (window.currentUser && (window.currentUser.display_name || window.currentUser.username)) || 'Driver';
+    const defaultTime = new Date().toLocaleTimeString([], { hour: '2-digit', minute: '2-digit', hour12: true });
 
-    // Auto-calculate default Starting KM from the End KM of the previous trip
-    const trips = await DB.getTrips();
-    let defaultStartKm = '';
-    const previousTrip = trips.find(t => t.final_km !== null && t.final_km !== undefined) || trips[0];
-    if (previousTrip) {
-      defaultStartKm = previousTrip.final_km !== null && previousTrip.final_km !== undefined 
-        ? previousTrip.final_km 
-        : (previousTrip.starting_km || '');
-    }
+    const [tripId, trips, drivers, vehicles] = await Promise.all([
+      DB.generateTripId(),
+      DB.getTrips(),
+      DB.getDrivers(),
+      DB.getVehicles()
+    ]);
+
+    this._startTripAllTrips = trips || [];
+
+    // A driver/vehicle already on an "In Progress" trip must not be selectable,
+    // even if their status field is somehow out of sync — one active trip at a time.
+    const activeDriverIds = new Set((trips || []).filter(t => t.status === 'In Progress' && t.driver_id != null).map(t => String(t.driver_id)));
+    const activeVehicleIds = new Set((trips || []).filter(t => t.status === 'In Progress' && t.vehicle_id != null).map(t => String(t.vehicle_id)));
+
+    const availableDrivers = (drivers || []).filter(d => (d.status || 'available').toLowerCase() === 'available' && !activeDriverIds.has(String(d.id)));
+    const availableVehicles = (vehicles || []).filter(v => (v.status || 'available').toLowerCase() === 'available' && !activeVehicleIds.has(String(v.id)));
+
+    const driverOptionsHTML = availableDrivers.length > 0
+      ? availableDrivers.map(d => `<option value="${d.id}">${escapeHtml(d.name)}${d.nickname ? ` (${escapeHtml(d.nickname)})` : ''}</option>`).join('')
+      : `<option value="" disabled selected>No drivers available right now</option>`;
+
+    const vehicleOptionsHTML = availableVehicles.length > 0
+      ? availableVehicles.map(v => `<option value="${v.id}">${escapeHtml(v.vehicle_no)}${v.model ? ` — ${escapeHtml(v.model)}` : ''}</option>`).join('')
+      : `<option value="" disabled selected>No vehicles available right now</option>`;
 
     const html = `
       <div id="start-trip-modal" class="fixed inset-0 z-50 flex items-center justify-center p-4 bg-slate-900/60 backdrop-blur-sm animate-fade-in">
@@ -366,14 +395,27 @@ const TransportModule = {
           </div>
 
           <form onsubmit="TransportModule.saveStartTrip(event)" class="space-y-4 text-left">
+            <div>
+              <label class="block text-xs font-bold text-slate-700 dark:text-slate-300 mb-1">Trip ID</label>
+              <input type="text" value="${tripId}" readonly class="w-full px-3 py-2 text-xs font-mono bg-slate-100 dark:bg-slate-700 rounded-xl text-slate-600 dark:text-slate-300 border border-slate-200 dark:border-slate-600" />
+            </div>
+
             <div class="grid grid-cols-2 gap-3">
               <div>
-                <label class="block text-xs font-bold text-slate-700 dark:text-slate-300 mb-1">Trip ID</label>
-                <input type="text" value="${tripId}" readonly class="w-full px-3 py-2 text-xs font-mono bg-slate-100 dark:bg-slate-700 rounded-xl text-slate-600 dark:text-slate-300 border border-slate-200 dark:border-slate-600" />
+                <label class="block text-xs font-bold text-slate-700 dark:text-slate-300 mb-1">Driver *</label>
+                <select id="trip-driver-select" required class="w-full px-3 py-2 text-xs bg-white dark:bg-slate-700 rounded-xl text-slate-800 dark:text-white border border-slate-300 dark:border-slate-600 font-bold">
+                  <option value="">Select driver...</option>
+                  ${driverOptionsHTML}
+                </select>
+                <p class="text-[10px] text-slate-400 mt-0.5">Only drivers currently "Available" are shown.</p>
               </div>
               <div>
-                <label class="block text-xs font-bold text-slate-700 dark:text-slate-300 mb-1">Driver Name</label>
-                <input type="text" id="trip-driver-name" value="${currentDriver}" required class="w-full px-3 py-2 text-xs bg-white dark:bg-slate-700 rounded-xl text-slate-800 dark:text-white border border-slate-300 dark:border-slate-600 font-bold" />
+                <label class="block text-xs font-bold text-slate-700 dark:text-slate-300 mb-1">Vehicle *</label>
+                <select id="trip-vehicle-select" required onchange="TransportModule.onStartTripVehicleChange(this.value)" class="w-full px-3 py-2 text-xs bg-white dark:bg-slate-700 rounded-xl text-slate-800 dark:text-white border border-slate-300 dark:border-slate-600 font-bold">
+                  <option value="">Select vehicle...</option>
+                  ${vehicleOptionsHTML}
+                </select>
+                <p class="text-[10px] text-slate-400 mt-0.5">Only vehicles currently "Available" are shown.</p>
               </div>
             </div>
 
@@ -383,21 +425,21 @@ const TransportModule = {
                 <input type="date" id="trip-start-date" value="${todayDate}" required class="w-full px-3 py-2 text-xs bg-white dark:bg-slate-700 rounded-xl text-slate-800 dark:text-white border border-slate-300 dark:border-slate-600" />
               </div>
               <div>
-                <label class="block text-xs font-bold text-slate-700 dark:text-slate-300 mb-1">Start Time *</label>
-                <input type="text" id="trip-start-time" value="${defaultTime}" required class="w-full px-3 py-2 text-xs bg-white dark:bg-slate-700 rounded-xl text-slate-800 dark:text-white border border-slate-300 dark:border-slate-600 font-mono" />
+                <label class="block text-xs font-bold text-slate-700 dark:text-slate-300 mb-1">Start Time * <span class="text-slate-400 font-normal">(12-hour)</span></label>
+                <input type="text" id="trip-start-time" value="${defaultTime}" required placeholder="e.g. 08:30 AM" class="w-full px-3 py-2 text-xs bg-white dark:bg-slate-700 rounded-xl text-slate-800 dark:text-white border border-slate-300 dark:border-slate-600 font-mono" />
               </div>
             </div>
 
             <div>
               <label class="block text-xs font-bold text-slate-700 dark:text-slate-300 mb-1">Starting KM (Odometer Reading) *</label>
-              <input type="number" step="0.1" id="trip-starting-km" value="${defaultStartKm}" required placeholder="e.g. 45250" class="w-full px-3 py-2 text-xs bg-white dark:bg-slate-700 rounded-xl text-slate-800 dark:text-white border border-slate-300 dark:border-slate-600 font-bold text-indigo-600" />
-              <p class="text-[10px] text-slate-400 mt-0.5">${defaultStartKm !== '' ? `Auto-filled from previous trip final KM (${defaultStartKm} KM). Editable if needed.` : 'Vehicle kilometre reading at start of trip.'}</p>
+              <input type="number" step="0.1" id="trip-starting-km" required placeholder="Select a vehicle first" class="w-full px-3 py-2 text-xs bg-white dark:bg-slate-700 rounded-xl text-slate-800 dark:text-white border border-slate-300 dark:border-slate-600 font-bold text-indigo-600" />
+              <p id="trip-starting-km-hint" class="text-[10px] text-slate-400 mt-0.5">Select a vehicle to auto-fill starting KM from its last trip.</p>
             </div>
 
             <div class="flex items-center justify-end gap-2 pt-2 border-t border-slate-200 dark:border-slate-700">
               <button type="button" onclick="document.getElementById('start-trip-modal').remove()" class="px-4 py-2 text-xs font-semibold text-slate-600 hover:bg-slate-100 rounded-xl">Cancel</button>
               <button type="submit" class="px-4 py-2 text-xs font-bold bg-indigo-600 hover:bg-indigo-700 text-white rounded-xl shadow-sm flex items-center gap-1.5">
-                <i class="fa-solid fa-play"></i> Start Trip
+                <i class="fa-solid fa-play"></i> Start & Save
               </button>
             </div>
           </form>
@@ -408,6 +450,41 @@ const TransportModule = {
     document.body.insertAdjacentHTML('beforeend', html);
   },
 
+  // Vehicle-specific KM calibration: the starting KM of a trip is always the
+  // final KM recorded at the end of that SAME vehicle's last trip. Locked
+  // (read-only) once auto-filled — only editable if the vehicle has no prior
+  // trip history yet.
+  onStartTripVehicleChange(vehicleId) {
+    const kmInput = document.getElementById('trip-starting-km');
+    const kmHint = document.getElementById('trip-starting-km-hint');
+    if (!kmInput) return;
+
+    if (!vehicleId) {
+      kmInput.value = '';
+      kmInput.readOnly = false;
+      kmInput.classList.remove('bg-slate-100', 'dark:bg-slate-700', 'cursor-not-allowed');
+      if (kmHint) kmHint.textContent = 'Select a vehicle to auto-fill starting KM from its last trip.';
+      return;
+    }
+
+    const vehicleTrips = (this._startTripAllTrips || [])
+      .filter(t => String(t.vehicle_id) === String(vehicleId) && t.final_km !== null && t.final_km !== undefined)
+      .sort((a, b) => new Date(b.end_date || b.created_at || 0) - new Date(a.end_date || a.created_at || 0));
+
+    if (vehicleTrips.length > 0) {
+      const lastFinalKm = vehicleTrips[0].final_km;
+      kmInput.value = lastFinalKm;
+      kmInput.readOnly = true;
+      kmInput.classList.add('bg-slate-100', 'dark:bg-slate-700', 'cursor-not-allowed');
+      if (kmHint) kmHint.textContent = `Auto-calibrated from this vehicle's last trip end KM (${lastFinalKm} KM). Locked — cannot be edited.`;
+    } else {
+      kmInput.value = 0;
+      kmInput.readOnly = false;
+      kmInput.classList.remove('bg-slate-100', 'dark:bg-slate-700', 'cursor-not-allowed');
+      if (kmHint) kmHint.textContent = `No previous trips recorded for this vehicle yet — enter the current odometer reading.`;
+    }
+  },
+
   async saveStartTrip(e) {
     e.preventDefault();
     const btn = e.target.querySelector('button[type="submit"]');
@@ -415,27 +492,59 @@ const TransportModule = {
     if (btn) btn.disabled = true;
 
     try {
-      const driver = document.getElementById('trip-driver-name').value;
+      const driverId = document.getElementById('trip-driver-select').value;
+      const vehicleId = document.getElementById('trip-vehicle-select').value;
       const startDate = document.getElementById('trip-start-date').value;
       const startTime = document.getElementById('trip-start-time').value;
-      const startingKm = document.getElementById('trip-starting-km').value;
+      const startingKmInput = document.getElementById('trip-starting-km');
+      const startingKm = startingKmInput ? startingKmInput.value : '';
+
+      if (!driverId) { showToast('Please select a driver', 'error'); return; }
+      if (!vehicleId) { showToast('Please select a vehicle', 'error'); return; }
+      if (startingKm === '' || startingKm === null) { showToast('Starting KM is required', 'error'); return; }
+
+      // Re-check availability at save time to guard against a race where the
+      // driver/vehicle was picked up by another trip after this modal opened.
+      const [freshTrips, driver, vehicle] = await Promise.all([
+        DB.getTrips(),
+        DB.getDriver(driverId),
+        DB.getVehicle(vehicleId)
+      ]);
+
+      const driverBusy = (freshTrips || []).some(t => t.status === 'In Progress' && String(t.driver_id) === String(driverId));
+      if (!driver || driverBusy || (driver.status || 'available').toLowerCase() !== 'available') {
+        showToast('Selected driver is no longer available — they may already be on a trip.', 'error');
+        return;
+      }
+
+      const vehicleBusy = (freshTrips || []).some(t => t.status === 'In Progress' && String(t.vehicle_id) === String(vehicleId));
+      if (!vehicle || vehicleBusy || (vehicle.status || 'available').toLowerCase() !== 'available') {
+        showToast('Selected vehicle is no longer available — it may already be on a trip.', 'error');
+        return;
+      }
 
       const record = await DB.addTrip({
-        driver_name: driver,
+        driver_id: driverId,
+        driver_name: driver.name,
+        vehicle_id: vehicleId,
+        vehicle_no: vehicle.vehicle_no,
         start_date: startDate,
         start_time: startTime,
         starting_km: startingKm,
         status: 'In Progress'
       });
 
-      await DB.logAction('Start Trip', `Started trip ${record.trip_id} (Start KM: ${startingKm})`, record, 'Transport');
+      await Promise.all([
+        DB.updateDriver(driverId, { status: 'busy' }),
+        DB.updateVehicle(vehicleId, { status: 'busy' })
+      ]);
+
+      await DB.logAction('Start Trip', `Started trip ${record.trip_id} for driver "${driver.name}" using vehicle "${vehicle.vehicle_no}" (Start KM: ${startingKm})`, record, 'Transport');
 
       document.getElementById('start-trip-modal')?.remove();
       showToast(`Trip ${record.trip_id} started!`);
+      this.tripFilter = 'ongoing';
       await this.renderTripsList();
-
-      // Immediately open Customer Selection modal for the new trip (Steps 9-12)
-      this.openCustomerSelectionModal(record.id);
     } catch (err) {
       console.error('saveStartTrip error:', err);
       showToast('Failed to start trip: ' + (err.message || err), 'error');
@@ -445,7 +554,7 @@ const TransportModule = {
   },
 
   // ──────────────────────────────────────────
-  // STEP 9-12: SELECT CUSTOMERS & ORDER PRESERVATION MODAL
+  // SELECT CUSTOMERS & ORDER PRESERVATION MODAL
   // ──────────────────────────────────────────
   async openCustomerSelectionModal(tripDbId) {
     if (!canEditTransport()) return showToast('Driver or Admin permission required to edit trip customers');
@@ -504,7 +613,7 @@ const TransportModule = {
               </div>
             </div>
 
-            <!-- Optional Trip Notes (Step 12) -->
+            <!-- Optional Trip Notes -->
             <div>
               <label class="block text-xs font-bold text-slate-700 dark:text-slate-300 mb-1">Trip Notes (Optional)</label>
               <textarea id="trip-notes-input" rows="2" placeholder="e.g. Customer requested delivery after 10:00 AM..." class="w-full px-3 py-2 text-xs bg-white dark:bg-slate-700 rounded-xl text-slate-800 dark:text-white border border-slate-300 dark:border-slate-600">${trip.notes || ''}</textarea>
@@ -539,8 +648,8 @@ const TransportModule = {
       const orderNum = isSelected ? seqObj.visit_order : '';
 
       return `
-        <button type="button" 
-          onclick="TransportModule.toggleCustomerSelection('${c.id}', '${(c.hotel_name || '').replace(/'/g, "\\'")}')" 
+        <button type="button"
+          onclick="TransportModule.toggleCustomerSelection('${c.id}', '${(c.hotel_name || '').replace(/'/g, "\\'")}')"
           class="p-3 rounded-xl text-left border text-xs font-bold flex items-center justify-between transition-all cursor-pointer ${isSelected ? 'bg-indigo-600 text-white border-indigo-600 shadow-md transform scale-[1.01]' : 'bg-white dark:bg-slate-800 text-slate-700 dark:text-slate-200 border-slate-200 dark:border-slate-700 hover:bg-indigo-50 dark:hover:bg-slate-700 hover:border-indigo-300'}">
           <span class="truncate pr-2">${c.hotel_name}</span>
           ${isSelected ? `
@@ -630,7 +739,7 @@ const TransportModule = {
   },
 
   // ──────────────────────────────────────────
-  // STEP 14-19: END / COMPLETE TRIP MODAL (Includes Customer Selection Option)
+  // END TRIP MODAL (includes visited-customer selection)
   // ──────────────────────────────────────────
   async openEndTripModal(tripDbId) {
     if (!canEditTransport()) return showToast('Driver or Admin permission required to end trips');
@@ -645,14 +754,14 @@ const TransportModule = {
     this.selectedCustomerSeq = trip.selected_customers ? [...trip.selected_customers] : [];
 
     const todayDate = new Date().toISOString().split('T')[0];
-    const defaultEndTime = new Date().toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' });
+    const defaultEndTime = new Date().toLocaleTimeString([], { hour: '2-digit', minute: '2-digit', hour12: true });
 
     const html = `
       <div id="end-trip-modal" class="fixed inset-0 z-50 flex items-center justify-center p-4 bg-slate-900/60 backdrop-blur-sm animate-fade-in">
         <div class="bg-white dark:bg-slate-800 rounded-2xl max-w-xl w-full p-6 shadow-xl border border-slate-200 dark:border-slate-700 space-y-4 max-h-[90vh] flex flex-col">
           <div class="flex items-center justify-between border-b border-slate-200 dark:border-slate-700 pb-3 shrink-0">
             <h3 class="text-lg font-bold text-slate-800 dark:text-white flex items-center gap-2">
-              <i class="fa-solid fa-flag-checkered text-emerald-600"></i> Complete Trip (${trip.trip_id})
+              <i class="fa-solid fa-flag-checkered text-emerald-600"></i> End Trip (${trip.trip_id})
             </h3>
             <button onclick="document.getElementById('end-trip-modal').remove()" class="text-slate-400 hover:text-slate-600 text-lg">
               <i class="fa-solid fa-xmark"></i>
@@ -664,17 +773,18 @@ const TransportModule = {
             <div class="bg-slate-100 dark:bg-slate-700/50 p-3 rounded-xl text-xs space-y-1">
               <div class="flex justify-between text-slate-600 dark:text-slate-300">
                 <span>Driver: <strong>${trip.driver_name}</strong></span>
-                <span>Starting KM: <strong class="text-indigo-600 font-mono">${trip.starting_km} KM</strong></span>
+                <span>Vehicle: <strong>${trip.vehicle_no || 'N/A'}</strong></span>
               </div>
               <div class="flex justify-between text-slate-500">
                 <span>Start: ${trip.start_date} @ ${trip.start_time}</span>
+                <span>Starting KM: <strong class="text-indigo-600 font-mono">${trip.starting_km} KM</strong></span>
               </div>
             </div>
 
             <!-- Customer Visit Sequence Section (Available directly in End Trip flow) -->
             <div class="bg-indigo-50/70 dark:bg-indigo-950/40 p-3.5 rounded-xl border border-indigo-200 dark:border-indigo-800/50 space-y-3">
               <div class="flex items-center justify-between">
-                <label class="block text-xs font-bold text-indigo-900 dark:text-indigo-200">Visited Customers & Sequence Order:</label>
+                <label class="block text-xs font-bold text-indigo-900 dark:text-indigo-200">Select Visited Customers (in order):</label>
                 <button type="button" onclick="TransportModule.clearCustomerSequence()" class="text-[10px] text-rose-600 hover:underline">Reset Order</button>
               </div>
 
@@ -700,14 +810,14 @@ const TransportModule = {
                 <input type="date" id="trip-end-date" value="${todayDate}" required class="w-full px-3 py-2 text-xs bg-white dark:bg-slate-700 rounded-xl text-slate-800 dark:text-white border border-slate-300 dark:border-slate-600" />
               </div>
               <div>
-                <label class="block text-xs font-bold text-slate-700 dark:text-slate-300 mb-1">End Time *</label>
-                <input type="text" id="trip-end-time" value="${defaultEndTime}" required class="w-full px-3 py-2 text-xs bg-white dark:bg-slate-700 rounded-xl text-slate-800 dark:text-white border border-slate-300 dark:border-slate-600 font-mono" />
+                <label class="block text-xs font-bold text-slate-700 dark:text-slate-300 mb-1">End Time * <span class="text-slate-400 font-normal">(12-hour)</span></label>
+                <input type="text" id="trip-end-time" value="${defaultEndTime}" required placeholder="e.g. 05:45 PM" class="w-full px-3 py-2 text-xs bg-white dark:bg-slate-700 rounded-xl text-slate-800 dark:text-white border border-slate-300 dark:border-slate-600 font-mono" />
               </div>
             </div>
 
             <div>
-              <label class="block text-xs font-bold text-slate-700 dark:text-slate-300 mb-1">Final KM (Odometer Reading) *</label>
-              <input type="number" step="0.1" id="trip-final-km" required min="${trip.starting_km}" placeholder="Must be >= ${trip.starting_km}" oninput="TransportModule.calcDistancePreview(${trip.starting_km})" class="w-full px-3 py-2 text-xs bg-white dark:bg-slate-700 rounded-xl text-slate-800 dark:text-white border border-slate-300 dark:border-slate-600 font-bold text-emerald-600" />
+              <label class="block text-xs font-bold text-slate-700 dark:text-slate-300 mb-1">End Km (Odometer Reading) *</label>
+              <input type="number" step="0.1" id="trip-final-km" required min="${trip.starting_km}" placeholder="Must be greater than ${trip.starting_km}" oninput="TransportModule.calcDistancePreview(${trip.starting_km})" class="w-full px-3 py-2 text-xs bg-white dark:bg-slate-700 rounded-xl text-slate-800 dark:text-white border border-slate-300 dark:border-slate-600 font-bold text-emerald-600" />
             </div>
 
             <!-- Live Distance Calculation Box -->
@@ -716,16 +826,16 @@ const TransportModule = {
               <span id="distance-val-text" class="text-sm font-extrabold text-emerald-600 dark:text-emerald-400 font-mono">0 KM</span>
             </div>
 
-            <!-- Optional Trip Notes -->
+            <!-- Additional Notes -->
             <div>
-              <label class="block text-xs font-bold text-slate-700 dark:text-slate-300 mb-1">Trip Notes (Optional)</label>
+              <label class="block text-xs font-bold text-slate-700 dark:text-slate-300 mb-1">Additional Notes (Optional)</label>
               <textarea id="trip-notes-input" rows="2" placeholder="Optional final trip remarks..." class="w-full px-3 py-2 text-xs bg-white dark:bg-slate-700 rounded-xl text-slate-800 dark:text-white border border-slate-300 dark:border-slate-600">${trip.notes || ''}</textarea>
             </div>
 
             <div class="flex items-center justify-end gap-2 pt-2 border-t border-slate-200 dark:border-slate-700 shrink-0">
               <button type="button" onclick="document.getElementById('end-trip-modal').remove()" class="px-4 py-2 text-xs font-semibold text-slate-600 hover:bg-slate-100 rounded-xl">Cancel</button>
               <button type="submit" class="px-4 py-2 text-xs font-bold bg-emerald-600 hover:bg-emerald-700 text-white rounded-xl shadow-sm flex items-center gap-1.5">
-                <i class="fa-solid fa-check"></i> Complete & Save Trip
+                <i class="fa-solid fa-check"></i> End Trip
               </button>
             </div>
           </form>
@@ -743,12 +853,12 @@ const TransportModule = {
     if (!finalInput || !valText) return;
 
     const finalKm = parseFloat(finalInput.value) || 0;
-    if (finalKm >= startKm) {
+    if (finalKm > startKm) {
       const dist = (finalKm - startKm).toFixed(1);
       valText.textContent = `${dist} KM`;
       valText.className = 'text-sm font-extrabold text-emerald-600 dark:text-emerald-400 font-mono';
     } else {
-      valText.textContent = `Invalid (Must be >= ${startKm})`;
+      valText.textContent = `Invalid (Must be > ${startKm})`;
       valText.className = 'text-xs font-bold text-rose-500 font-mono';
     }
   },
@@ -768,13 +878,11 @@ const TransportModule = {
 
       const trip = await DB.getTrip(tripDbId);
       if (!trip) {
-        if (btn) btn.disabled = false;
         return;
       }
 
-      if (finalKm < trip.starting_km) {
-        if (btn) btn.disabled = false;
-        showToast(`Final KM (${finalKm}) cannot be less than Starting KM (${trip.starting_km}).`, 'error');
+      if (finalKm <= trip.starting_km) {
+        showToast(`End Km (${finalKm}) must be greater than Starting Km (${trip.starting_km}).`, 'error');
         return;
       }
 
@@ -789,6 +897,12 @@ const TransportModule = {
         notes: notes,
         status: 'Completed'
       });
+
+      // Release the driver & vehicle back to "available" now that the trip is done.
+      const releaseOps = [];
+      if (trip.driver_id) releaseOps.push(DB.updateDriver(trip.driver_id, { status: 'available' }));
+      if (trip.vehicle_id) releaseOps.push(DB.updateVehicle(trip.vehicle_id, { status: 'available' }));
+      if (releaseOps.length) await Promise.all(releaseOps);
 
       await DB.logAction('End Trip', `Completed trip ${trip.trip_id} (Distance: ${distanceKm} KM)`, { trip_id: trip.trip_id, distance_km: distanceKm, selected_customers: this.selectedCustomerSeq }, 'Transport');
 
@@ -817,6 +931,11 @@ const TransportModule = {
       `).join('');
     }
 
+    // Distance travelled = End Km - Start Km
+    const distanceTravelled = (trip.final_km !== null && trip.final_km !== undefined)
+      ? (parseFloat(trip.final_km) - parseFloat(trip.starting_km || 0)).toFixed(2)
+      : (trip.distance_km || 0);
+
     const html = `
       <div id="trip-details-modal" class="fixed inset-0 z-50 flex items-center justify-center p-4 bg-slate-900/60 backdrop-blur-sm animate-fade-in">
         <div class="bg-white dark:bg-slate-800 rounded-2xl max-w-md w-full p-6 shadow-xl border border-slate-200 dark:border-slate-700 space-y-4">
@@ -839,6 +958,10 @@ const TransportModule = {
               <span class="font-bold text-slate-800 dark:text-white">${trip.driver_name}</span>
             </div>
             <div class="flex justify-between py-1 border-b border-slate-100 dark:border-slate-700">
+              <span class="text-slate-500">Vehicle</span>
+              <span class="font-bold text-slate-800 dark:text-white">${escapeHtml(trip.vehicle_no || 'N/A')}</span>
+            </div>
+            <div class="flex justify-between py-1 border-b border-slate-100 dark:border-slate-700">
               <span class="text-slate-500">Start Time</span>
               <span class="font-mono text-slate-700 dark:text-slate-300">${trip.start_date} @ ${trip.start_time}</span>
             </div>
@@ -852,7 +975,7 @@ const TransportModule = {
             </div>
             <div class="flex justify-between py-1 border-b border-slate-100 dark:border-slate-700">
               <span class="text-slate-500">Distance Travelled</span>
-              <span class="font-bold text-indigo-600 text-sm font-mono">${trip.distance_km || 0} KM</span>
+              <span class="font-bold text-indigo-600 text-sm font-mono">${distanceTravelled} KM</span>
             </div>
 
             <div>
@@ -907,103 +1030,9 @@ const TransportModule = {
     this.renderTripsList();
   },
 
-  async openFuelPriceModal() {
-    if (!isAdmin()) return showToast('Admin permission required to update Fuel Price');
-    const fuelConfig = await DB.getFuelPriceSettings();
-    const currentMonth = new Date().toISOString().slice(0, 7);
-
-    const html = `
-      <div id="fuel-price-modal" class="fixed inset-0 z-50 flex items-center justify-center p-4 bg-slate-900/60 backdrop-blur-sm animate-fade-in">
-        <div class="bg-white dark:bg-slate-800 rounded-2xl max-w-md w-full p-6 shadow-xl border border-slate-200 dark:border-slate-700 space-y-4">
-          <div class="flex items-center justify-between border-b border-slate-200 dark:border-slate-700 pb-3">
-            <h3 class="text-lg font-bold text-slate-800 dark:text-white flex items-center gap-2">
-              <i class="fa-solid fa-gas-pump text-purple-600"></i> Configure Fuel Price (Admin)
-            </h3>
-            <button onclick="document.getElementById('fuel-price-modal').remove()" class="text-slate-400 hover:text-slate-600 text-lg">
-              <i class="fa-solid fa-xmark"></i>
-            </button>
-          </div>
-
-          <form onsubmit="TransportModule.saveFuelPrice(event)" class="space-y-4 text-left">
-            <div>
-              <label class="block text-xs font-bold text-slate-700 dark:text-slate-300 mb-1">Fuel Price (LKR per Litre) *</label>
-              <input type="number" step="0.01" id="fuel-price-input" value="${fuelConfig.current_price || 370}" required class="w-full px-3 py-2 text-xs bg-white dark:bg-slate-700 rounded-xl text-slate-800 dark:text-white border border-slate-300 dark:border-slate-600 font-bold text-purple-600" oninput="TransportModule.updateFuelRateCalc()" />
-            </div>
-
-            <div>
-              <label class="block text-xs font-bold text-slate-700 dark:text-slate-300 mb-1">Vehicle Fuel Efficiency (KM per Litre) *</label>
-              <input type="number" step="0.1" id="fuel-km-per-litre" value="${fuelConfig.km_per_litre || 10}" required class="w-full px-3 py-2 text-xs bg-white dark:bg-slate-700 rounded-xl text-slate-800 dark:text-white border border-slate-300 dark:border-slate-600 font-bold" oninput="TransportModule.updateFuelRateCalc()" />
-              <p class="text-[10px] text-slate-400 mt-0.5">Average kilometres travelled per 1 litre of fuel</p>
-            </div>
-
-            <div class="bg-purple-50 dark:bg-purple-950/40 p-3 rounded-xl border border-purple-200 dark:border-purple-800/40 flex justify-between items-center text-xs">
-              <span class="font-semibold text-purple-700 dark:text-purple-300">Calculated Fuel Rate per KM:</span>
-              <span id="fuel-rate-calc-preview" class="font-mono font-extrabold text-purple-600 dark:text-purple-400 text-sm">
-                LKR ${((fuelConfig.current_price || 370) / (fuelConfig.km_per_litre || 10)).toFixed(2)} / KM
-              </span>
-            </div>
-
-            <div>
-              <label class="block text-xs font-bold text-slate-700 dark:text-slate-300 mb-1">Effective Month</label>
-              <input type="month" id="fuel-effective-month" value="${currentMonth}" class="w-full px-3 py-2 text-xs bg-white dark:bg-slate-700 rounded-xl text-slate-800 dark:text-white border border-slate-300 dark:border-slate-600" />
-            </div>
-
-            <div class="flex items-center justify-end gap-2 pt-2 border-t border-slate-200 dark:border-slate-700">
-              <button type="button" onclick="document.getElementById('fuel-price-modal').remove()" class="px-4 py-2 text-xs font-semibold text-slate-600 hover:bg-slate-100 rounded-xl">Cancel</button>
-              <button type="submit" class="px-4 py-2 text-xs font-bold bg-purple-600 hover:bg-purple-700 text-white rounded-xl shadow-sm">Save Fuel Rate</button>
-            </div>
-          </form>
-        </div>
-      </div>
-    `;
-
-    document.body.insertAdjacentHTML('beforeend', html);
-  },
-
-  updateFuelRateCalc() {
-    const price = parseFloat(document.getElementById('fuel-price-input')?.value || 0);
-    const kmPerL = parseFloat(document.getElementById('fuel-km-per-litre')?.value || 1);
-    const rate = kmPerL > 0 ? (price / kmPerL) : 0;
-    const preview = document.getElementById('fuel-rate-calc-preview');
-    if (preview) preview.textContent = `LKR ${rate.toFixed(2)} / KM`;
-  },
-
-  async saveFuelPrice(e) {
-    e.preventDefault();
-    if (!isAdmin()) return showToast('Admin permission required');
-    const price = parseFloat(document.getElementById('fuel-price-input').value) || 0;
-    const kmPerL = parseFloat(document.getElementById('fuel-km-per-litre').value) || 1;
-    const month = document.getElementById('fuel-effective-month').value || new Date().toISOString().slice(0, 7);
-
-    const costPerKm = kmPerL > 0 ? (price / kmPerL) : price;
-
-    const config = await DB.getFuelPriceSettings();
-    config.current_price = price;
-    config.km_per_litre = kmPerL;
-    config.cost_per_km = costPerKm;
-
-    if (!config.monthly_prices) config.monthly_prices = {};
-    config.monthly_prices[month] = {
-      price: price,
-      km_per_litre: kmPerL,
-      cost_per_km: costPerKm,
-      updated_at: new Date().toISOString()
-    };
-
-    await DB.saveFuelPriceSettings(config);
-    await DB.logAction('Update Fuel Price', `Updated fuel price to LKR ${price}/L (LKR ${costPerKm.toFixed(2)}/KM) for ${month}`, config, 'Transport');
-
-    document.getElementById('fuel-price-modal').remove();
-    showToast('Fuel price updated successfully!');
-    await this.renderTripsList();
-  },
-
   async openMonthlyDistanceModal() {
-    const [trips, fuelConfig] = await Promise.all([
-      DB.getTrips(),
-      DB.getFuelPriceSettings()
-    ]);
-    
+    const trips = await DB.getTrips();
+
     // Group completed trips by YYYY-MM
     const monthMap = {};
     trips.forEach(t => {
@@ -1012,11 +1041,10 @@ const TransportModule = {
         if (dateStr && dateStr.length >= 7) {
           const mKey = dateStr.slice(0, 7);
           if (!monthMap[mKey]) {
-            monthMap[mKey] = { distance: 0, count: 0, trips: [] };
+            monthMap[mKey] = { distance: 0, count: 0 };
           }
           monthMap[mKey].distance += parseFloat(t.distance_km || 0);
           monthMap[mKey].count++;
-          monthMap[mKey].trips.push(t);
         }
       }
     });
@@ -1025,12 +1053,11 @@ const TransportModule = {
     const currentMonthKey = new Date().toISOString().slice(0, 7);
 
     let rowsHTML = '';
-    let totalFullCostLKR = 0;
 
     if (monthKeys.length === 0) {
       rowsHTML = `
         <tr>
-          <td colspan="5" class="px-4 py-8 text-center text-xs text-slate-400">
+          <td colspan="3" class="px-4 py-8 text-center text-xs text-slate-400">
             No completed trip distance history found.
           </td>
         </tr>
@@ -1042,13 +1069,6 @@ const TransportModule = {
         const dateObj = new Date(parseInt(yr), parseInt(mo) - 1, 1);
         const label = dateObj.toLocaleString('default', { month: 'long', year: 'numeric' });
         const isCurrent = mKey === currentMonthKey;
-        
-        const mPriceConfig = fuelConfig.monthly_prices && fuelConfig.monthly_prices[mKey] 
-          ? fuelConfig.monthly_prices[mKey] 
-          : fuelConfig;
-        const ratePerKm = parseFloat(mPriceConfig.cost_per_km || (mPriceConfig.current_price / (mPriceConfig.km_per_litre || 1)) || 37);
-        const mFuelCost = data.distance * ratePerKm;
-        totalFullCostLKR += mFuelCost;
 
         rowsHTML += `
           <tr class="hover:bg-slate-50 dark:hover:bg-slate-750/50 transition-colors border-b border-slate-200 dark:border-slate-700">
@@ -1061,12 +1081,6 @@ const TransportModule = {
             <td class="px-4 py-3 text-xs text-right font-bold text-purple-600 dark:text-purple-400 font-mono">
               ${data.distance.toFixed(1)} KM
             </td>
-            <td class="px-4 py-3 text-xs text-right font-medium text-slate-500 font-mono">
-              LKR ${ratePerKm.toFixed(2)}/KM
-            </td>
-            <td class="px-4 py-3 text-xs text-right font-extrabold text-emerald-600 dark:text-emerald-400 font-mono">
-              LKR ${mFuelCost.toLocaleString('en-US', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}
-            </td>
           </tr>
         `;
       });
@@ -1074,13 +1088,13 @@ const TransportModule = {
 
     const html = `
       <div id="monthly-distance-modal" class="fixed inset-0 z-50 flex items-center justify-center p-4 bg-slate-900/60 backdrop-blur-sm animate-fade-in">
-        <div class="bg-white dark:bg-slate-800 rounded-2xl max-w-xl w-full p-6 shadow-xl border border-slate-200 dark:border-slate-700 space-y-4">
+        <div class="bg-white dark:bg-slate-800 rounded-2xl max-w-lg w-full p-6 shadow-xl border border-slate-200 dark:border-slate-700 space-y-4">
           <div class="flex items-center justify-between border-b border-slate-200 dark:border-slate-700 pb-3">
             <div>
               <h3 class="text-lg font-bold text-slate-800 dark:text-white flex items-center gap-2">
-                <i class="fa-solid fa-clock-rotate-left text-purple-600"></i> Monthly Distance & Fuel Cost History
+                <i class="fa-solid fa-clock-rotate-left text-purple-600"></i> Monthly Distance History
               </h3>
-              <p class="text-xs text-slate-500">Calculated using monthly fuel price rates.</p>
+              <p class="text-xs text-slate-500">Completed trip distance grouped by month.</p>
             </div>
             <button onclick="document.getElementById('monthly-distance-modal').remove()" class="text-slate-400 hover:text-slate-600 text-lg">
               <i class="fa-solid fa-xmark"></i>
@@ -1094,21 +1108,11 @@ const TransportModule = {
                   <th class="px-4 py-3">Month</th>
                   <th class="px-4 py-3 text-center">Trips</th>
                   <th class="px-4 py-3 text-right">Distance</th>
-                  <th class="px-4 py-3 text-right">Fuel Rate</th>
-                  <th class="px-4 py-3 text-right">Monthly Cost</th>
                 </tr>
               </thead>
               <tbody>
                 ${rowsHTML}
               </tbody>
-              <tfoot>
-                <tr class="bg-purple-50/70 dark:bg-purple-950/40 border-t-2 border-purple-200 dark:border-purple-800/50 font-bold">
-                  <td colspan="4" class="px-4 py-3 text-xs text-purple-900 dark:text-purple-200 uppercase font-extrabold">Full Cost (Sum of Monthly Fuel Costs)</td>
-                  <td class="px-4 py-3 text-xs text-right text-purple-700 dark:text-purple-300 font-extrabold font-mono text-sm">
-                    LKR ${totalFullCostLKR.toLocaleString('en-US', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}
-                  </td>
-                </tr>
-              </tfoot>
             </table>
           </div>
 

@@ -984,7 +984,7 @@ const DB = {
   // ── Transport & Trips ─────────────────────
   async getTrips() {
     try {
-      const rows = await _q(_sb.from('trips').select('*').order('created_at', { ascending: false }));
+      const rows = await _q(_sb.from('trips').select('*').order('start_date', { ascending: false }).order('created_at', { ascending: false }));
       if (rows) return rows;
     } catch(e) {}
     try {
@@ -1002,9 +1002,12 @@ const DB = {
     const record = {
       id: 'trip_' + Date.now() + '_' + Math.floor(Math.random()*1000),
       trip_id: tripId,
+      driver_id: (data.driver_id !== undefined && data.driver_id !== null && data.driver_id !== '') ? Number(data.driver_id) : null,
       driver_name: data.driver_name || (window.currentUser?.display_name || 'Driver'),
+      vehicle_id: (data.vehicle_id !== undefined && data.vehicle_id !== null && data.vehicle_id !== '') ? String(data.vehicle_id) : null,
+      vehicle_no: data.vehicle_no || null,
       start_date: data.start_date || new Date().toISOString().split('T')[0],
-      start_time: data.start_time || new Date().toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' }),
+      start_time: data.start_time || new Date().toLocaleTimeString([], { hour: '2-digit', minute: '2-digit', hour12: true }),
       starting_km: parseFloat(data.starting_km) || 0,
       selected_customers: data.selected_customers || [], // [{ customer_id, hotel_name, visit_order }]
       notes: data.notes || '',
