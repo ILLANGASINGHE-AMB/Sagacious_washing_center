@@ -330,15 +330,16 @@ async function renderDashboard() {
   if (!contentEl) return;
 
   let orders = [], invoices = [], payments = [];
-  let expenseCategories = [], expenseTypes = [], expenseAmounts = [];
+  let expenseCategories = [], expenseTypes = [], expenseAmounts = [], expenseEntries = [];
   try {
-    [orders, invoices, payments, expenseCategories, expenseTypes, expenseAmounts] = await Promise.all([
+    [orders, invoices, payments, expenseCategories, expenseTypes, expenseAmounts, expenseEntries] = await Promise.all([
       DB.getOrders().catch(() => []),
       DB.getInvoices().catch(() => []),
       DB.getPayments().catch(() => []),
       DB.getExpenseCategories().catch(() => []),
       DB.getExpenseTypes().catch(() => []),
-      DB.getExpenseAmounts().catch(() => [])
+      DB.getExpenseAmounts().catch(() => []),
+      DB.getExpenseEntries().catch(() => [])
     ]);
   } catch (e) { console.warn('Dashboard data fetch:', e); }
 
@@ -398,7 +399,7 @@ async function renderDashboard() {
         <div class="chart-container"><canvas id="revenue-chart"></canvas></div>
       </div>
       <div class="card">
-        <div style="font-weight:700;margin-bottom:14px;font-family:'Playfair Display',serif;"><i class="fas fa-receipt" style="color:var(--primary);margin-right:8px;"></i>Expense Status Distribution</div>
+        <div style="font-weight:700;margin-bottom:14px;font-family:'Playfair Display',serif;"><i class="fas fa-receipt" style="color:var(--primary);margin-right:8px;"></i>Expense Distribution – ${new Date().toLocaleDateString('en-US', { month: 'long', year: 'numeric' })}</div>
         <div class="chart-container"><canvas id="status-chart"></canvas></div>
       </div>
     </div>
@@ -415,7 +416,7 @@ async function renderDashboard() {
       </div>
     </div>`;
 
-  try { await renderDashCharts(orders, payments, expenseCategories, expenseTypes, expenseAmounts); } catch(e) { console.warn('charts:', e); }
+  try { await renderDashCharts(orders, payments, expenseCategories, expenseTypes, expenseAmounts, expenseEntries); } catch(e) { console.warn('charts:', e); }
   try { await renderRecentOrders(orders); } catch(e) { console.warn('recent orders:', e); }
   try { await renderUnpaidInvoices(invoices, orders); } catch(e) { console.warn('unpaid invoices:', e); }
 }
@@ -471,7 +472,7 @@ const EXPENSE_CAT_COLORS = [
   '#84cc16', // lime
 ];
 
-async function renderDashCharts(orders, payments, expenseCategories = [], expenseTypes = [], expenseAmounts = []) {
+async function renderDashCharts(orders, payments, expenseCategories = [], expenseTypes = [], expenseAmounts = [], expenseEntries = []) {
   const days = Array.from({ length: 14 }, (_, i) => {
     const d = new Date(); d.setDate(d.getDate() - (13 - i));
     return d.toISOString().split('T')[0];
@@ -532,13 +533,21 @@ async function renderDashCharts(orders, payments, expenseCategories = [], expens
     });
   }
 
-  // ── Expense Status Distribution (doughnut) — total LKR spent per top-level category ──
+  // ── Expense Distribution (doughnut) — current month only, per top-level category ──
+  const curMonth = new Date().toISOString().slice(0, 7); // "YYYY-MM"
+  // Set of entry IDs that fall in the current month
+  const curMonthEntryIds = new Set(
+    expenseEntries
+      .filter(e => (e.entry_date || '').startsWith(curMonth))
+      .map(e => e.id)
+  );
   // Build a lookup: expense_type_id → category_id
   const typeToCat = {};
   expenseTypes.forEach(t => { typeToCat[t.expense_type_id] = t.category_id; });
-  // Sum amounts per category
+  // Sum amounts for current-month entries only
   const catTotals = {};
   expenseAmounts.forEach(a => {
+    if (!curMonthEntryIds.has(a.entry_id)) return;
     const catId = typeToCat[a.expense_type_id];
     if (catId) catTotals[catId] = (catTotals[catId] || 0) + (parseFloat(a.amount) || 0);
   });
