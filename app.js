@@ -704,20 +704,24 @@ async function openCustomerDetail(customerId, tab = 'orders') {
   // Invoiced orders
   const invoicedOrderIds = new Set(customerInvoices.map(inv => String(inv.order_id)));
 
-  // Compute from invoices
+  // Compute from invoices — also track which orders are fully paid
+  const paidOrderIds = new Set();
   customerInvoices.forEach(inv => {
     if (typeof Financials !== 'undefined' && Financials.computeInvoiceFinancials) {
       const fin = Financials.computeInvoiceFinancials(inv, [], payMap[inv.id] || []);
       totalBilled += fin.netPayableTotal;
       totalPaid += fin.totalPaid;
       totalPending += Math.max(0, fin.balance);
+      if (fin.isPaid) paidOrderIds.add(String(inv.order_id));
     } else {
       const invTotal = parseFloat(inv.total_amount) || 0;
       const invPaid = (payMap[inv.id] || []).reduce((sum, p) => sum + (parseFloat(p.amount) || 0), 0);
       const deduction = parseFloat(inv.deduction_amount) || 0;
-      totalBilled += Math.max(0, invTotal - deduction);
+      const net = Math.max(0, invTotal - deduction);
+      totalBilled += net;
       totalPaid += invPaid;
-      totalPending += Math.max(0, invTotal - deduction - invPaid);
+      totalPending += Math.max(0, net - invPaid);
+      if (invPaid >= net && net > 0) paidOrderIds.add(String(inv.order_id));
     }
   });
 
@@ -731,8 +735,12 @@ async function openCustomerDetail(customerId, tab = 'orders') {
       totalBilled += oTotal;
       totalPaid += Math.min(effectivePaid, oTotal);
       totalPending += Math.max(0, oTotal - effectivePaid);
+      if (effectivePaid >= oTotal && oTotal > 0) paidOrderIds.add(String(o.id));
     }
   });
+
+  const paidOrdersCount   = paidOrderIds.size;
+  const unpaidOrdersCount = (orders || []).length - paidOrdersCount;
 
   document.getElementById('page-title').textContent = c.hotel_name || 'Customer Details';
 
@@ -795,6 +803,20 @@ async function openCustomerDetail(customerId, tab = 'orders') {
       </div>
     </div>
 
+    <!-- Paid / Unpaid filter badges -->
+    <div style="display:flex;gap:10px;margin-bottom:18px;flex-wrap:wrap;align-items:center;">
+      <span style="font-size:0.82em;color:var(--text-muted);font-weight:600;">Filter orders:</span>
+      <button id="cust-filter-all" onclick="filterCustOrders('all')" style="display:inline-flex;align-items:center;gap:6px;padding:5px 14px;border-radius:20px;font-size:0.82em;font-weight:700;border:2px solid var(--primary);background:var(--primary);color:#fff;cursor:pointer;transition:all 0.18s;">
+        <i class="fas fa-list"></i> All (${(orders || []).length})
+      </button>
+      <button id="cust-filter-paid" onclick="filterCustOrders('paid')" style="display:inline-flex;align-items:center;gap:6px;padding:5px 14px;border-radius:20px;font-size:0.82em;font-weight:700;border:2px solid #16a34a;background:#f0fdf4;color:#16a34a;cursor:pointer;transition:all 0.18s;">
+        <i class="fas fa-circle-check"></i> Paid (${paidOrdersCount})
+      </button>
+      <button id="cust-filter-unpaid" onclick="filterCustOrders('unpaid')" style="display:inline-flex;align-items:center;gap:6px;padding:5px 14px;border-radius:20px;font-size:0.82em;font-weight:700;border:2px solid #dc2626;background:#fef2f2;color:#dc2626;cursor:pointer;transition:all 0.18s;">
+        <i class="fas fa-clock"></i> Unpaid (${unpaidOrdersCount})
+      </button>
+    </div>
+
     <!-- Customer Details Card -->
     <div class="card" style="margin-bottom:20px;border-left:4px solid var(--primary);">
       <div style="display:flex;justify-content:space-between;align-items:flex-start;flex-wrap:wrap;gap:14px;margin-bottom:16px;">
@@ -852,6 +874,11 @@ async function openCustomerDetail(customerId, tab = 'orders') {
     </div>
   `;
 
+  // Stamp each order with its pay status so the table rows know how to filter
+  (orders || []).forEach(o => {
+    o._payStatus = paidOrderIds.has(String(o.id)) ? 'paid' : 'unpaid';
+  });
+
   await renderCustomerDetailTabBody(c, orders, currentCustDetailTab);
 }
 
@@ -890,6 +917,50 @@ async function refreshCustomerDetailForOrder(orderId) {
   if (order) refreshCustomerDetailIfOpen(order.customer_id);
 }
 
+// Filter the order history table in the customer profile page.
+// filter: 'all' | 'paid' | 'unpaid'
+function filterCustOrders(filter) {
+  const tbody = document.getElementById('cust-orders-tbody');
+  if (!tbody) return;
+
+  // Update button active styles
+  const styles = {
+    all:    { border: 'var(--primary)', bg: 'var(--primary)',   color: '#fff' },
+    paid:   { border: '#16a34a',        bg: '#f0fdf4',          color: '#16a34a' },
+    unpaid: { border: '#dc2626',        bg: '#fef2f2',          color: '#dc2626' }
+  };
+  ['all', 'paid', 'unpaid'].forEach(f => {
+    const btn = document.getElementById('cust-filter-' + f);
+    if (!btn) return;
+    const s = styles[f];
+    if (f === filter) {
+      btn.style.background    = s.border;  // active: filled
+      btn.style.color         = f === 'all' ? '#fff' : '#fff';
+      btn.style.borderColor   = s.border;
+      btn.style.boxShadow     = '0 2px 8px rgba(0,0,0,0.15)';
+    } else {
+      btn.style.background    = s.bg;
+      btn.style.color         = s.color;
+      btn.style.borderColor   = s.border;
+      btn.style.boxShadow     = '';
+    }
+  });
+
+  // Show / hide rows
+  let visibleCount = 0;
+  Array.from(tbody.querySelectorAll('tr[data-pay-status]')).forEach(row => {
+    const rowStatus = row.getAttribute('data-pay-status');
+    const visible   = filter === 'all' || rowStatus === filter;
+    row.style.display = visible ? '' : 'none';
+    if (visible) visibleCount++;
+  });
+
+  // Update the count in the heading
+  const countEl = document.getElementById('cust-order-count');
+  if (countEl) countEl.textContent = visibleCount;
+}
+
+
 async function renderCustomerDetailTabBody(c, orders, tab) {
   const container = document.getElementById('cust-detail-tab-body');
   if (!container) return;
@@ -903,7 +974,7 @@ async function renderCustomerDetailTabBody(c, orders, tab) {
     const sortedOrders = [...(orders || [])].sort((a,b) => new Date(b.created_at || b.pickup_date || 0) - new Date(a.created_at || a.pickup_date || 0));
     container.innerHTML = `
       <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:14px;">
-        <div style="font-weight:700;font-family:'Playfair Display',serif;font-size:1.15em;">Order History (${sortedOrders.length})</div>
+        <div style="font-weight:700;font-family:'Playfair Display',serif;font-size:1.15em;">Order History (<span id="cust-order-count">${sortedOrders.length}</span>)</div>
       </div>
       <div class="table-wrap">
         <table>
@@ -916,9 +987,9 @@ async function renderCustomerDetailTabBody(c, orders, tab) {
               <th style="text-align:center;width:120px;">Action</th>
             </tr>
           </thead>
-          <tbody>
+          <tbody id="cust-orders-tbody">
             ${sortedOrders.map(o => `
-              <tr>
+              <tr data-pay-status="${o._payStatus || 'unpaid'}" data-order-id="${o.id}">
                 <td><strong>${escapeHtml(o.batch_id || '#' + o.id)}</strong></td>
                 <td>${statusBadge(o.status)}</td>
                 <td style="font-weight:700;">${formatCurrency(o.total_amount)}</td>
