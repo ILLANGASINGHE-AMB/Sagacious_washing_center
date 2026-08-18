@@ -1092,6 +1092,253 @@ async function printInvoice(id) {
   }
 }
 
+// ─────────────────────────────────────────────
+// BILL PREVIEW — shows invoice as rendered bill inside a modal (no print dialog)
+// Used by "View" button in Orders Tab and Customer Profile
+// ─────────────────────────────────────────────
+async function previewInvoiceByOrder(orderId) {
+  showProcessingOverlay('Loading Bill', 'Preparing bill preview...');
+  try {
+    const order = await DB.getOrder(orderId);
+    if (!order) return toast('Order not found', 'error');
+
+    let inv = await DB.getInvoiceByOrder(orderId);
+    if (!inv) {
+      const orderItems = await DB.getOrderItems(orderId);
+      const itemsSubtotal = orderItems.reduce((s, i) => s + (i.subtotal || 0), 0);
+      inv = {
+        order_id: order.id,
+        invoice_number: order.batch_id,
+        invoice_type: 'Standard',
+        advance_payment: order.advance_payment || 0,
+        discount_amount: order.discount_amount || 0,
+        discount_rate: order.discount_rate || 0,
+        delivery_charge: order.delivery_charge || 0,
+        extra_payment: order.extra_payment || 0,
+        subtotal_before_discount: itemsSubtotal,
+        total_amount: order.total_amount,
+        deduction_amount: 0,
+        batch_order_ids: null,
+        payment_date: null,
+        issue_date: (order.pickup_date || order.created_at || '').slice(0, 10),
+        delivery_date: order.delivery_date || '',
+        paid_status: 'Unpaid'
+      };
+    }
+
+    // Build the same bill HTML used for printing
+    const customerRaw = order.customer_id ? await DB.getCustomer(order.customer_id) : null;
+    const customer = customerRaw || { hotel_name: getOrderCustomerName(order) };
+    const payments = (inv.id && typeof inv.id !== 'undefined') ? await DB.getPaymentsByInvoice(inv.id) : [];
+    const items = order ? await DB.getOrderItems(order.id) : [];
+
+    const settings = {
+      company_name: await DB.getSetting('company_name') || 'Sagacious Washing Center',
+      address:      await DB.getSetting('address')      || '',
+      phone:        await DB.getSetting('phone')        || '',
+      email:        await DB.getSetting('email')        || '',
+      footer_message: await DB.getSetting('footer_message') || ''
+    };
+    const logoData = await DB.getSetting('logo_data');
+    const isCredit = inv.invoice_type === 'Credit';
+
+    const fin = Financials.computeInvoiceFinancials(inv, items, payments);
+    const discount       = fin.discountAmount;
+    const deliveryCharge = fin.deliveryCharge;
+    const extraPayment   = fin.extraPayment;
+    const itemsSubtotal  = fin.itemsSubtotal;
+    const grandTotal     = fin.grossInvoiceTotal;
+    const deduction      = fin.deductionAmount;
+    const finalTotal     = fin.netPayableTotal;
+    const balance        = fin.balance;
+
+    const logoHTML = logoData
+      ? `<img src="${logoData}" style="height:64px;width:64px;object-fit:cover;border-radius:12px;"/>`
+      : `<div style="height:64px;width:64px;border-radius:12px;background:linear-gradient(135deg,#00b4d8,#1a4d8f);display:flex;align-items:center;justify-content:center;color:#fff;font-size:2em;">SW</div>`;
+
+    const _svcColorPrint = { 'Dry Clean': '#7c3aed', 'Wash & Press': '#0369a1', 'Wash & Dry': '#16a34a' };
+
+    const itemsHTML = items.map((i, idx) => `
+      <tr style="${idx % 2 === 1 ? 'background:#fafafa;' : ''}">
+        <td style="padding:10px 12px;border-bottom:1px solid #f1f5f9;">${escapeHtml(i.item_name)}</td>
+        <td style="padding:10px 12px;border-bottom:1px solid #f1f5f9;text-align:center;">${i.quantity}</td>
+        <td style="padding:10px 12px;border-bottom:1px solid #f1f5f9;">
+          <span style="font-size:0.8em;font-weight:600;padding:3px 8px;border-radius:5px;background:${(_svcColorPrint[i.service_type] || '#64748b')}18;color:${_svcColorPrint[i.service_type] || '#64748b'};">${i.service_type || '—'}</span>
+        </td>
+        <td style="padding:10px 12px;border-bottom:1px solid #f1f5f9;text-align:right;">${formatCurrency(i.price)}</td>
+        <td style="padding:10px 12px;border-bottom:1px solid #f1f5f9;text-align:right;font-weight:700;">${formatCurrency(i.subtotal)}</td>
+      </tr>`).join('');
+
+    const summaryHTML = `
+      <div style="display:flex;justify-content:space-between;padding:8px 12px;border-bottom:1px solid #e5e7eb;">
+        <span style="color:#64748b;">Items Subtotal</span><strong>${formatCurrency(itemsSubtotal)}</strong>
+      </div>
+      ${discount > 0 ? `<div style="display:flex;justify-content:space-between;padding:8px 12px;border-bottom:1px solid #e5e7eb;color:#16a34a;">
+        <span>Discount (${inv.discount_rate || 0}%)</span><span>- ${formatCurrency(discount)}</span>
+      </div>` : ''}
+      ${deliveryCharge > 0 ? `<div style="display:flex;justify-content:space-between;padding:8px 12px;border-bottom:1px solid #e5e7eb;">
+        <span style="color:#64748b;">Delivery Charge</span><span>+ ${formatCurrency(deliveryCharge)}</span>
+      </div>` : ''}
+      ${extraPayment > 0 ? `<div style="display:flex;justify-content:space-between;padding:8px 12px;border-bottom:1px solid #e5e7eb;">
+        <span style="color:#64748b;">Extra Payment</span><span>+ ${formatCurrency(extraPayment)}</span>
+      </div>` : ''}
+      <div style="display:flex;justify-content:space-between;padding:8px 12px;border-bottom:${deduction > 0 ? '1px' : '2px'} solid #e5e7eb;font-weight:700;">
+        <span>Grand Total</span><span>${formatCurrency(grandTotal)}</span>
+      </div>
+      ${deduction > 0 ? `
+      <div style="display:flex;justify-content:space-between;padding:8px 12px;border-bottom:2px solid #ef4444;font-weight:700;color:#ef4444;background:#fef2f2;">
+        <span>Deduction</span><span>- ${formatCurrency(deduction)}</span>
+      </div>
+      <div style="display:flex;justify-content:space-between;padding:8px 12px;border-bottom:2px solid #e5e7eb;font-weight:700;color:#1e40af;">
+        <span>Final Total Bill</span><span>${formatCurrency(finalTotal)}</span>
+      </div>` : ''}
+      ${inv.advance_payment > 0 ? `<div style="display:flex;justify-content:space-between;padding:8px 12px;border-bottom:1px solid #e5e7eb;color:#16a34a;">
+        <span>Advance Payment</span><span>- ${formatCurrency(inv.advance_payment)}</span>
+      </div>` : ''}
+      ${payments.map(p => `
+        <div style="display:flex;justify-content:space-between;padding:8px 12px;border-bottom:1px solid #e5e7eb;color:#16a34a;">
+          <span>Payment (${p.method})</span><span>- ${formatCurrency(p.amount)}</span>
+        </div>`).join('')}
+      <div style="display:flex;justify-content:space-between;padding:12px;background:#1a4d8f;color:#fff;border-radius:0 0 10px 10px;font-weight:700;font-size:1.05em;">
+        <span>Balance Due</span><span>${formatCurrency(Math.max(0, balance))}</span>
+      </div>`;
+
+    const paidStamp = balance <= 0 ? `
+      <div style="position:absolute;left:0;bottom:20px;pointer-events:none;z-index:10;">
+        <div style="color:#16a34a;font-family:'Playfair Display',serif;font-size:72px;font-weight:900;letter-spacing:8px;text-transform:uppercase;opacity:0.30;transform:rotate(-12deg);line-height:1;user-select:none;">PAID</div>
+      </div>` : '';
+
+    const orderInfoHTML = `
+      <div><span style="color:#64748b;">Batch:</span> <strong>${order?.batch_id || '—'}</strong></div>
+      <div style="margin-top:4px;"><span style="color:#64748b;">Pickup:</span> ${formatDate(order?.pickup_date)}</div>`;
+
+    // Full bill HTML identical to printInvoice (but WITHOUT the window.print script)
+    const billHTML = `<!DOCTYPE html><html><head><meta charset="UTF-8"/>
+      <link href="https://fonts.googleapis.com/css2?family=DM+Sans:wght@400;500;600;700&family=Playfair+Display:wght@600;700;800&display=swap" rel="stylesheet"/>
+      <style>
+        *{box-sizing:border-box;margin:0;padding:0;}
+        body{font-family:'DM Sans',sans-serif;background:#fff;color:#1e293b;line-height:1.5;}
+      </style>
+    </head><body>
+      <div style="position:relative;font-family:'DM Sans',sans-serif;background:#fff;color:#1e293b;max-width:780px;margin:0 auto;padding:40px 44px;">
+        <!-- Header -->
+        <div style="display:flex;justify-content:space-between;align-items:flex-start;margin-bottom:30px;padding-bottom:20px;border-bottom:2px solid #e2e8f0;">
+          <div style="display:flex;align-items:center;gap:14px;">
+            ${logoHTML}
+            <div>
+              <div style="font-family:'Playfair Display',serif;font-size:1.5em;font-weight:700;color:#1a4d8f;">${escapeHtml(settings.company_name)}</div>
+              ${settings.address ? `<div style="font-size:0.85em;color:#64748b;margin-top:4px;">${escapeHtml(settings.address)}</div>` : ''}
+              <div style="font-size:0.85em;color:#64748b;">${[settings.phone, settings.email].filter(Boolean).map(escapeHtml).join(' | ')}</div>
+            </div>
+          </div>
+          <div style="text-align:right;">
+            <div style="font-size:2em;font-weight:700;color:${isCredit ? '#7c3aed' : '#1a4d8f'};font-family:'Playfair Display',serif;">${isCredit ? 'CREDIT BILL' : 'INVOICE'}</div>
+            <div style="font-size:0.95em;color:#374151;margin-top:6px;"><strong>${inv.invoice_number}</strong></div>
+            <div style="font-size:0.85em;color:#64748b;margin-top:4px;">Issue Date: ${formatDate(inv.issue_date)}</div>
+            ${inv.delivery_date ? `<div style="font-size:0.85em;color:#64748b;">Delivery: ${formatDate(inv.delivery_date)}</div>` : ''}
+          </div>
+        </div>
+
+        <div style="font-size:12px;">
+          <!-- Bill To + Order Info -->
+          <div style="display:grid;grid-template-columns:1fr 1fr;gap:20px;margin-bottom:24px;">
+            <div style="background:#f8fafc;padding:16px;border-radius:10px;">
+              <div style="font-size:0.75em;font-weight:700;text-transform:uppercase;letter-spacing:0.5px;color:#64748b;margin-bottom:8px;">Bill To</div>
+              <div style="font-weight:700;font-size:1.05em;">${escapeHtml(customer?.hotel_name || getOrderCustomerName(order) || '—')}</div>
+              <div style="color:#64748b;font-size:0.9em;margin-top:4px;">${escapeHtml(customer?.address || '')}</div>
+              <div style="color:#64748b;font-size:0.9em;">${escapeHtml(customer?.contact_person || '')}</div>
+              <div style="color:#64748b;font-size:0.9em;">${escapeHtml(customer?.phone || '')}</div>
+            </div>
+            <div style="background:#f8fafc;padding:16px;border-radius:10px;">
+              <div style="font-size:0.75em;font-weight:700;text-transform:uppercase;letter-spacing:0.5px;color:#64748b;margin-bottom:8px;">Order Info</div>
+              ${orderInfoHTML}
+            </div>
+          </div>
+
+          <!-- Items Table -->
+          <table style="width:100%;border-collapse:collapse;margin-bottom:24px;">
+            <thead>
+              <tr style="background:#1a4d8f;color:#fff;">
+                <th style="padding:10px 12px;text-align:left;font-size:0.82em;text-transform:uppercase;">Item</th>
+                <th style="padding:10px 12px;text-align:center;font-size:0.82em;text-transform:uppercase;">Qty</th>
+                <th style="padding:10px 12px;text-align:left;font-size:0.82em;text-transform:uppercase;">Service</th>
+                <th style="padding:10px 12px;text-align:right;font-size:0.82em;text-transform:uppercase;">Unit Price</th>
+                <th style="padding:10px 12px;text-align:right;font-size:0.82em;text-transform:uppercase;">Subtotal</th>
+              </tr>
+            </thead>
+            <tbody>${itemsHTML || `<tr><td colspan="5" style="padding:20px;text-align:center;color:#64748b;">No items on this order</td></tr>`}</tbody>
+          </table>
+
+          <!-- Summary -->
+          <div style="display:flex;justify-content:flex-end;margin-bottom:24px;position:relative;">
+            ${paidStamp}
+            <div style="min-width:320px;border:1px solid #e2e8f0;border-radius:10px;overflow:hidden;">
+              ${summaryHTML}
+            </div>
+          </div>
+
+          ${settings.footer_message ? `<div style="text-align:center;padding:16px;background:#f8fafc;border-radius:10px;font-size:0.9em;color:#64748b;font-style:italic;">${escapeHtml(settings.footer_message)}</div>` : ''}
+        </div>
+      </div>
+    </body></html>`;
+
+    hideProcessingOverlay();
+
+    // Render in full-height modal via iframe
+    const modalId = 'bill-preview-modal';
+    const existing = document.getElementById(modalId + '-overlay');
+    if (existing) existing.remove();
+
+    const overlay = document.createElement('div');
+    overlay.id = modalId + '-overlay';
+    overlay.style.cssText = 'position:fixed;inset:0;background:rgba(0,0,0,0.65);z-index:500;display:flex;flex-direction:column;align-items:center;justify-content:flex-start;padding:20px;backdrop-filter:blur(4px);';
+
+    overlay.innerHTML = `
+      <div style="background:var(--card-bg);border-radius:18px;width:100%;max-width:900px;height:90vh;display:flex;flex-direction:column;box-shadow:0 25px 80px rgba(0,0,0,0.35);overflow:hidden;">
+        <!-- Modal header toolbar -->
+        <div style="display:flex;align-items:center;justify-content:space-between;padding:14px 20px;border-bottom:1px solid var(--border);flex-shrink:0;background:var(--card-bg);">
+          <div style="display:flex;align-items:center;gap:10px;">
+            <div style="width:34px;height:34px;border-radius:9px;background:rgba(26,77,143,0.1);color:var(--primary);display:flex;align-items:center;justify-content:center;">
+              <i class="fas fa-file-invoice"></i>
+            </div>
+            <div>
+              <div style="font-family:'Playfair Display',serif;font-weight:700;font-size:1.05em;color:var(--text);">Bill Preview</div>
+              <div style="font-size:0.78em;color:var(--text-muted);">Order ${order.batch_id}</div>
+            </div>
+          </div>
+          <div style="display:flex;gap:8px;align-items:center;">
+            ${window.canEditOrders && canEditOrders() ? `<button onclick="document.getElementById('${modalId}-overlay').remove();showEditOrderModal(${order.id})" class="btn btn-secondary btn-sm"><i class="fas fa-edit"></i> Edit Order</button>` : ''}
+            <button onclick="document.getElementById('${modalId}-overlay').remove();printInvoiceByOrder(${orderId})" class="btn btn-primary btn-sm"><i class="fas fa-print"></i> Print Bill</button>
+            <button onclick="document.getElementById('${modalId}-overlay').remove()" style="background:var(--bg);border:1px solid var(--border);border-radius:8px;padding:7px 12px;cursor:pointer;color:var(--text-muted);font-size:0.9em;display:inline-flex;align-items:center;gap:5px;"><i class="fas fa-times"></i></button>
+          </div>
+        </div>
+        <!-- Scrollable Bill Preview -->
+        <div style="flex:1;overflow:hidden;background:#e8ecf0;padding:16px;">
+          <iframe id="${modalId}-frame" style="width:100%;height:100%;border:none;border-radius:10px;background:#fff;box-shadow:0 4px 20px rgba(0,0,0,0.12);" scrolling="yes"></iframe>
+        </div>
+      </div>`;
+
+    // Close on overlay background click
+    overlay.addEventListener('click', e => { if (e.target === overlay) overlay.remove(); });
+    // Close on Escape
+    const escHandler = e => { if (e.key === 'Escape') { overlay.remove(); document.removeEventListener('keydown', escHandler); } };
+    document.addEventListener('keydown', escHandler);
+
+    document.body.appendChild(overlay);
+
+    // Write bill HTML into the iframe
+    const frame = document.getElementById(modalId + '-frame');
+    frame.contentDocument.open();
+    frame.contentDocument.write(billHTML);
+    frame.contentDocument.close();
+
+  } catch (err) {
+    hideProcessingOverlay();
+    console.error('previewInvoiceByOrder error:', err);
+    toast('Could not load bill preview', 'error');
+  }
+}
+
 // ── STANDARD INVOICE with discount + delivery ──
 async function generateInvoiceForOrder(orderId) {
   showProcessingOverlay('Generating Invoice', 'Creating invoice for order...');

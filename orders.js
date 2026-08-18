@@ -1317,43 +1317,8 @@ async function saveEditOrder(orderId,wasPickupOnly=false){
 // VIEW ORDER DETAILS
 // ─────────────────────────────────────────────
 async function viewOrderDetails(id){
-  const order=await DB.getOrder(id); if(!order)return;
-  const [items,custRaw,drv]=await Promise.all([DB.getOrderItems(id),order.customer_id?DB.getCustomer(order.customer_id):Promise.resolve(null),order.driver_id?DB.getDriver(order.driver_id):Promise.resolve(null)]);
-  const cust = custRaw || { hotel_name: getOrderCustomerName(order) };
-  const svcBadgeClass = {
-    'Dry Clean':    'badge-purple',
-    'Wash & Press': 'badge-cyan',
-    'Wash & Dry':   'badge-green'
-  };
-  const itemsHTML=items.map(i=>`<tr>
-    <td>${escapeHtml(i.item_name)}</td><td>${i.quantity}</td>
-    <td><span class="badge ${svcBadgeClass[i.service_type]||'badge-gray'}">${i.service_type||'—'}</span></td>
-    <td>${formatCurrency(i.price)}</td><td><strong>${formatCurrency(i.subtotal)}</strong></td>
-  </tr>`).join('');
-  const sigHTML=order.signature?`<div style="margin-top:12px;"><div class="form-label" style="margin-bottom:6px;">Customer Signature</div><img src="${order.signature}" style="border:1px solid var(--border);border-radius:8px;max-width:300px;"/></div>`:'';
-  createModal('view-order-modal',`Order: ${order.batch_id}`,`
-    <div style="display:grid;grid-template-columns:1fr 1fr;gap:16px;margin-bottom:16px;">
-      <div><div class="form-label">Customer</div><div style="font-weight:600;">${escapeHtml(cust?.hotel_name || getOrderCustomerName(order) || '—')}</div></div>
-      <div><div class="form-label">Driver</div><div>${escapeHtml(drv?.name||'Unassigned')}</div></div>
-      <div><div class="form-label">Status</div>${statusBadge(order.status)}</div>
-      <div><div class="form-label">Batch ID</div><div style="font-family:monospace;font-weight:700;">${order.batch_id}</div></div>
-      <div><div class="form-label">Pickup Date</div><div>${formatDate(order.pickup_date)}</div></div>
-      <div><div class="form-label">Delivery Date</div><div>${formatDate(order.delivery_date)}</div></div>
-      <div><div class="form-label">Total Amount</div><div style="font-weight:700;font-size:1.1em;">${formatCurrency(order.total_amount)}</div></div>
-      <div><div class="form-label">Advance Paid</div><div>${formatCurrency(order.advance_payment)}</div></div>
-    </div>
-    <div style="font-family:'Playfair Display',serif;font-weight:700;margin-bottom:10px;">Items</div>
-    <div class="table-wrap"><table>
-      <thead><tr><th>Item</th><th>Qty</th><th>Service</th><th>Price</th><th>Subtotal</th></tr></thead>
-      <tbody>${itemsHTML||`<tr><td colspan="5" style="text-align:center;color:var(--text-muted);padding:16px;">No items yet</td></tr>`}</tbody>
-      <tfoot><tr><td colspan="4" style="text-align:right;font-weight:700;padding:12px 16px;">Total</td><td style="padding:12px 16px;font-weight:700;">${formatCurrency(order.total_amount)}</td></tr></tfoot>
-    </table></div>
-    ${sigHTML}
-    <div style="display:flex;gap:10px;justify-content:flex-end;margin-top:18px;flex-wrap:wrap;">
-      <button class="btn btn-secondary" onclick="showSignatureCapture(${order.id})"><i class="fas fa-signature"></i> Signature</button>
-      <button class="btn btn-primary" onclick="hideModal('view-order-modal');printInvoiceByOrder(${order.id})"><i class="fas fa-print"></i> Print Bill</button>
-    </div>`,'modal-lg');
-  showModal('view-order-modal');
+  // Show the actual bill preview (same as the printed invoice) instead of a generic info modal
+  previewInvoiceByOrder(id);
 }
 
 // ─────────────────────────────────────────────
