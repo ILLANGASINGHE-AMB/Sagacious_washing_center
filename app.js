@@ -221,14 +221,14 @@ async function applySettings() {
   const showAiBtn   = await DB.getSetting('show_saga_ai_button');
   showUndoButtonSetting = showUndo !== 'false' ? 'true' : 'false';
 
-  // Toggle SAGA AI floating drawer button
+  // Toggle SAGA AI topbar button
   const fab = document.getElementById('gemini-fab');
   const drawer = document.getElementById('gemini-drawer');
   if (showAiBtn === 'false') {
     if (fab) fab.style.display = 'none';
     if (drawer) drawer.style.display = 'none';
   } else {
-    if (fab) fab.style.display = 'flex';
+    if (fab) fab.style.display = 'inline-flex';
   }
 
   if (darkMode === 'true') {

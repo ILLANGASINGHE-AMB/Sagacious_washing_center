@@ -553,12 +553,12 @@ async function toggleAIFabFromSettings(checked) {
   document.querySelectorAll('.ai-fab-toggle-label').forEach(el => el.textContent = checked ? 'Visible' : 'Hidden');
   document.querySelectorAll('.ai-fab-toggle').forEach(el => el.checked = checked);
   const fab = document.getElementById('gemini-fab');
-  if (fab) fab.style.display = checked ? 'flex' : 'none';
+  if (fab) fab.style.display = checked ? 'inline-flex' : 'none';
   if (!checked) {
     const drawer = document.getElementById('gemini-drawer');
     if (drawer && drawer.classList.contains('open')) {
       drawer.classList.remove('open');
     }
   }
-  toast(`SAGA AI floating button ${checked ? 'shown' : 'hidden'}`);
+  toast(`SAGA AI button ${checked ? 'shown' : 'hidden'}`);
 }

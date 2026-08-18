@@ -521,62 +521,44 @@
     /* Keyboard shortcut hints */
     kbd { font-family: monospace; }
 
-    /* Gemini AI Styling */
-    .gemini-fab {
-      position: fixed;
-      bottom: 24px;
-      right: 24px;
-      width: 56px;
-      height: 56px;
-      border-radius: 50%;
+    /* SAGA AI Topbar Button */
+    .btn-saga-ai {
+      display: inline-flex;
+      align-items: center;
+      gap: 7px;
+      padding: 7px 14px;
+      border-radius: 9px;
       background: linear-gradient(135deg, #8b5cf6, #00b4d8);
       color: #fff;
-      display: flex;
-      align-items: center;
-      justify-content: center;
-      font-size: 22px;
-      box-shadow: 0 4px 16px rgba(139, 92, 246, 0.4);
+      font-size: 0.82em;
+      font-weight: 700;
+      letter-spacing: 0.3px;
+      border: 1px solid rgba(255, 255, 255, 0.25);
       cursor: pointer;
-      z-index: 999;
-      transition: all 0.3s cubic-bezier(0.175, 0.885, 0.32, 1.275);
-      border: 2px solid rgba(255, 255, 255, 0.2);
+      box-shadow: 0 2px 10px rgba(139, 92, 246, 0.35);
+      transition: all 0.2s ease;
+      white-space: nowrap;
     }
-    .gemini-fab:hover {
-      transform: scale(1.1) rotate(15deg);
-      box-shadow: 0 6px 20px rgba(139, 92, 246, 0.6);
+    .btn-saga-ai:hover {
+      transform: translateY(-1px);
+      box-shadow: 0 4px 14px rgba(139, 92, 246, 0.55);
+      filter: brightness(1.08);
     }
-    .gemini-fab.active {
-      transform: scale(0.9);
-      background: #ef4444;
-      box-shadow: 0 4px 12px rgba(239, 68, 68, 0.4);
+    .btn-saga-ai.active {
+      background: linear-gradient(135deg, #ef4444, #f97316);
+      box-shadow: 0 2px 8px rgba(239, 68, 68, 0.4);
     }
-    .gemini-fab.thinking {
-      animation: fabPulse 1s infinite alternate;
-      border: 3px solid #f59e0b;
+    .btn-saga-ai.thinking {
+      animation: aiPulse 1s infinite alternate;
+      border-color: #f59e0b;
     }
-    @keyframes fabPulse {
+    @keyframes aiPulse {
       0% { transform: scale(1); box-shadow: 0 0 0 0 rgba(245, 158, 11, 0.7); }
-      100% { transform: scale(1.1); box-shadow: 0 0 0 10px rgba(245, 158, 11, 0); }
+      100% { transform: scale(1.05); box-shadow: 0 0 0 8px rgba(245, 158, 11, 0); }
     }
     .input-error {
       border-color: var(--danger) !important;
       box-shadow: 0 0 0 3px rgba(239,68,68,0.25) !important;
-    }
-    
-    .gemini-fab::after {
-      content: '';
-      position: absolute;
-      width: 100%;
-      height: 100%;
-      border-radius: 50%;
-      background: inherit;
-      opacity: 0.4;
-      z-index: -1;
-      animation: gemini-pulse 2s infinite;
-    }
-    @keyframes gemini-pulse {
-      0% { transform: scale(1); opacity: 0.4; }
-      100% { transform: scale(1.4); opacity: 0; }
     }
 
     .gemini-drawer {
@@ -879,6 +861,10 @@
         <div id="global-search-bar" style="position:relative;flex:1;max-width:380px;margin:0 16px;" class="no-print"></div>
         <div class="topbar-right">
           <span id="topbar-date" style="font-size:0.82em;color:var(--text-muted);"></span>
+          <button id="gemini-fab" onclick="toggleGeminiDrawer()" class="btn-saga-ai" title="Open SAGA AI Assistant" aria-label="Open SAGA AI Assistant">
+            <i class="fas fa-wand-magic-sparkles"></i>
+            <span>SAGA AI</span>
+          </button>
           <button onclick="toggleDark()" class="btn btn-secondary btn-icon" title="Toggle Dark Mode [Alt+T]" aria-label="Toggle Dark Mode">
             <i class="fas fa-moon" id="dark-icon"></i>
           </button>
@@ -893,7 +879,7 @@
       </div>
     </div>
 
-    <!-- Gemini AI Floating Drawer & Button -->
+    <!-- Gemini AI Drawer -->
     <div id="gemini-drawer" class="gemini-drawer" role="dialog" aria-modal="true" aria-label="SAGA AI Assistant">
       <div class="gemini-drawer-header">
         <div class="gemini-drawer-title">
@@ -909,10 +895,6 @@
         <input type="text" id="gemini-drawer-input" class="form-input" placeholder="Ask SAGA AI..." style="margin: 0; flex: 1;" onkeydown="handleGeminiDrawerKey(event)" aria-label="Ask SAGA AI prompt input" />
         <button class="btn btn-primary" aria-label="Send message to SAGA AI" onclick="sendGeminiDrawerMessage()" style="padding: 10px 14px;"><i class="fas fa-paper-plane"></i></button>
       </div>
-    </div>
-
-    <div id="gemini-fab" class="gemini-fab" onclick="toggleGeminiDrawer()" title="Ask Gemini AI" aria-label="Open SAGA AI Assistant">
-      <i class="fas fa-wand-magic-sparkles"></i>
     </div>
   </div>
 

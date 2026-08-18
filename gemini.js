@@ -579,7 +579,9 @@ function toggleGeminiDrawer() {
   const fab = document.getElementById('gemini-fab');
   if (fab) {
     fab.classList.toggle('active', isOpen);
-    fab.innerHTML = isOpen ? '<i class="fas fa-times"></i>' : '<i class="fas fa-wand-magic-sparkles"></i>';
+    fab.innerHTML = isOpen 
+      ? '<i class="fas fa-times"></i><span>Close AI</span>' 
+      : '<i class="fas fa-wand-magic-sparkles"></i><span>SAGA AI</span>';
   }
 
   if (isOpen) {
@@ -592,6 +594,9 @@ function toggleGeminiDrawer() {
     } else {
       renderDrawerChatBubbles();
     }
+    setTimeout(() => {
+      document.getElementById('gemini-drawer-input')?.focus();
+    }, 150);
   }
 }
 
