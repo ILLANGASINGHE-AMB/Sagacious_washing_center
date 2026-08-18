@@ -8,8 +8,7 @@ let analyticsFilterState = {
   endDate: '',
   customerId: 'all',
   itemId: 'all',
-  paymentStatus: 'all',
-  chemCostMode: 'cogs' // 'cogs' (Usage/Consumed) or 'purchase' (Cash Outflow)
+  paymentStatus: 'all'
 };
 
 async function renderAnalytics() {
@@ -94,15 +93,6 @@ async function renderAnalytics() {
           <select id="an-item" class="form-input form-select" onchange="onAnalyticsFilterChange()" style="font-size:0.85em;padding:8px 10px;">
             <option value="all">All Catalog Items</option>
             ${catalogItems.map(it => `<option value="${it.id}" ${String(analyticsFilterState.itemId)===String(it.id)?'selected':''}>${it.item_name} (${it.item_id})</option>`).join('')}
-          </select>
-        </div>
-
-        <!-- Chemical Costing Model -->
-        <div class="form-group" style="margin:0;">
-          <label class="form-label" style="font-size:0.78em;font-weight:700;text-transform:uppercase;color:var(--text-muted);"><i class="fas fa-flask"></i> Chemical Costing</label>
-          <select id="an-chem-cost" class="form-input form-select" onchange="onAnalyticsFilterChange()" style="font-size:0.85em;padding:8px 10px;">
-            <option value="cogs" ${analyticsFilterState.chemCostMode==='cogs'?'selected':''}>Usage (COGS)</option>
-            <option value="purchase" ${analyticsFilterState.chemCostMode==='purchase'?'selected':''}>Purchases (Cash Outflow)</option>
           </select>
         </div>
 
@@ -286,7 +276,6 @@ async function onAnalyticsFilterChange() {
   analyticsFilterState.customerId = document.getElementById('an-customer').value;
   analyticsFilterState.itemId = document.getElementById('an-item').value;
   analyticsFilterState.paymentStatus = document.getElementById('an-status').value;
-  analyticsFilterState.chemCostMode = document.getElementById('an-chem-cost')?.value || 'cogs';
 
   const trendLbl = document.getElementById('an-trend-label');
   if (trendLbl) {
@@ -332,18 +321,22 @@ async function refreshAnalyticsView() {
 // DATA CALCULATION ENGINE & PRECISE FORMULAS
 // ─────────────────────────────────────────────
 async function calculateAnalyticsData(filters) {
-  const [orders, allOrderItems, customers, catalogItems, generalExpenses, chemicalLedger, trips, fuelConfig, invoices, payments] = await Promise.all([
+  const [orders, allOrderItems, customers, catalogItems, expenseCategories, expenseTypes, expenseEntries, expenseAmounts, trips, fuelConfig, invoices, payments] = await Promise.all([
     DB.getOrders(),
     DB.getAllOrderItems(),
     DB.getCustomers(),
     DB.getItems(),
-    DB.getGeneralExpenses(),
-    DB.getChemicalLedger(),
+    DB.getExpenseCategories(),
+    DB.getExpenseTypes(),
+    DB.getExpenseEntries(),
+    DB.getExpenseAmounts(),
     DB.getTrips(),
     DB.getFuelPriceSettings(),
     DB.getInvoices(),
     DB.getPayments()
   ]);
+
+  const flatExpenses = Financials.flattenExpenseData(expenseAmounts, expenseEntries, expenseTypes, expenseCategories);
 
   const cMap = Object.fromEntries((customers || []).map(c => [c.id, c]));
   const itemMap = Object.fromEntries((catalogItems || []).map(it => [it.id, it]));
@@ -435,17 +428,13 @@ async function calculateAnalyticsData(filters) {
     }
   });
 
-  // 7. Amortized General Expenses (Issue #4 Multi-month)
-  const amortizedGen = Financials.computeAmortizedExpenses(generalExpenses || [], start, end);
-  const totalGeneralExpenses = amortizedGen.totalAmortized;
-
-  // 8. Chemical Expenses (Issue #4 COGS vs Purchases)
-  const chemCostMode = filters.chemCostMode || 'cogs';
-  const chemCalc = Financials.computeChemicalExpenses(chemicalLedger || [], start, end, chemCostMode);
-  const totalChemicalExpenses = chemCalc.activeCost;
+  // 7. Cash Book Expenses — plain date-range sum + per-category breakdown,
+  // no amortization/COGS (see Financials.computeExpenseTotals).
+  const expenseCalc = Financials.computeExpenseTotals(flatExpenses, start, end);
+  const totalCashBookExpenses = expenseCalc.total;
 
   // Total Expenses & Net Profit
-  const totalExpenses = totalGeneralExpenses + totalChemicalExpenses + totalTransportFuelExpenses;
+  const totalExpenses = totalCashBookExpenses + totalTransportFuelExpenses;
   const netProfit = netBookedRevenue - totalExpenses;
   const profitMargin = netBookedRevenue > 0 ? (netProfit / netBookedRevenue) * 100 : 0;
   const costRatio = netBookedRevenue > 0 ? (totalExpenses / netBookedRevenue) * 100 : 0;
@@ -520,27 +509,15 @@ async function calculateAnalyticsData(filters) {
 
   // Expense Categories Breakdown
   const expenseCatMap = {};
-  if (totalChemicalExpenses > 0) {
-    expenseCatMap[chemCostMode === 'cogs' ? 'Chemical Usage (COGS)' : 'Chemical Purchases'] = totalChemicalExpenses;
-  }
+  Object.values(expenseCalc.byCategory).forEach(c => {
+    expenseCatMap[c.name] = (expenseCatMap[c.name] || 0) + c.total;
+  });
   if (totalTransportFuelExpenses > 0) {
     expenseCatMap['Transport Fuel Cost'] = totalTransportFuelExpenses;
   }
-  Object.entries(amortizedGen.breakdownByCategory).forEach(([cat, amt]) => {
-    expenseCatMap[cat] = (expenseCatMap[cat] || 0) + amt;
-  });
 
   // Time Bucket Grouping
-  // NOTE: general expenses are passed through UNFILTERED here (not date-window-clipped
-  // on expense_date) because a multi-month expense's amortized months can overlap the
-  // window even when its entry date doesn't. groupDataByTimeGrain() does its own
-  // per-covered-month overlap/spreading, mirroring Financials.computeAmortizedExpenses,
-  // so the trend chart's expense totals agree with the "Total Expenses" stat above it.
-  const filteredChemicalPurchases = (chemicalLedger || []).filter(l => {
-    const lDate = new Date(l.date || l.created_at);
-    return !isNaN(lDate) && l.type === 'IN' && lDate >= start && lDate <= end;
-  });
-  const timeBuckets = groupDataByTimeGrain(filteredOrders, generalExpenses || [], filteredChemicalPurchases, filteredCompletedTrips, fuelConfig, filters.grain, start, end);
+  const timeBuckets = groupDataByTimeGrain(filteredOrders, flatExpenses, filteredCompletedTrips, fuelConfig, filters.grain, start, end);
 
   return {
     grossRevenue,
@@ -551,12 +528,9 @@ async function calculateAnalyticsData(filters) {
     uncollectedReceivables,
     unpaidInvoicesCount,
     totalExpenses,
-    totalGeneralExpenses,
-    totalChemicalExpenses,
+    totalCashBookExpenses,
     totalTransportFuelExpenses,
-    chemCostMode,
-    chemModeLabel: chemCostMode === 'cogs' ? 'Usage (COGS)' : 'Cash Outflow',
-    hasFixedOverhead: Object.keys(amortizedGen.breakdownByCategory).length > 0,
+    hasFixedOverhead: Object.keys(expenseCalc.byCategory).length > 0,
     netProfit,
     profitMargin,
     costRatio,
@@ -576,7 +550,7 @@ async function calculateAnalyticsData(filters) {
 // ─────────────────────────────────────────────
 // TIME GRAIN GROUPING HELPER
 // ─────────────────────────────────────────────
-function groupDataByTimeGrain(orders, genExpenses, chemPurchases, completedTrips, fuelConfig, grain, start, end) {
+function groupDataByTimeGrain(orders, flatExpenses, completedTrips, fuelConfig, grain, start, end) {
   const buckets = {};
 
   function getBucketKey(dateObj) {
@@ -607,53 +581,14 @@ function groupDataByTimeGrain(orders, genExpenses, chemPurchases, completedTrips
     buckets[key].orders += 1;
   });
 
-  genExpenses.forEach(e => {
-    const expDate = new Date(e.expense_date || e.created_at);
-    if (isNaN(expDate)) return;
-    const rawAmount = parseFloat(e.amount) || 0;
-    const monthsCovered = Math.max(1, parseInt(e.months_covered) || 1);
-    const monthlyAmount = parseFloat(e.monthly_averaged_amount) || (rawAmount / monthsCovered);
-
-    // Spread the amortized monthly share across every month it actually covers
-    // (clipped to the report window), instead of dumping the whole per-month
-    // amount into a single bucket keyed off the expense's entry date. Without
-    // this, a multi-month expense (e.g. a 12-month insurance premium) would
-    // show its full monthly share only in the month it was entered and $0 in
-    // every other month it covers — both understating those months and
-    // disagreeing with the amortized "Total Expenses" figure computed above.
-    for (let m = 0; m < monthsCovered; m++) {
-      const coveredMonthStart = new Date(expDate.getFullYear(), expDate.getMonth() + m, 1);
-      const coveredMonthEnd = new Date(expDate.getFullYear(), expDate.getMonth() + m + 1, 0, 23, 59, 59, 999);
-      if (coveredMonthEnd < start || coveredMonthStart > end) continue; // no overlap this month
-
-      if (grain === 'daily' || grain === 'weekly') {
-        // Distribute evenly across each day of the covered month that falls within the window.
-        const daysInMonth = coveredMonthEnd.getDate();
-        const perDay = monthlyAmount / daysInMonth;
-        for (let day = 1; day <= daysInMonth; day++) {
-          const dayDate = new Date(expDate.getFullYear(), expDate.getMonth() + m, day);
-          if (dayDate < start || dayDate > end) continue;
-          const key = getBucketKey(dayDate);
-          if (!buckets[key]) buckets[key] = { key, revenue: 0, expenses: 0, orders: 0 };
-          buckets[key].expenses += perDay;
-        }
-      } else {
-        // monthly/yearly grain: attribute the full monthly share to this covered month's
-        // bucket. Use the 15th as a stable mid-month anchor so the bucket key always
-        // resolves to this covered month regardless of which day expDate itself falls on.
-        const anchorDate = new Date(expDate.getFullYear(), expDate.getMonth() + m, 15);
-        const key = getBucketKey(anchorDate);
-        if (!buckets[key]) buckets[key] = { key, revenue: 0, expenses: 0, orders: 0 };
-        buckets[key].expenses += monthlyAmount;
-      }
-    }
-  });
-
-  chemPurchases.forEach(c => {
-    const d = new Date(c.date || c.created_at);
+  // Cash Book expenses are simple dated amounts — no amortization spreading
+  // needed, just bucket each flattened row by its own entry_date.
+  flatExpenses.forEach(r => {
+    const d = new Date(r.entry_date);
+    if (isNaN(d) || d < start || d > end) return;
     const key = getBucketKey(d);
     if (!buckets[key]) buckets[key] = { key, revenue: 0, expenses: 0, orders: 0 };
-    buckets[key].expenses += (parseFloat(c.total_amount) || 0);
+    buckets[key].expenses += r.amount;
   });
 
   completedTrips.forEach(t => {
@@ -689,7 +624,7 @@ function renderKPICards(d) {
   container.innerHTML = `
     ${anStatCard("Booked Sales (Accrual)", formatCurrency(d.netBookedRevenue), "fa-coins", "#3b82f6", "#dbeafe", `Gross: ${formatCurrency(d.grossRevenue)} (less ${formatCurrency(d.totalDeductions)} deductions)`)}
     ${anStatCard("Cash Collected", formatCurrency(d.cashCollected), "fa-wallet", "#10b981", "#dcfce7", `${d.cashFlowRatio.toFixed(1)}% realized vs booked sales`)}
-    ${anStatCard("Total Expenses", formatCurrency(d.totalExpenses), "fa-receipt", "#ef4444", "#fee2e2", `Cost ratio: ${d.costRatio.toFixed(1)}% (${d.chemModeLabel})`)}
+    ${anStatCard("Total Expenses", formatCurrency(d.totalExpenses), "fa-receipt", "#ef4444", "#fee2e2", `Cost ratio: ${d.costRatio.toFixed(1)}%`)}
     ${anStatCard("Net Operating Profit", formatCurrency(d.netProfit), "fa-scale-balanced", profitColor, d.netProfit >= 0 ? "#dcfce7" : "#fee2e2", `Margin: ${d.profitMargin.toFixed(1)}% ${!d.hasFixedOverhead ? '⚠️ (No OPEX entered)' : ''}`, marginColor)}
     ${anStatCard("Uncollected Receivables (All-Time)", formatCurrency(d.uncollectedReceivables), "fa-clock", "#f59e0b", "#fef3c7", `Across ${d.unpaidInvoicesCount} unpaid invoices — NOT scoped to the date filter above`)}
   `;
@@ -745,7 +680,7 @@ function renderBusinessInsights(d) {
       icon: 'fa-triangle-exclamation',
       color: '#ef4444',
       title: `High Operating Expense Ratio (${d.costRatio.toFixed(1)}%)`,
-      desc: `Expenses consume over 70% of gross revenue. Review utility bills, chemical usage efficiency, and driver transport fuel routes.`
+      desc: `Expenses consume over 70% of gross revenue. Review utility bills, highest-spend expense categories, and driver transport fuel routes.`
     });
   } else if (d.profitMargin >= 30) {
     insights.push({
@@ -759,7 +694,7 @@ function renderBusinessInsights(d) {
       icon: 'fa-scale-balanced',
       color: '#f59e0b',
       title: `Balanced Margin (${d.profitMargin.toFixed(1)}%)`,
-      desc: `Net profit margin is steady. Monitor chemical stock re-orders to optimize bulk purchasing prices.`
+      desc: `Net profit margin is steady. Review your highest-spend expense categories for bulk-purchasing or vendor-negotiation savings.`
     });
   }
 

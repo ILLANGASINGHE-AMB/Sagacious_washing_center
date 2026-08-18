@@ -130,212 +130,78 @@ const Financials = {
   },
 
   /**
-   * Calculates multi-month amortized operational expenses for a specific date window
+   * Joins the 4 raw Expenses tables into one flat row per filled Cash
+   * Book cell — shared by expenses.js (Category View), analytics.js, and
+   * chatbot.js so all three agree on the same numbers from one join.
    */
-  computeAmortizedExpenses(expenses = [], startDate, endDate) {
-    const start = new Date(startDate);
-    const end = new Date(endDate);
-    let totalAmortized = 0;
-    const breakdownByCategory = {};
+  flattenExpenseData(amounts = [], entries = [], types = [], categories = []) {
+    const entryMap = Object.fromEntries((entries || []).map(e => [e.id, e]));
+    const typeMap = Object.fromEntries((types || []).map(t => [t.expense_type_id, t]));
+    const catMap = Object.fromEntries((categories || []).map(c => [c.category_id, c]));
 
-    (expenses || []).forEach(exp => {
-      const expDate = new Date(exp.expense_date || exp.created_at);
-      if (isNaN(expDate)) return;
-
-      const rawAmount = parseFloat(exp.amount) || 0;
-      const monthsCovered = Math.max(1, parseInt(exp.months_covered) || 1);
-      const monthlyAmount = parseFloat(exp.monthly_averaged_amount) || (rawAmount / monthsCovered);
-      const category = exp.expense_category || 'General Operational';
-
-      // Prorate by the actual number of days each covered month overlaps the report
-      // window, not just a binary "does it overlap at all". Without this, a report
-      // window of a single day at the edge of a covered month attributed the FULL
-      // monthly amount for that month — massively over-counting amortized expense
-      // for any custom/partial date range that doesn't align to calendar-month
-      // boundaries. For a window that spans a full calendar month (the common case
-      // for monthly reports), the overlap fraction is 1, so behavior is unchanged.
-      let attributedExpense = 0;
-      for (let m = 0; m < monthsCovered; m++) {
-        const coveredMonthStart = new Date(expDate.getFullYear(), expDate.getMonth() + m, 1);
-        const coveredMonthEnd = new Date(expDate.getFullYear(), expDate.getMonth() + m + 1, 0, 23, 59, 59, 999);
-        const daysInMonth = coveredMonthEnd.getDate();
-
-        const overlapStart = coveredMonthStart > start ? coveredMonthStart : start;
-        const overlapEnd = coveredMonthEnd < end ? coveredMonthEnd : end;
-        if (overlapEnd < overlapStart) continue; // no overlap with this covered month
-
-        // Normalize to whole calendar days (inclusive) so time-of-day components
-        // on `start`/`end` don't cause off-by-one drift in the day count.
-        const overlapStartDay = new Date(overlapStart.getFullYear(), overlapStart.getMonth(), overlapStart.getDate());
-        const overlapEndDay = new Date(overlapEnd.getFullYear(), overlapEnd.getMonth(), overlapEnd.getDate());
-        const overlapDays = Math.round((overlapEndDay - overlapStartDay) / 86400000) + 1;
-        const fraction = Math.min(1, overlapDays / daysInMonth);
-
-        attributedExpense += monthlyAmount * fraction;
-      }
-
-      if (attributedExpense > 0) {
-        totalAmortized += attributedExpense;
-        breakdownByCategory[category] = (breakdownByCategory[category] || 0) + attributedExpense;
-      }
-    });
-
-    return {
-      totalAmortized,
-      breakdownByCategory
-    };
+    return (amounts || []).map(a => {
+      const entry = entryMap[a.entry_id] || {};
+      const type = typeMap[a.expense_type_id] || {};
+      const cat = catMap[type.category_id] || {};
+      return {
+        expense_type_id: a.expense_type_id,
+        expense_name: type.name || 'Unknown',
+        category_id: type.category_id || '',
+        category_name: cat.name || 'Uncategorized',
+        entry_date: entry.entry_date,
+        description: entry.description || '',
+        amount: parseFloat(a.amount) || 0
+      };
+    }).filter(r => r.entry_date); // drop orphans if an entry/type was deleted out from under an amount
   },
 
   /**
-   * Computes chemical expenses based on selected costing mode ('purchase' | 'cogs')
-   *
-   * IMPORTANT: this only works correctly if OUT (usage) entries carry a real
-   * unit_price/total_amount, which requires them to be stamped with a
-   * weighted-average cost at the time they're logged — see
-   * computeWeightedAverageChemicalCost() below, called from
-   * expenses.js:saveChemLog(). Without that, every OUT entry prices at 0
-   * and 'cogs' mode silently degrades to 'purchase' mode.
+   * Plain date-range sum + per-category breakdown over flattened expense
+   * rows (see flattenExpenseData). No amortization, no COGS — the new
+   * Cash Book schema records a real dated amount per cell, so a period
+   * total is just a straight sum over that window.
    */
-  computeChemicalExpenses(chemicalLedger = [], startDate, endDate, mode = 'cogs') {
+  computeExpenseTotals(flatRows = [], startDate, endDate) {
     const start = new Date(startDate);
     const end = new Date(endDate);
 
-    let purchaseTotal = 0;
-    let consumedTotal = 0;
-    const itemizedUsage = {};
-
-    (chemicalLedger || []).forEach(entry => {
-      const entryDate = new Date(entry.date || entry.created_at);
-      if (isNaN(entryDate) || entryDate < start || entryDate > end) return;
-
-      if (entry.type === 'IN') {
-        purchaseTotal += parseFloat(entry.total_amount) || 0;
-      } else if (entry.type === 'OUT') {
-        const qtyOut = parseFloat(entry.qty_out) || 0;
-        const unitPrice = parseFloat(entry.unit_price) || 0;
-        const usageCost = parseFloat(entry.total_amount) || (qtyOut * unitPrice);
-        consumedTotal += usageCost;
-
-        const chemName = entry.chemical_name || entry.chemical_id || 'Unknown Chemical';
-        itemizedUsage[chemName] = (itemizedUsage[chemName] || 0) + usageCost;
-      }
+    const inRange = (flatRows || []).filter(r => {
+      const d = new Date(r.entry_date);
+      return !isNaN(d) && d >= start && d <= end;
     });
 
-    return {
-      purchaseTotal,
-      consumedTotal,
-      // No more silent fallback to purchaseTotal when consumedTotal is 0 —
-      // now that OUT entries are correctly priced, a real $0 usage period
-      // should show as $0, not be masked by substituting purchases.
-      activeCost: mode === 'purchase' ? purchaseTotal : consumedTotal,
-      itemizedUsage
-    };
+    const byCategory = {};
+    inRange.forEach(r => {
+      if (!byCategory[r.category_id]) byCategory[r.category_id] = { name: r.category_name, total: 0 };
+      byCategory[r.category_id].total += r.amount;
+    });
+
+    const total = inRange.reduce((s, r) => s + r.amount, 0);
+
+    let mostExpensiveCategory = null;
+    Object.values(byCategory).forEach(c => {
+      if (!mostExpensiveCategory || c.total > mostExpensiveCategory.total) mostExpensiveCategory = c;
+    });
+
+    return { total, byCategory, mostExpensiveCategory, count: inRange.length };
   },
 
   /**
-   * Computes the current moving weighted-average unit cost for ONE
-   * chemical, given every ledger entry for that chemical (any order —
-   * this sorts by date itself). Standard weighted-average inventory
-   * costing: each IN entry blends its cost into the running average; each
-   * OUT entry is valued at whatever the average was immediately before it
-   * (so it doesn't retroactively change past OUT entries' cost basis).
-   *
-   * Call this BEFORE inserting a new OUT entry (pass the ledger as it
-   * exists so far) to get the unit cost that new entry should be stamped
-   * with — see expenses.js:saveChemLog().
+   * Day-bucketed amount series over a date range, for the Category View
+   * trend graph.
    */
-  computeWeightedAverageChemicalCost(chemicalLedgerForOneChemical = []) {
-    const sorted = [...(chemicalLedgerForOneChemical || [])].sort((a, b) => {
-      const da = new Date(a.date || a.created_at || 0).getTime();
-      const db = new Date(b.date || b.created_at || 0).getTime();
-      return da - db;
+  computeExpenseDailySeries(flatRows = [], startDate, endDate) {
+    const start = new Date(startDate);
+    const end = new Date(endDate);
+    const byDay = {};
+
+    (flatRows || []).forEach(r => {
+      const d = new Date(r.entry_date);
+      if (isNaN(d) || d < start || d > end) return;
+      byDay[r.entry_date] = (byDay[r.entry_date] || 0) + r.amount;
     });
 
-    let qtyOnHand = 0;
-    let valueOnHand = 0;
-    let avgUnitCost = 0;
-
-    sorted.forEach(entry => {
-      if (entry.type === 'IN') {
-        const qtyIn = parseFloat(entry.qty_in) || 0;
-        const cost = parseFloat(entry.total_amount) || (qtyIn * (parseFloat(entry.unit_price) || 0));
-        qtyOnHand += qtyIn;
-        valueOnHand += cost;
-        avgUnitCost = qtyOnHand > 0 ? (valueOnHand / qtyOnHand) : 0;
-      } else if (entry.type === 'OUT') {
-        const qtyOut = parseFloat(entry.qty_out) || 0;
-        const costOut = qtyOut * avgUnitCost;
-        qtyOnHand = Math.max(0, qtyOnHand - qtyOut);
-        valueOnHand = Math.max(0, valueOnHand - costOut);
-        // avgUnitCost itself is unchanged by an OUT — only IN entries shift the average.
-      }
-    });
-
-    return { avgUnitCost, qtyOnHand, valueOnHand };
-  },
-
-  /**
-   * Replays the same weighted-average logic as
-   * computeWeightedAverageChemicalCost(), but returns what EVERY OUT
-   * entry's unit_price/total_amount should have been, in order. Used for
-   * one-time backfilling of historical ledger entries that were logged
-   * before OUT entries carried a real cost (see expenses.js's
-   * "Recalculate Historical Costs" action) — this does not touch the
-   * database itself, it only computes the corrected values.
-   *
-   * Returns an array of { id, unit_price, total_amount } for every OUT
-   * entry whose current stored value doesn't match — IN entries and
-   * already-correct OUT entries are omitted so callers only write what
-   * actually changed.
-   */
-  recomputeChemicalOutEntryCosts(chemicalLedgerForOneChemical = []) {
-    const sorted = [...(chemicalLedgerForOneChemical || [])].sort((a, b) => {
-      const da = new Date(a.date || a.created_at || 0).getTime();
-      const db = new Date(b.date || b.created_at || 0).getTime();
-      return da - db;
-    });
-
-    let qtyOnHand = 0;
-    let valueOnHand = 0;
-    let avgUnitCost = 0;
-    const corrections = [];
-
-    sorted.forEach(entry => {
-      if (entry.type === 'IN') {
-        const qtyIn = parseFloat(entry.qty_in) || 0;
-        const cost = parseFloat(entry.total_amount) || (qtyIn * (parseFloat(entry.unit_price) || 0));
-        qtyOnHand += qtyIn;
-        valueOnHand += cost;
-        avgUnitCost = qtyOnHand > 0 ? (valueOnHand / qtyOnHand) : 0;
-      } else if (entry.type === 'OUT') {
-        const qtyOut = parseFloat(entry.qty_out) || 0;
-        const correctUnitPrice = avgUnitCost;
-        const correctTotal = parseFloat((qtyOut * avgUnitCost).toFixed(2));
-        const currentTotal = parseFloat(entry.total_amount) || 0;
-
-        if (Math.abs(currentTotal - correctTotal) > 0.01) {
-          corrections.push({ id: entry.id, unit_price: parseFloat(correctUnitPrice.toFixed(4)), total_amount: correctTotal });
-        }
-
-        qtyOnHand = Math.max(0, qtyOnHand - qtyOut);
-        valueOnHand = Math.max(0, valueOnHand - (qtyOut * avgUnitCost));
-      }
-    });
-
-    return corrections;
-  },
-
-  /**
-   * Computes monthly expense allocation over N months
-   */
-  computeMonthlyExpenseAveraging(amount, monthsCovered = 1) {
-    const amt = parseFloat(amount) || 0;
-    const months = Math.max(1, parseInt(monthsCovered) || 1);
-    return {
-      totalAmount: amt,
-      monthsCovered: months,
-      monthlyAmount: amt / months
-    };
+    return Object.keys(byDay).sort().map(date => ({ date, amount: byDay[date] }));
   },
 
   /**
@@ -354,45 +220,6 @@ const Financials = {
     };
   },
 
-  /**
-   * Computes standardized profit and loss summary for a date range
-   */
-  computeProfitSummary(orders = [], generalExpenses = [], chemicalLedger = [], trips = [], startDate, endDate) {
-    const startStr = startDate ? new Date(startDate).toISOString().slice(0, 10) : '';
-    const endStr = endDate ? new Date(endDate).toISOString().slice(0, 10) : '';
-
-    const filterDate = d => {
-      if (!d) return true;
-      const dateStr = (d || '').slice(0, 10);
-      if (startStr && dateStr < startStr) return false;
-      if (endStr && dateStr > endStr) return false;
-      return true;
-    };
-
-    const periodOrders = orders.filter(o => filterDate(o.created_at || o.pickup_date));
-    const grossRevenue = periodOrders.reduce((sum, o) => sum + (parseFloat(o.total_amount) || 0), 0);
-
-    const expMetrics = this.computePeriodGeneralExpenses(generalExpenses, startDate || '2000-01-01', endDate || '2099-12-31');
-    const chemMetrics = this.computeChemicalExpenses(chemicalLedger, startDate || '2000-01-01', endDate || '2099-12-31', 'cogs');
-
-    const periodTrips = trips.filter(t => filterDate(t.start_date || t.created_at));
-    const totalDistanceKm = periodTrips.reduce((sum, t) => sum + (parseFloat(t.distance_km) || 0), 0);
-    const tripFuelMetrics = this.computeTripFuelCost(totalDistanceKm);
-
-    const totalExpenses = expMetrics.totalAmortized + chemMetrics.activeCost + tripFuelMetrics.estimatedCost;
-    const netProfit = grossRevenue - totalExpenses;
-
-    return {
-      grossRevenue,
-      totalExpenses,
-      netProfit,
-      breakdown: {
-        generalExpenses: expMetrics.totalAmortized,
-        chemicalExpenses: chemMetrics.activeCost,
-        fuelExpenses: tripFuelMetrics.estimatedCost
-      }
-    };
-  }
 };
 
 window.Financials = Financials;

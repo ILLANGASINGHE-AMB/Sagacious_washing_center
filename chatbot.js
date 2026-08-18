@@ -20,7 +20,6 @@ const SAGABot = {
     'revenue this month',
     'net profit last month',
     'expenses this week',
-    'chemical costs this month',
     'how much have we collected this month',
     'average order value this month',
     'how many orders today',
@@ -151,12 +150,13 @@ const SAGABot = {
 
   // ── Shared business-metrics calculator ───────────────────────
   // Mirrors the exact formulas used on the Analytics page (gross revenue → net booked
-  // revenue → cash collected → amortized/COGS expenses → net profit), so numbers the
+  // revenue → cash collected → Cash Book expenses → net profit), so numbers the
   // chatbot gives always agree with what's shown there.
   async computeMetrics(start, end) {
-    const [orders, invoices, payments, generalExpenses, chemicalLedger, trips, fuelConfig] = await Promise.all([
+    const [orders, invoices, payments, expenseCategories, expenseTypes, expenseEntries, expenseAmounts, trips, fuelConfig] = await Promise.all([
       DB.getOrders(), DB.getInvoices(), DB.getPayments(),
-      DB.getGeneralExpenses(), DB.getChemicalLedger(), DB.getTrips(),
+      DB.getExpenseCategories(), DB.getExpenseTypes(), DB.getExpenseEntries(), DB.getExpenseAmounts(),
+      DB.getTrips(),
       DB.getFuelPriceSettings ? DB.getFuelPriceSettings() : Promise.resolve({})
     ]);
 
@@ -178,12 +178,12 @@ const SAGABot = {
       .reduce((s, p) => s + (parseFloat(p.amount) || 0), 0);
     const cashCollected = advanceCollected + periodPayments;
 
-    const amortizedGen = (typeof Financials !== 'undefined' && Financials.computeAmortizedExpenses)
-      ? Financials.computeAmortizedExpenses(generalExpenses, start, end)
-      : { totalAmortized: 0 };
-    const chemCalc = (typeof Financials !== 'undefined' && Financials.computeChemicalExpenses)
-      ? Financials.computeChemicalExpenses(chemicalLedger, start, end, 'cogs')
-      : { activeCost: 0 };
+    const flatExpenses = (typeof Financials !== 'undefined' && Financials.flattenExpenseData)
+      ? Financials.flattenExpenseData(expenseAmounts, expenseEntries, expenseTypes, expenseCategories)
+      : [];
+    const expenseCalc = (typeof Financials !== 'undefined' && Financials.computeExpenseTotals)
+      ? Financials.computeExpenseTotals(flatExpenses, start, end)
+      : { total: 0, byCategory: {} };
 
     let totalTransportFuelExpenses = 0;
     trips.filter(t => t.status === 'Completed' && SAGABot.inRange(t.start_date || t.created_at, start, end))
@@ -195,16 +195,15 @@ const SAGABot = {
         totalTransportFuelExpenses += (parseFloat(t.distance_km) || 0) * ratePerKm;
       });
 
-    const totalGeneralExpenses = amortizedGen.totalAmortized || 0;
-    const totalChemicalExpenses = chemCalc.activeCost || 0;
-    const totalExpenses = totalGeneralExpenses + totalChemicalExpenses + totalTransportFuelExpenses;
+    const totalCashBookExpenses = expenseCalc.total || 0;
+    const totalExpenses = totalCashBookExpenses + totalTransportFuelExpenses;
     const netProfit = netBookedRevenue - totalExpenses;
     const orderCount = filteredOrders.length;
     const avgOrderValue = orderCount > 0 ? netBookedRevenue / orderCount : 0;
 
     return {
       orderCount, grossRevenue, netBookedRevenue, cashCollected, avgOrderValue,
-      totalGeneralExpenses, totalChemicalExpenses, totalTransportFuelExpenses, totalExpenses, netProfit
+      totalCashBookExpenses, byCategory: expenseCalc.byCategory || {}, totalTransportFuelExpenses, totalExpenses, netProfit
     };
   },
 
@@ -261,16 +260,21 @@ SAGABot._intents.push({
   run: async (t) => {
     const { start, end, label } = SAGABot.periodOrDefault(t);
     const m = await SAGABot.computeMetrics(start, end);
-    if (/chemical/.test(t)) {
-      return `**Chemical expenses for ${label}:** ${formatCurrency(m.totalChemicalExpenses)} (usage-based costing)`;
-    }
     if (/fuel|transport|diesel|petrol/.test(t)) {
       return `**Transport/fuel expenses for ${label}:** ${formatCurrency(m.totalTransportFuelExpenses)} (completed trips only)`;
     }
-    if (/general\b/.test(t)) {
-      return `**General expenses for ${label}:** ${formatCurrency(m.totalGeneralExpenses)} (month-averaged where applicable)`;
+    // Category-specific lookup: if the question names one of the user's
+    // actual Cash Book categories (e.g. "vehicle expenses this month"),
+    // answer with just that category's total instead of the full breakdown.
+    const catMatch = Object.values(m.byCategory).find(c => c.name && t.includes(c.name.toLowerCase()));
+    if (catMatch) {
+      return `**${catMatch.name} expenses for ${label}:** ${formatCurrency(catMatch.total)}`;
     }
-    return `**Total expenses for ${label}:** ${formatCurrency(m.totalExpenses)}\n• General: ${formatCurrency(m.totalGeneralExpenses)}\n• Chemicals: ${formatCurrency(m.totalChemicalExpenses)}\n• Transport/fuel: ${formatCurrency(m.totalTransportFuelExpenses)}`;
+    const categoryLines = Object.values(m.byCategory)
+      .sort((a, b) => b.total - a.total)
+      .map(c => `• ${c.name}: ${formatCurrency(c.total)}`)
+      .join('\n');
+    return `**Total expenses for ${label}:** ${formatCurrency(m.totalExpenses)}\n${categoryLines}${categoryLines ? '\n' : ''}• Transport/fuel: ${formatCurrency(m.totalTransportFuelExpenses)}`;
   }
 });
 

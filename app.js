@@ -276,7 +276,7 @@ function navigate(page) {
   const titles = {
     dashboard: 'Dashboard', customers: 'Customers', drivers: 'Drivers', vehicles: 'Vehicles', transport: 'Transport & Trip Management',
     orders: 'Orders', paynow: 'Pay Now', invoices: 'Invoices', payments: 'Payments',
-    items: 'Items', expenses: 'Expenses & Chemical Register', analytics: 'Data Analytics', reports: 'Reports', settings: 'Settings', deductions: 'Deductions',
+    items: 'Items', expenses: 'Expenses', analytics: 'Data Analytics', reports: 'Reports', settings: 'Settings', deductions: 'Deductions',
     'recent-actions': 'Recent Actions'
   };
   document.getElementById('page-title').textContent = titles[page] || page;
@@ -4367,7 +4367,6 @@ async function renderRecentActions() {
             <option value="ALL" ${actionsCategoryFilter==='ALL'?'selected':''}>All Categories</option>
             <option value="Transport" ${actionsCategoryFilter==='Transport'?'selected':''}>Transport</option>
             <option value="Expense" ${actionsCategoryFilter==='Expense'?'selected':''}>Expense</option>
-            <option value="Chemical" ${actionsCategoryFilter==='Chemical'?'selected':''}>Chemical</option>
             <option value="Customer" ${actionsCategoryFilter==='Customer'?'selected':''}>Customer</option>
             <option value="Order" ${actionsCategoryFilter==='Order'?'selected':''}>Order</option>
             <option value="Driver" ${actionsCategoryFilter==='Driver'?'selected':''}>Driver</option>
@@ -4385,12 +4384,13 @@ async function renderRecentActions() {
             <option value="Set Trip Customers">Set Trip Customers</option>
             <option value="End Trip">End Trip</option>
             <option value="Delete Trip">Delete Trip</option>
-            <option value="Add General Expense">Add General Expense</option>
-            <option value="Delete Expense">Delete Expense</option>
-            <option value="Chemical Stock IN">Chemical Stock IN</option>
-            <option value="Chemical Stock OUT">Chemical Stock OUT</option>
-            <option value="Add Chemical Master">Add Chemical Master</option>
-            <option value="Delete Chemical Master">Delete Chemical Master</option>
+            <option value="Add Expense Category">Add Expense Category</option>
+            <option value="Add Expense Type">Add Expense Type</option>
+            <option value="Reorder Expense Category">Reorder Expense Category</option>
+            <option value="Reorder Expense Type">Reorder Expense Type</option>
+            <option value="Add Cash Book Entry">Add Cash Book Entry</option>
+            <option value="Edit Cash Book Cell">Edit Cash Book Cell</option>
+            <option value="Delete Cash Book Entry">Delete Cash Book Entry</option>
             <option value="Add Customer">Add Customer</option>
             <option value="Phone Number Change">Phone Number Change</option>
             <option value="Edit Customer">Edit Customer</option>

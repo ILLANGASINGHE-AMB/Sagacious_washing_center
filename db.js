@@ -388,19 +388,20 @@ const DB = {
     // are managed exclusively through Settings > User Management, which calls
     // the admin-only Netlify function. This avoids ever putting credentials
     // in a downloadable backup file.
-    const [customers, drivers, vehicles, orders, order_items, invoices, payments, settings, items, deductions, chemicals, chemical_ledger, general_expenses, trips] = await Promise.all([
+    const [customers, drivers, vehicles, orders, order_items, invoices, payments, settings, items, deductions, expense_categories, expense_types, expense_entries, expense_amounts, trips] = await Promise.all([
       DB.getCustomers(), DB.getDrivers(), DB.getVehicles(), DB.getOrders(),
       _q(_sb.from('order_items').select('*')),
       DB.getInvoices(), DB.getPayments(),
       _q(_sb.from('settings').select('*')),
       DB.getItems(),
       _q(_sb.from('deductions').select('*')),
-      DB.getChemicals(),
-      DB.getChemicalLedger(),
-      DB.getGeneralExpenses(),
+      DB.getExpenseCategories(),
+      DB.getExpenseTypes(),
+      DB.getExpenseEntries(),
+      DB.getExpenseAmounts(),
       DB.getTrips()
     ]);
-    return { customers, drivers, vehicles, orders, order_items, invoices, payments, settings, items, deductions, chemicals, chemical_ledger, general_expenses, trips, exported_at: new Date().toISOString() };
+    return { customers, drivers, vehicles, orders, order_items, invoices, payments, settings, items, deductions, expense_categories, expense_types, expense_entries, expense_amounts, trips, exported_at: new Date().toISOString() };
   },
   async addOrderItemsBatch(dataArray) {
     if (!dataArray || dataArray.length === 0) return [];
@@ -757,216 +758,85 @@ const DB = {
     await DB.setSetting('recent_system_actions', JSON.stringify([]));
   },
 
-  // ── Chemicals & Expenses ──────────────────
-  async getChemicals() {
-    try {
-      const rows = await _q(_sb.from('chemicals').select('*').order('chemical_id'));
-      if (rows && rows.length > 0) return rows;
-    } catch(e) {
-      // Fallback to setting store
+  // ── Expenses: Categories (Cash Book top-level columns) ─
+  async getExpenseCategories() {
+    return _q(_sb.from('expense_categories').select('*').order('sort_order'));
+  },
+  async addExpenseCategory(name) {
+    const category_id = await DB._generateSequentialId('next_category_id', 'CAT-', 'category ID');
+    const cats = await DB.getExpenseCategories();
+    const maxOrder = cats.reduce((m, c) => Math.max(m, c.sort_order || 0), 0);
+    const rows = await _q(_sb.from('expense_categories').insert({ category_id, name, sort_order: maxOrder + 1 }).select());
+    return rows[0];
+  },
+  async reorderExpenseCategory(categoryId, direction) {
+    const cats = await DB.getExpenseCategories();
+    const idx = cats.findIndex(c => c.category_id === categoryId);
+    const swapIdx = direction === 'left' ? idx - 1 : idx + 1;
+    if (idx < 0 || swapIdx < 0 || swapIdx >= cats.length) return;
+    const a = cats[idx], b = cats[swapIdx];
+    await Promise.all([
+      _q(_sb.from('expense_categories').update({ sort_order: b.sort_order }).eq('category_id', a.category_id)),
+      _q(_sb.from('expense_categories').update({ sort_order: a.sort_order }).eq('category_id', b.category_id))
+    ]);
+  },
+
+  // ── Expenses: Types (Cash Book sub-columns nested under a category) ─
+  async getExpenseTypes() {
+    return _q(_sb.from('expense_types').select('*').order('sort_order'));
+  },
+  async addExpenseType(name, categoryId) {
+    const expense_type_id = await DB._generateSequentialId('next_expense_type_id', 'EXP-', 'expense ID');
+    const types = await DB.getExpenseTypes();
+    const maxOrder = types.filter(t => t.category_id === categoryId).reduce((m, t) => Math.max(m, t.sort_order || 0), 0);
+    const rows = await _q(_sb.from('expense_types').insert({ expense_type_id, name, category_id: categoryId, sort_order: maxOrder + 1 }).select());
+    return rows[0];
+  },
+  async reorderExpenseType(expenseTypeId, direction) {
+    const types = await DB.getExpenseTypes();
+    const type = types.find(t => t.expense_type_id === expenseTypeId);
+    if (!type) return;
+    const siblings = types.filter(t => t.category_id === type.category_id);
+    const idx = siblings.findIndex(t => t.expense_type_id === expenseTypeId);
+    const swapIdx = direction === 'left' ? idx - 1 : idx + 1;
+    if (swapIdx < 0 || swapIdx >= siblings.length) return;
+    const a = siblings[idx], b = siblings[swapIdx];
+    await Promise.all([
+      _q(_sb.from('expense_types').update({ sort_order: b.sort_order }).eq('expense_type_id', a.expense_type_id)),
+      _q(_sb.from('expense_types').update({ sort_order: a.sort_order }).eq('expense_type_id', b.expense_type_id))
+    ]);
+  },
+
+  // ── Expenses: Cash Book rows (Date + Description journal lines) ─
+  async getExpenseEntries() {
+    return _q(_sb.from('expense_entries').select('*').order('entry_date'));
+  },
+  async addExpenseEntry(entry_date, description = '') {
+    const rows = await _q(_sb.from('expense_entries').insert({ entry_date, description }).select());
+    return rows[0];
+  },
+  async updateExpenseEntry(id, data) {
+    await _q(_sb.from('expense_entries').update({ ...data, updated_at: new Date().toISOString() }).eq('id', id));
+  },
+  async deleteExpenseEntry(id) {
+    await _q(_sb.from('expense_entries').delete().eq('id', id)); // cascades to expense_amounts via FK
+  },
+
+  // ── Expenses: Cash Book cells (one amount per row x expense type) ─
+  async getExpenseAmounts() {
+    return _q(_sb.from('expense_amounts').select('*'));
+  },
+  async setExpenseAmount(entryId, expenseTypeId, amount) {
+    // Sparse-matrix convention: a blank/zero cell is DELETED, not stored as
+    // 0, so Category View and column totals never carry zero-amount rows.
+    if (!amount || parseFloat(amount) === 0) {
+      await _q(_sb.from('expense_amounts').delete().eq('entry_id', entryId).eq('expense_type_id', expenseTypeId));
+      return null;
     }
-    try {
-      const val = await DB.getSetting('chemical_master_list');
-      if (val) {
-        const parsed = JSON.parse(val);
-        // Filter out old seed defaults if present
-        const filtered = parsed.filter(c => !['CHM-0001', 'CHM-0002', 'CHM-0003', 'CHM-0004', 'CHM-0005'].includes(c.chemical_id) || c.user_added);
-        return filtered;
-      }
-    } catch(e) {}
-
-    return [];
-  },
-  async addChemical(data) {
-    let nextId = 'CHM-0001';
-    try {
-      const existing = await DB.getChemicals();
-      let maxSeq = 0;
-      existing.forEach(c => {
-        if (c.chemical_id && c.chemical_id.startsWith('CHM-')) {
-          const n = parseInt(c.chemical_id.replace('CHM-', ''), 10) || 0;
-          if (n > maxSeq) maxSeq = n;
-        }
-      });
-      nextId = `CHM-${String(maxSeq + 1).padStart(4, '0')}`;
-    } catch(e) {}
-
-    const record = {
-      chemical_id: data.chemical_id || nextId,
-      name: data.name,
-      unit: data.unit || 'kg',
-      package_size: data.package_size || '',
-      status: data.status || 'Active',
-      user_added: true,
-      created_at: new Date().toISOString()
-    };
-
-    try {
-      const rows = await _q(_sb.from('chemicals').insert(record).select());
-      if (rows && rows[0]) return rows[0];
-    } catch(e) {}
-
-    // Fallback store
-    const list = await DB.getChemicals();
-    record.id = Date.now();
-    list.push(record);
-    await DB.setSetting('chemical_master_list', JSON.stringify(list));
-    return record;
-  },
-  async updateChemical(id, data) {
-    try {
-      await _q(_sb.from('chemicals').update(data).eq('id', id));
-    } catch(e) {}
-    const list = await DB.getChemicals();
-    const idx = list.findIndex(c => c.id === id || c.chemical_id === id);
-    if (idx >= 0) {
-      list[idx] = { ...list[idx], ...data };
-      await DB.setSetting('chemical_master_list', JSON.stringify(list));
-    }
-  },
-  async deleteChemical(id) {
-    try {
-      await _q(_sb.from('chemicals').delete().eq('id', id));
-    } catch(e) {}
-    const list = await DB.getChemicals();
-    const filtered = list.filter(c => c.id !== id && c.chemical_id !== id);
-    await DB.setSetting('chemical_master_list', JSON.stringify(filtered));
-  },
-
-  // ── Chemical Stock Ledger (IN / OUT / BAL) ─
-  async getChemicalLedger() {
-    try {
-      const rows = await _q(_sb.from('chemical_ledger').select('*').order('date', { ascending: true }));
-      if (rows) return rows;
-    } catch(e) {}
-    try {
-      const val = await DB.getSetting('chemical_ledger_records');
-      if (val) return JSON.parse(val);
-    } catch(e) {}
-    return [];
-  },
-  async addChemicalLedgerEntry(entry) {
-    const record = {
-      id: 'chm_log_' + Date.now() + '_' + Math.floor(Math.random()*1000),
-      expense_id: entry.expense_id || null,
-      date: entry.date || new Date().toISOString().split('T')[0],
-      chemical_id: entry.chemical_id, // e.g. CHM-0001
-      chemical_name: entry.chemical_name,
-      type: entry.type, // 'IN' or 'OUT'
-      qty_in: parseFloat(entry.qty_in) || 0,
-      qty_out: parseFloat(entry.qty_out) || 0,
-      unit: entry.unit || 'kg',
-      unit_price: parseFloat(entry.unit_price) || 0,
-      total_amount: parseFloat(entry.total_amount) || 0,
-      notes: entry.notes || '',
-      created_at: new Date().toISOString()
-    };
-
-    try {
-      await _q(_sb.from('chemical_ledger').insert(record));
-    } catch(e) {}
-
-    const logs = await DB.getChemicalLedger();
-    logs.push(record);
-    logs.sort((a,b) => new Date(a.date) - new Date(b.date));
-    await DB.setSetting('chemical_ledger_records', JSON.stringify(logs));
-    return record;
-  },
-  async deleteChemicalLedgerEntry(id) {
-    try {
-      await _q(_sb.from('chemical_ledger').delete().eq('id', id));
-    } catch(e) {}
-    const logs = await DB.getChemicalLedger();
-    const filtered = logs.filter(l => l.id !== id && l.expense_id !== id);
-    await DB.setSetting('chemical_ledger_records', JSON.stringify(filtered));
-  },
-  async updateChemicalLedgerEntry(id, data) {
-    // Used by the one-time cost backfill (Expenses > Chemicals > Recalculate
-    // Historical Costs) — unlike add/delete above, this does NOT swallow
-    // errors, since a silent failure here would leave the real table and
-    // the local cache holding two different cost figures for the same
-    // entry, which is exactly the kind of drift a "numbers I can rely on"
-    // backfill must not introduce.
-    await _q(_sb.from('chemical_ledger').update(data).eq('id', id));
-    const logs = await DB.getChemicalLedger();
-    const idx = logs.findIndex(l => l.id === id);
-    if (idx !== -1) logs[idx] = { ...logs[idx], ...data };
-    await DB.setSetting('chemical_ledger_records', JSON.stringify(logs));
-  },
-
-  // ── General Expenses ──────────────────────
-  async getGeneralExpenses() {
-    try {
-      const rows = await _q(_sb.from('general_expenses').select('*').order('expense_date', { ascending: false }));
-      if (rows) return rows;
-    } catch(e) {}
-    try {
-      const val = await DB.getSetting('general_expenses_records');
-      if (val) return JSON.parse(val);
-    } catch(e) {}
-    return [];
-  },
-  async addGeneralExpense(data) {
-    const expenseId = await DB.generateExpenseId();
-    const record = {
-      id: 'gen_exp_' + Date.now() + '_' + Math.floor(Math.random()*1000),
-      expense_id: expenseId,
-      expense_name: data.expense_name, // e.g. "Diesel for Delivery Truck", "Electricity Bill"
-      expense_date: data.expense_date || new Date().toISOString().split('T')[0],
-      amount: parseFloat(data.amount) || 0,
-      payment_method: data.payment_method || 'Cash',
-      months_covered: parseInt(data.months_covered, 10) || 1, // Multi-month averaging
-      monthly_averaged_amount: (parseFloat(data.amount) || 0) / (parseInt(data.months_covered, 10) || 1),
-      notes: data.notes || '',
-      created_at: new Date().toISOString()
-    };
-
-    try {
-      await _q(_sb.from('general_expenses').insert(record));
-    } catch(e) {}
-
-    const expenses = await DB.getGeneralExpenses();
-    expenses.unshift(record);
-    await DB.setSetting('general_expenses_records', JSON.stringify(expenses));
-    return record;
-  },
-  async deleteGeneralExpense(id) {
-    try {
-      await _q(_sb.from('general_expenses').delete().eq('id', id));
-    } catch(e) {}
-    const expenses = await DB.getGeneralExpenses();
-    const filtered = expenses.filter(e => e.id !== id && e.expense_id !== id);
-    await DB.setSetting('general_expenses_records', JSON.stringify(filtered));
-  },
-
-  // ── Expense ID Generator — EXP-YYYY-XXXXX ─
-  async generateExpenseId() {
-    const now = new Date();
-    const yyyy = now.getFullYear();
-    const prefix = `EXP-${yyyy}-`;
-    
-    let maxSeq = 0;
-    try {
-      const [chemLogs, genExp] = await Promise.all([
-        DB.getChemicalLedger(),
-        DB.getGeneralExpenses()
-      ]);
-
-      chemLogs.forEach(c => {
-        if (c.expense_id && c.expense_id.startsWith(prefix)) {
-          const seq = parseInt(c.expense_id.replace(prefix, ''), 10) || 0;
-          if (seq > maxSeq) maxSeq = seq;
-        }
-      });
-      genExp.forEach(g => {
-        if (g.expense_id && g.expense_id.startsWith(prefix)) {
-          const seq = parseInt(g.expense_id.replace(prefix, ''), 10) || 0;
-          if (seq > maxSeq) maxSeq = seq;
-        }
-      });
-    } catch(e) {}
-
-    return `${prefix}${String(maxSeq + 1).padStart(5, '0')}`;
+    const rows = await _q(_sb.from('expense_amounts')
+      .upsert({ entry_id: entryId, expense_type_id: expenseTypeId, amount: parseFloat(amount), updated_at: new Date().toISOString() },
+              { onConflict: 'entry_id,expense_type_id' }).select());
+    return rows[0];
   },
 
   // ── Fuel Price Settings & History ─────────
