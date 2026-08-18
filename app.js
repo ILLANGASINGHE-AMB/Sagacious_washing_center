@@ -1950,20 +1950,25 @@ async function saveNewDriver() {
     return toast(`NIC "${nic}" is already registered to driver "${escapeHtml(dupNic.name)}"`, 'error');
   }
 
-  const drvId = await DB.addDriver({
-    name, nickname, phone, phone2, nic, address, email, status
-  });
+  try {
+    const drvId = await DB.addDriver({
+      name, nickname, phone, phone2, nic, address, email, status
+    });
 
-  await DB.logAction(
-    'Add Driver',
-    `Added new driver "${name}" (Phone: ${phone}, NIC: ${nic})`,
-    { id: drvId, name, nickname, phone, phone2, nic, address, email, status },
-    'Driver'
-  );
+    await DB.logAction(
+      'Add Driver',
+      `Added new driver "${name}" (Phone: ${phone}, NIC: ${nic})`,
+      { id: drvId, name, nickname, phone, phone2, nic, address, email, status },
+      'Driver'
+    );
 
-  hideModal('add-drv-modal');
-  toast('Driver added successfully!');
-  renderDrivers();
+    hideModal('add-drv-modal');
+    toast('Driver added successfully!');
+    renderDrivers();
+  } catch (err) {
+    console.error('saveNewDriver error:', err);
+    toast('Failed to save driver: ' + (err.message || err), 'error');
+  }
 }
 
 async function showEditDriverModal(id) {

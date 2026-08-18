@@ -1,6 +1,6 @@
 // orders.js - Orders Module
 
-let ordersPage=1, ordersSearch='', ordersStatusFilter='', ordersDriverFilter='', ordersCustFilter='', ordersPerPage=12;
+let ordersPage=1, ordersSearch='', ordersStatusFilter='', ordersDriverFilter='', ordersCustFilter='', ordersDateFilter='', ordersPerPage=12;
 let sigPad=null;
 let _ordersCustomers=[], _ordersDrivers=[];
 
@@ -35,7 +35,7 @@ async function renderOrders() {
         <div class="search-wrap" style="flex:1;min-width:200px;">
           <i class="fas fa-search"></i>
           <input class="form-input" id="orders-search-input"
-            placeholder="Search batch ID, customer, driver..."
+            placeholder="Search order ID, customer, driver..."
             autocomplete="off" spellcheck="false"
             oninput="ordersSearch=this.value;ordersPage=1;_refreshOrdersTable()"/>
         </div>
@@ -44,19 +44,35 @@ async function renderOrders() {
         </button>
         <span id="orders-count" style="font-size:0.82em;color:var(--text-muted);"></span>
       </div>
-      <div id="orders-filter-panel" style="display:none;grid-template-columns:1fr 1fr 1fr;gap:12px;margin-top:14px;padding-top:14px;border-top:1px solid var(--border);">
-        <div><label class="form-label">Status</label>
-          <select class="form-input form-select" id="orders-status-sel" onchange="ordersStatusFilter=this.value;ordersPage=1;_refreshOrdersTable()">
-            <option value="">All Statuses</option>${statusOpts}
-          </select></div>
-        <div><label class="form-label">Driver</label>
-          <select class="form-input form-select" id="orders-driver-sel" onchange="ordersDriverFilter=this.value;ordersPage=1;_refreshOrdersTable()">
-            <option value="">All Drivers</option>${driverOpts}
-          </select></div>
-        <div><label class="form-label">Customer</label>
-          <select class="form-input form-select" id="orders-cust-sel" onchange="ordersCustFilter=this.value;ordersPage=1;_refreshOrdersTable()">
-            <option value="">All Customers</option>${custOpts}
-          </select></div>
+      <div id="orders-filter-panel" style="display:none;margin-top:14px;padding-top:14px;border-top:1px solid var(--border);">
+        <!-- Date Range Row -->
+        <div style="display:flex;gap:8px;flex-wrap:wrap;margin-bottom:12px;align-items:center;">
+          <span style="font-size:0.8em;font-weight:700;text-transform:uppercase;letter-spacing:0.5px;color:var(--text-muted);margin-right:4px;">Period:</span>
+          ${['Day','Week','Month','Year'].map(p => `
+            <button class="btn btn-sm" id="orders-date-btn-${p.toLowerCase()}" onclick="ordersDateFilter='${p.toLowerCase()}';ordersPage=1;_syncOrdersDateBtns();_refreshOrdersTable()"
+              style="padding:5px 14px;font-weight:600;font-size:0.82em;">${p}
+            </button>`).join('')}
+          <button class="btn btn-sm btn-secondary" onclick="ordersDateFilter='';ordersPage=1;_syncOrdersDateBtns();_refreshOrdersTable()"
+            id="orders-date-btn-all" style="padding:5px 14px;font-size:0.82em;">All Time</button>
+        </div>
+        <!-- Field Filters Row -->
+        <div style="display:grid;grid-template-columns:1fr 1fr 1fr;gap:12px;">
+          <div><label class="form-label">Status</label>
+            <select class="form-input form-select" id="orders-status-sel" onchange="ordersStatusFilter=this.value;ordersPage=1;_refreshOrdersTable()">
+              <option value="">All Statuses</option>${statusOpts}
+            </select></div>
+          <div><label class="form-label">Driver</label>
+            <select class="form-input form-select" id="orders-driver-sel" onchange="ordersDriverFilter=this.value;ordersPage=1;_refreshOrdersTable()">
+              <option value="">All Drivers</option>${driverOpts}
+            </select></div>
+          <div><label class="form-label">Customer</label>
+            <select class="form-input form-select" id="orders-cust-sel" onchange="ordersCustFilter=this.value;ordersPage=1;_refreshOrdersTable()">
+              <option value="">All Customers</option>${custOpts}
+            </select></div>
+        </div>
+        <div style="margin-top:10px;text-align:right;">
+          <button class="btn btn-sm btn-secondary" onclick="clearOrdersFilter()"><i class="fas fa-times"></i> Clear All Filters</button>
+        </div>
       </div>
     </div>
 
@@ -64,8 +80,8 @@ async function renderOrders() {
       <div class="table-wrap">
         <table>
           <thead><tr>
-            <th>Batch ID</th><th>Customer</th><th>Pickup Date</th><th>Status</th>
-            <th>Paid Date</th><th>Total</th><th>Advance</th><th>Actions</th>
+            <th>Order ID</th><th>Customer</th><th>Pickup Date</th><th>Status</th>
+            <th>Paid Date</th><th>Total</th><th>Driver</th><th style="text-align:center;">Actions</th>
           </tr></thead>
           <tbody id="orders-table-body"></tbody>
         </table>
@@ -107,6 +123,25 @@ async function _refreshOrdersTable() {
   if (ordersStatusFilter) filtered = filtered.filter(o=>o.status===ordersStatusFilter);
   if (ordersDriverFilter) filtered = filtered.filter(o=>String(o.driver_id)===ordersDriverFilter);
   if (ordersCustFilter)   filtered = filtered.filter(o=>String(o.customer_id)===ordersCustFilter);
+  // Date period filter
+  if (ordersDateFilter) {
+    const now = new Date();
+    filtered = filtered.filter(o => {
+      const d = new Date(o.pickup_date || o.created_at);
+      if (isNaN(d)) return false;
+      if (ordersDateFilter === 'day') {
+        return d.toDateString() === now.toDateString();
+      } else if (ordersDateFilter === 'week') {
+        const startOfWeek = new Date(now); startOfWeek.setDate(now.getDate() - now.getDay()); startOfWeek.setHours(0,0,0,0);
+        return d >= startOfWeek;
+      } else if (ordersDateFilter === 'month') {
+        return d.getMonth() === now.getMonth() && d.getFullYear() === now.getFullYear();
+      } else if (ordersDateFilter === 'year') {
+        return d.getFullYear() === now.getFullYear();
+      }
+      return true;
+    });
+  }
   filtered.sort((a,b)=>new Date(b.created_at)-new Date(a.created_at));
 
   const {items,totalPages,total} = paginateData(filtered, ordersPage, ordersPerPage);
@@ -116,12 +151,13 @@ async function _refreshOrdersTable() {
   if (countEl) countEl.textContent = total + ' order' + (total!==1?'s':'');
 
   // Update filter button style
-  const hasFilter = ordersStatusFilter||ordersDriverFilter||ordersCustFilter;
+  const hasFilter = ordersStatusFilter||ordersDriverFilter||ordersCustFilter||ordersDateFilter;
   const filterBtn = document.getElementById('orders-filter-btn');
   if (filterBtn) {
     filterBtn.className = 'btn ' + (hasFilter?'btn-primary':'btn-secondary') + ' btn-sm';
     filterBtn.innerHTML = '<i class="fas fa-filter"></i> Filter' + (hasFilter?' ✓':'');
   }
+  _syncOrdersDateBtns();
 
   // Update tbody only
   tbody.innerHTML = items.length===0
@@ -130,20 +166,24 @@ async function _refreshOrdersTable() {
         const custName = getOrderCustomerName(o, cMap);
         const drv=dMap[o.driver_id];
         const inv=invMap[o.id];
+        const drvName = drv ? escapeHtml(drv.name) : '<span style="color:var(--text-muted);font-style:italic;">—</span>';
         return `<tr>
-          <td><strong>${o.batch_id||'—'}</strong></td>
+          <td><strong style="font-family:monospace;color:var(--primary);">${o.batch_id||'—'}</strong></td>
           <td>${escapeHtml(custName)}</td>
           <td>${formatDate(o.pickup_date)}</td>
           <td>${statusBadge(o.status)}</td>
           <td>${o.status === 'Paid' ? (o.payment_date ? formatDate(o.payment_date) : '—') : '—'}</td>
           <td><strong>${formatCurrency(o.total_amount)}</strong></td>
-          <td>${formatCurrency(o.advance_payment)}</td>
-          <td>
-            <div style="display:flex;gap:5px;flex-wrap:nowrap;white-space:nowrap;">
-              <button class="btn btn-secondary btn-sm" onclick="viewOrderDetails(${o.id})"><i class="fas fa-eye"></i> View</button>
-              ${canEditOrders() ? `<button class="btn btn-primary btn-sm" onclick="showEditOrderModal(${o.id})"><i class="fas fa-edit"></i> Edit</button>` : ''}
-              <button class="btn btn-success btn-sm"   onclick="printInvoiceByOrder(${o.id})" style="background:#10b981;border-color:#10b981;color:#fff;"><i class="fas fa-print"></i> Print</button>
-              ${isAdmin() ? `<button class="btn btn-danger btn-sm" onclick="deleteOrderConfirm(${o.id})"><i class="fas fa-trash"></i> Delete</button>` : ''}
+          <td>${drvName}</td>
+          <td style="text-align:center;">
+            <div style="display:inline-flex;align-items:center;gap:4px;">
+              <button class="btn btn-secondary btn-sm" onclick="viewOrderDetails(${o.id})" title="View Order"><i class="fas fa-eye"></i> View</button>
+              <button class="btn btn-sm" style="padding:5px 8px;background:var(--bg);border:1px solid var(--border);border-radius:6px;color:var(--text-muted);cursor:pointer;" onclick="_toggleOrderActions(this, ${o.id})" title="More actions"><i class="fas fa-ellipsis-v"></i></button>
+              <span class="order-extra-actions" style="display:none;">
+                ${canEditOrders() ? `<button class="btn btn-primary btn-sm" onclick="showEditOrderModal(${o.id})"><i class="fas fa-edit"></i> Edit</button>` : ''}
+                <button class="btn btn-success btn-sm" onclick="printInvoiceByOrder(${o.id})" style="background:#10b981;border-color:#10b981;color:#fff;"><i class="fas fa-print"></i> Print</button>
+                ${isAdmin() ? `<button class="btn btn-danger btn-sm" onclick="deleteOrderConfirm(${o.id})"><i class="fas fa-trash"></i> Delete</button>` : ''}
+              </span>
             </div>
           </td>
         </tr>`;
@@ -159,8 +199,33 @@ async function _refreshOrdersTable() {
 }
 
 function changeOrdersPage(p){ordersPage=p;renderOrders();}
-function toggleOrdersFilter(){const p=document.getElementById('orders-filter-panel');if(p)p.style.display=p.style.display==='none'?'grid':'none';}
-function clearOrdersFilter(){ordersStatusFilter='';ordersDriverFilter='';ordersCustFilter='';ordersPage=1;renderOrders();}
+function toggleOrdersFilter(){
+  const p=document.getElementById('orders-filter-panel');
+  if(p) p.style.display=p.style.display==='none'?'block':'none';
+}
+function clearOrdersFilter(){ordersStatusFilter='';ordersDriverFilter='';ordersCustFilter='';ordersDateFilter='';ordersPage=1;renderOrders();}
+
+function _toggleOrderActions(btn, orderId) {
+  const row = btn.closest('tr');
+  if (!row) return;
+  const extra = row.querySelector('.order-extra-actions');
+  if (!extra) return;
+  const isOpen = extra.style.display !== 'none';
+  extra.style.display = isOpen ? 'none' : 'inline-flex';
+  extra.style.gap = '4px';
+  btn.style.background = isOpen ? 'var(--bg)' : 'var(--primary)';
+  btn.style.color = isOpen ? 'var(--text-muted)' : '#fff';
+  btn.style.borderColor = isOpen ? 'var(--border)' : 'var(--primary)';
+}
+
+function _syncOrdersDateBtns() {
+  ['day','week','month','year','all'].forEach(p => {
+    const btn = document.getElementById('orders-date-btn-' + p);
+    if (!btn) return;
+    const isActive = (p === 'all') ? !ordersDateFilter : (ordersDateFilter === p);
+    btn.className = 'btn btn-sm ' + (isActive ? 'btn-primary' : 'btn-secondary');
+  });
+}
 
 async function deleteOrderConfirm(id) {
   if(!requireAdmin())return;
