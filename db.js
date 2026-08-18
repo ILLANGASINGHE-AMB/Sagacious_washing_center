@@ -30,7 +30,7 @@ const DB = {
   // ── Customers ─────────────────────────────
   async getCustomers() { return _q(_sb.from('customers').select('*').order('hotel_name')); },
   async addCustomer(data) {
-    const rows = await _q(_sb.from('customers').insert({ ...data, created_date: new Date().toISOString() }).select());
+    const rows = await _q(_sb.from('customers').insert({ created_date: new Date().toISOString(), ...data }).select());
     return rows[0].id;
   },
   async updateCustomer(id, data) { await _q(_sb.from('customers').update(data).eq('id', id)); },

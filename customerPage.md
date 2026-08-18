@@ -1,11 +1,74 @@
-in customers tab, if i backup the exisiting customers with their all details like summary and all the other details,
+the biggest change in the customers page,
 
-then delete a customer, 
+the main customers page is UI should changed completely like this,
 
-then restore the backup of customers,
+only show two coulmns in main page, as
 
-the summary and other data is not backing up and not getting resoted correctly as it was before, fix it
+    |No | Customer Name | Action Buttons |
+ 
+ex:-|01 | Customer A | View |
 
-customer joined date also get deleted with the delete and does not get resoted
 
-everything must be backedup and resoted
+when click |view| button
+
+opens a new page with this details as follows:
+
+buttons:-
+Edit , Delete in Customer Details Part
+
+Order History
+Custom Prices
+Graph View
+
+in Details Part
+
+---------------------------------------------------------------------------------|
+|                                                                                |
+|  CUSTOMER DETAILS                                                              |
+|   Name                                       |   Joined Date
+|   Contanct No                                
+|   Email
+|   Address                                                                     
+|                                  | Edit| |Delete|                                
+---------------------------------------------------------------------------------|
+|Details                                                                            |
+||ORDERS HISTORY| |Custom Prices| |Graph view|                                                               
+|                                                                                |
+|
+|---------------------------------------------------------------------------------
+
+if i click on |Order History| 
+the Details part of the page should show as follows:
+
+Order ID| Status | Total | Date | Order View Button |
+
+
+
+if click on Custom Prices Button, the details part of page switches to add custom prices page like in the format it as now
+
+if click on graph view,
+the detailspage should show a non linear graph of fluctuations in customer's orders
+values accounding to each date (y axis)
+and order value as (x axis)
+
+order value
+50K | 
+45K |
+40K |
+35K |
+30k |
+25K |
+20K |
+15K |
+10K |
+5K  |
+1K  |
+    ---------------------------------------------------------> days
+
+
+    these three buttons should view in same page as view switching mode, not new page openings
+
+    
+
+
+

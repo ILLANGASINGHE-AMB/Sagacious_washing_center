@@ -441,6 +441,14 @@ const STATUS_CHART_COLORS = {
 };
 function statusChartColor(status) { return STATUS_CHART_COLORS[status] || '#94a3b8'; }
 
+// Helper: format LKR value as short label (e.g. 1K, 50K, 1.5M)
+function fmtLkr(val) {
+  const num = parseFloat(val) || 0;
+  if (num >= 1_000_000) return (num / 1_000_000).toFixed(1).replace(/\.0$/, '') + 'M';
+  if (num >= 1_000)     return (num / 1_000).toFixed(1).replace(/\.0$/, '') + 'K';
+  return num.toFixed(0);
+}
+
 async function renderDashCharts(orders, payments) {
   const days = Array.from({ length: 14 }, (_, i) => {
     const d = new Date(); d.setDate(d.getDate() - (13 - i));
@@ -466,13 +474,6 @@ async function renderDashCharts(orders, payments) {
     borderRadius: 4,
     stack: 'orders'
   }));
-
-  // Helper: format LKR value as short label (e.g. 1.5K, 2M)
-  function fmtLkr(val) {
-    if (val >= 1_000_000) return (val / 1_000_000).toFixed(1).replace(/\.0$/, '') + 'M';
-    if (val >= 1_000)     return (val / 1_000).toFixed(1).replace(/\.0$/, '') + 'K';
-    return val.toFixed(0);
-  }
 
   const rCtx = document.getElementById('revenue-chart')?.getContext('2d');
   if (rCtx) {
@@ -574,8 +575,12 @@ async function renderUnpaidInvoices(invoices, passedOrders) {
 // CUSTOMERS
 // ─────────────────────────────────────────────
 let custPage = 1, custSearch = '', custPerPage = 12;
+let currentDetailCustomerId = null;
+let currentCustDetailTab = 'orders';
+let custOrderChartInstance = null;
 
 async function renderCustomers() {
+  currentDetailCustomerId = null;
   document.getElementById('page-title').textContent = 'Customers';
   if (document.getElementById('cust-table-body')) { await _refreshCustomersTable(); return; }
   document.getElementById('content').innerHTML = `
@@ -594,7 +599,7 @@ async function renderCustomers() {
       <div style="display:flex;gap:12px;align-items:center;">
         <div class="search-wrap" style="flex:1;">
           <i class="fas fa-search"></i>
-          <input class="form-input" id="cust-search-input" placeholder="Search hotel, contact, phone..."
+          <input class="form-input" id="cust-search-input" placeholder="Search customer name, contact, phone..."
             autocomplete="off" spellcheck="false"
             oninput="custSearch=this.value;custPage=1;_refreshCustomersTable()"/>
         </div>
@@ -604,7 +609,13 @@ async function renderCustomers() {
     <div class="card" style="padding:0;">
       <div class="table-wrap">
         <table>
-          <thead><tr><th>Hotel Name</th><th>Contact</th><th>Phone</th><th>Email</th><th>Since</th><th>Actions</th></tr></thead>
+          <thead>
+            <tr>
+              <th style="width:70px;text-align:center;">No</th>
+              <th>Customer Name</th>
+              <th style="width:140px;text-align:center;">Action</th>
+            </tr>
+          </thead>
           <tbody id="cust-table-body"></tbody>
         </table>
       </div>
@@ -618,32 +629,366 @@ async function _refreshCustomersTable() {
   const tbody = document.getElementById('cust-table-body');
   if (!tbody) { await renderCustomers(); return; }
   const customers = await DB.getCustomers();
-  let filtered = filterData(customers, custSearch, ['hotel_name','contact_person','phone','email']);
+  let filtered = filterData(customers, custSearch, ['hotel_name','contact_person','phone','email','address']);
   filtered = filtered.sort((a,b) => (a.hotel_name||'').localeCompare(b.hotel_name||''));
   const {items,totalPages,total} = paginateData(filtered, custPage, custPerPage);
   const countEl = document.getElementById('cust-count');
   if(countEl) countEl.textContent = total+' customer'+(total!==1?'s':'');
   tbody.innerHTML = items.length===0
-    ? `<tr><td colspan="6" style="text-align:center;padding:32px;color:var(--text-muted);">No customers</td></tr>`
-    : items.map(c => `<tr>
-        <td><strong>${escapeHtml(c.hotel_name)}</strong></td>
-        <td>${escapeHtml(c.contact_person||'—')}</td>
-        <td>${escapeHtml(c.phone||'—')}</td>
-        <td>${escapeHtml(c.email||'—')}</td>
-        <td>${formatDate(c.created_date)}</td>
-        <td><div style="display:flex;gap:5px;">
-          <button class="btn btn-sm" onclick="showCustomerProfileModal(${c.id})" title="Profile & Custom Prices" style="background:#8b5cf6; border-color:#7c3aed; color:#fff;"><i class="fas fa-tags"></i></button>
-          <button class="btn btn-primary btn-sm" onclick="showEditCustomerModal(${c.id})"><i class="fas fa-edit"></i></button>
-          <button class="btn btn-secondary btn-sm" onclick="viewCustomerOrders(${c.id})"><i class="fas fa-boxes-stacked"></i></button>
-          ${isAdmin() ? `<button class="btn btn-success btn-sm" onclick="printCustomerSalesSummary(${c.id})" style="background:#10b981; border-color:#10b981; font-weight:600;"><i class="fas fa-file-pdf"></i> SUMMARY</button>` : ''}
-          ${canDelete() ? `<button class="btn btn-danger btn-sm" onclick="deleteCustomerConfirm(${c.id})"><i class="fas fa-trash"></i></button>` : ''}
-        </div></td>
-      </tr>`).join('');
+    ? `<tr><td colspan="3" style="text-align:center;padding:32px;color:var(--text-muted);">No customers found</td></tr>`
+    : items.map((c, idx) => {
+        const rowNum = String((custPage - 1) * custPerPage + idx + 1).padStart(2, '0');
+        return `<tr>
+          <td style="text-align:center;font-weight:700;color:var(--text-muted);font-family:monospace;font-size:1.05em;">${rowNum}</td>
+          <td>
+            <div style="font-weight:700;font-size:1.02em;color:var(--text);">${escapeHtml(c.hotel_name)}</div>
+            ${c.phone ? `<div style="font-size:0.8em;color:var(--text-muted);margin-top:2px;"><i class="fas fa-phone" style="font-size:0.8em;margin-right:4px;"></i>${escapeHtml(c.phone)}</div>` : ''}
+          </td>
+          <td style="text-align:center;">
+            <button class="btn btn-primary btn-sm" onclick="openCustomerDetail(${c.id})" style="padding:6px 16px;font-weight:600;">
+              <i class="fas fa-eye"></i> View
+            </button>
+          </td>
+        </tr>`;
+      }).join('');
   const pg=document.getElementById('cust-pagination');
   if(pg) pg.innerHTML=`<span style="font-size:0.82em;color:var(--text-muted);">Page ${custPage} of ${totalPages}</span>`+renderPagination(custPage,totalPages,'changeCustPage');
 }
 
 function changeCustPage(p) { custPage=p; _refreshCustomersTable(); }
+
+async function openCustomerDetail(customerId, tab = 'orders') {
+  currentDetailCustomerId = customerId;
+  currentCustDetailTab = tab;
+
+  const [c, orders] = await Promise.all([
+    DB.getCustomer(customerId),
+    DB.getOrdersByCustomer(customerId)
+  ]);
+
+  if (!c) {
+    toast('Customer not found', 'error');
+    currentDetailCustomerId = null;
+    return renderCustomers();
+  }
+
+  document.getElementById('page-title').textContent = c.hotel_name || 'Customer Details';
+
+  const contentEl = document.getElementById('content');
+  contentEl.innerHTML = `
+    <div class="section-header" style="margin-bottom:16px;">
+      <div style="display:flex;align-items:center;gap:12px;">
+        <button class="btn btn-secondary btn-sm" onclick="currentDetailCustomerId=null;renderCustomers()"><i class="fas fa-arrow-left"></i> Back to Customers</button>
+        <span class="section-title" style="font-size:1.25em;">Customer Details</span>
+      </div>
+      <div style="display:flex;gap:8px;">
+        ${isAdmin() ? `<button class="btn btn-success btn-sm" onclick="printCustomerSalesSummary(${c.id})" style="background:#10b981; border-color:#10b981; font-weight:600;"><i class="fas fa-file-pdf"></i> Summary Report</button>` : ''}
+      </div>
+    </div>
+
+    <!-- Customer Details Card -->
+    <div class="card" style="margin-bottom:20px;border-left:4px solid var(--primary);">
+      <div style="display:flex;justify-content:space-between;align-items:flex-start;flex-wrap:wrap;gap:14px;margin-bottom:16px;">
+        <div>
+          <div style="font-size:0.75em;font-weight:700;color:var(--text-muted);text-transform:uppercase;letter-spacing:0.5px;margin-bottom:4px;">Customer Details</div>
+          <div style="font-family:'Playfair Display',serif;font-size:1.6em;font-weight:700;color:var(--text);">${escapeHtml(c.hotel_name)}</div>
+        </div>
+        <div style="display:flex;gap:8px;">
+          <button class="btn btn-primary btn-sm" onclick="showEditCustomerModal(${c.id})"><i class="fas fa-edit"></i> Edit</button>
+          ${canDelete() ? `<button class="btn btn-danger btn-sm" onclick="deleteCustomerConfirm(${c.id})"><i class="fas fa-trash"></i> Delete</button>` : ''}
+        </div>
+      </div>
+
+      <div style="display:grid;grid-template-columns:repeat(auto-fit,minmax(200px,1fr));gap:16px;padding:16px;background:var(--bg);border-radius:10px;border:1px solid var(--border);">
+        <div>
+          <div style="font-size:0.72em;text-transform:uppercase;color:var(--text-muted);font-weight:700;letter-spacing:0.5px;">Contact Person</div>
+          <div style="font-weight:600;font-size:0.95em;color:var(--text);margin-top:4px;"><i class="fas fa-user-tie" style="color:var(--primary);margin-right:6px;width:14px;"></i>${escapeHtml(c.contact_person || '—')}</div>
+        </div>
+        <div>
+          <div style="font-size:0.72em;text-transform:uppercase;color:var(--text-muted);font-weight:700;letter-spacing:0.5px;">Phone Number</div>
+          <div style="font-weight:600;font-size:0.95em;color:var(--text);margin-top:4px;"><i class="fas fa-phone" style="color:var(--success);margin-right:6px;width:14px;"></i>${escapeHtml(c.phone || '—')}</div>
+        </div>
+        <div>
+          <div style="font-size:0.72em;text-transform:uppercase;color:var(--text-muted);font-weight:700;letter-spacing:0.5px;">Email Address</div>
+          <div style="font-weight:600;font-size:0.95em;color:var(--text);margin-top:4px;"><i class="fas fa-envelope" style="color:#8b5cf6;margin-right:6px;width:14px;"></i>${escapeHtml(c.email || '—')}</div>
+        </div>
+        <div>
+          <div style="font-size:0.72em;text-transform:uppercase;color:var(--text-muted);font-weight:700;letter-spacing:0.5px;">Joined Date</div>
+          <div style="font-weight:600;font-size:0.95em;color:var(--text);margin-top:4px;"><i class="fas fa-calendar-alt" style="color:#06b6d4;margin-right:6px;width:14px;"></i>${formatDate(c.created_date)}</div>
+        </div>
+        <div style="grid-column:1 / -1;">
+          <div style="font-size:0.72em;text-transform:uppercase;color:var(--text-muted);font-weight:700;letter-spacing:0.5px;">Address</div>
+          <div style="font-weight:600;font-size:0.95em;color:var(--text);margin-top:4px;"><i class="fas fa-map-marker-alt" style="color:#f59e0b;margin-right:6px;width:14px;"></i>${escapeHtml(c.address || '—')}</div>
+        </div>
+      </div>
+    </div>
+
+    <!-- Details Part (Switchable Tabs) -->
+    <div class="card" style="padding:0;overflow:hidden;">
+      <div style="display:flex;align-items:center;border-bottom:1px solid var(--border);background:var(--card-bg);padding:10px 16px;gap:10px;flex-wrap:wrap;">
+        <span style="font-size:0.8em;font-weight:700;text-transform:uppercase;letter-spacing:0.5px;color:var(--text-muted);margin-right:4px;">Details:</span>
+        <button id="cust-tab-btn-orders" class="btn btn-sm ${currentCustDetailTab === 'orders' ? 'btn-primary' : 'btn-secondary'}" onclick="switchCustomerDetailTab(${c.id}, 'orders')">
+          <i class="fas fa-boxes-stacked"></i> Order History
+        </button>
+        <button id="cust-tab-btn-prices" class="btn btn-sm ${currentCustDetailTab === 'prices' ? 'btn-primary' : 'btn-secondary'}" onclick="switchCustomerDetailTab(${c.id}, 'prices')">
+          <i class="fas fa-tags"></i> Custom Prices
+        </button>
+        <button id="cust-tab-btn-graph" class="btn btn-sm ${currentCustDetailTab === 'graph' ? 'btn-primary' : 'btn-secondary'}" onclick="switchCustomerDetailTab(${c.id}, 'graph')">
+          <i class="fas fa-chart-line"></i> Graph View
+        </button>
+      </div>
+
+      <div id="cust-detail-tab-body" style="padding:20px;">
+      </div>
+    </div>
+  `;
+
+  await renderCustomerDetailTabBody(c, orders, currentCustDetailTab);
+}
+
+async function switchCustomerDetailTab(customerId, tab) {
+  currentCustDetailTab = tab;
+  ['orders', 'prices', 'graph'].forEach(t => {
+    const btn = document.getElementById('cust-tab-btn-' + t);
+    if (btn) {
+      btn.className = (t === tab) ? 'btn btn-sm btn-primary' : 'btn btn-sm btn-secondary';
+    }
+  });
+
+  const [c, orders] = await Promise.all([
+    DB.getCustomer(customerId),
+    DB.getOrdersByCustomer(customerId)
+  ]);
+  if (c) {
+    await renderCustomerDetailTabBody(c, orders, tab);
+  }
+}
+
+async function renderCustomerDetailTabBody(c, orders, tab) {
+  const container = document.getElementById('cust-detail-tab-body');
+  if (!container) return;
+
+  if (custOrderChartInstance) {
+    try { custOrderChartInstance.destroy(); } catch(e) {}
+    custOrderChartInstance = null;
+  }
+
+  if (tab === 'orders') {
+    const sortedOrders = [...(orders || [])].sort((a,b) => new Date(b.created_at || b.pickup_date || 0) - new Date(a.created_at || a.pickup_date || 0));
+    container.innerHTML = `
+      <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:14px;">
+        <div style="font-weight:700;font-family:'Playfair Display',serif;font-size:1.15em;">Order History (${sortedOrders.length})</div>
+      </div>
+      <div class="table-wrap">
+        <table>
+          <thead>
+            <tr>
+              <th>Order ID</th>
+              <th>Status</th>
+              <th>Total</th>
+              <th>Date</th>
+              <th style="text-align:center;width:120px;">Action</th>
+            </tr>
+          </thead>
+          <tbody>
+            ${sortedOrders.map(o => `
+              <tr>
+                <td><strong>${escapeHtml(o.batch_id || '#' + o.id)}</strong></td>
+                <td>${statusBadge(o.status)}</td>
+                <td style="font-weight:700;">${formatCurrency(o.total_amount)}</td>
+                <td>${formatDate(o.created_at || o.pickup_date)}</td>
+                <td style="text-align:center;">
+                  <button class="btn btn-primary btn-sm" onclick="navigate('orders'); setTimeout(()=>viewOrderDetails(${o.id}),200)">
+                    <i class="fas fa-eye"></i> View
+                  </button>
+                </td>
+              </tr>
+            `).join('') || `<tr><td colspan="5" style="text-align:center;padding:32px;color:var(--text-muted);">No order history found for this customer</td></tr>`}
+          </tbody>
+        </table>
+      </div>
+    `;
+  } else if (tab === 'prices') {
+    const items = await DB.getItems();
+    items.sort((a,b) => (a.item_name||'').localeCompare(b.item_name||''));
+    const customPrices = c.custom_prices || {};
+
+    const itemsRowsHTML = items.map(item => {
+      const custom = customPrices[item.id] || {};
+      const dcVal = custom.dry_clean != null ? custom.dry_clean : '';
+      const wpVal = custom.wash_press != null ? custom.wash_press : '';
+      const wdVal = custom.wash_dry != null ? custom.wash_dry : '';
+
+      return `
+        <tr class="cust-price-row" data-item-id="${item.id}" data-search-text="${escapeHtml(item.item_name.toLowerCase())} ${escapeHtml((item.item_id||'').toLowerCase())}">
+          <td style="padding:10px 12px; border-top: 1px solid var(--border);">
+            <strong>${escapeHtml(item.item_name)}</strong>
+            <div style="font-size:0.78em;color:var(--text-muted);font-family:monospace;margin-top:2px;">Code: ${escapeHtml(item.item_id || '—')}</div>
+          </td>
+          <td style="padding:8px; border-top: 1px solid var(--border);">
+            <input type="number" step="0.01" min="0" class="form-input cprice-dc" value="${dcVal}" placeholder="${item.dry_clean_price || 0}" style="padding:6px 10px;font-size:0.9em;width:100%;margin:0;"/>
+          </td>
+          <td style="padding:8px; border-top: 1px solid var(--border);">
+            <input type="number" step="0.01" min="0" class="form-input cprice-wp" value="${wpVal}" placeholder="${item.wash_press_price || 0}" style="padding:6px 10px;font-size:0.9em;width:100%;margin:0;"/>
+          </td>
+          <td style="padding:8px; border-top: 1px solid var(--border);">
+            <input type="number" step="0.01" min="0" class="form-input cprice-wd" value="${wdVal}" placeholder="${item.wash_dry_price || 0}" style="padding:6px 10px;font-size:0.9em;width:100%;margin:0;"/>
+          </td>
+        </tr>`;
+    }).join('');
+
+    container.innerHTML = `
+      <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:12px;gap:12px;flex-wrap:wrap;">
+        <div>
+          <div style="font-family:'Playfair Display',serif;font-size:1.15em;font-weight:700;color:var(--primary);">Custom Laundry Prices</div>
+          <div style="font-size:0.8em;color:var(--text-muted);margin-top:2px;"><i class="fas fa-info-circle"></i> Leave inputs blank to use default catalog prices (shown as placeholders).</div>
+        </div>
+        <div style="display:flex;gap:10px;align-items:center;flex-wrap:wrap;">
+          <div class="search-wrap" style="width:240px;margin:0;">
+            <i class="fas fa-search"></i>
+            <input class="form-input" placeholder="Search items..." oninput="filterCustomerProfileItems(this.value)" autocomplete="off" spellcheck="false"/>
+          </div>
+          ${!isDriver() ? `<button class="btn btn-primary btn-sm" onclick="saveCustomerProfilePrices(${c.id})"><i class="fas fa-save"></i> Save Custom Prices</button>` : ''}
+        </div>
+      </div>
+
+      <div class="table-wrap" style="max-height:420px;overflow-y:auto;border:1px solid var(--border);border-radius:8px;">
+        <table style="border-collapse:collapse;width:100%;">
+          <thead>
+            <tr style="position:sticky;top:0;background:var(--bg);z-index:10;box-shadow:0 1px 0 var(--border);">
+              <th style="padding:10px 12px;text-align:left;background:var(--bg);">Item Name</th>
+              <th style="padding:10px 12px;width:130px;background:var(--bg);">Dry Clean (LKR)</th>
+              <th style="padding:10px 12px;width:130px;background:var(--bg);">Wash & Press (LKR)</th>
+              <th style="padding:10px 12px;width:130px;background:var(--bg);">Wash & Dry (LKR)</th>
+            </tr>
+          </thead>
+          <tbody id="cust-prices-table-body">
+            ${itemsRowsHTML}
+          </tbody>
+        </table>
+      </div>
+
+      ${!isDriver() ? `
+        <div style="margin-top:16px;display:flex;justify-content:flex-end;">
+          <button class="btn btn-primary" onclick="saveCustomerProfilePrices(${c.id})"><i class="fas fa-save"></i> Save Custom Prices</button>
+        </div>
+      ` : ''}
+    `;
+  } else if (tab === 'graph') {
+    container.innerHTML = `
+      <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:16px;flex-wrap:wrap;gap:8px;">
+        <div>
+          <div style="font-family:'Playfair Display',serif;font-size:1.15em;font-weight:700;">Order Value Fluctuations</div>
+          <div style="font-size:0.82em;color:var(--text-muted);">Non-linear timeline of total order values (LKR) across order dates</div>
+        </div>
+      </div>
+      <div id="cust-chart-wrap" style="background:var(--bg);padding:16px;border-radius:10px;border:1px solid var(--border);">
+        <div class="chart-container" style="height:350px;position:relative;">
+          <canvas id="cust-order-chart"></canvas>
+        </div>
+      </div>
+    `;
+
+    renderCustomerOrderGraph(orders || []);
+  }
+}
+
+function renderCustomerOrderGraph(orders) {
+  const chartCanvas = document.getElementById('cust-order-chart');
+  if (!chartCanvas) return;
+
+  const validOrders = (orders || []).filter(o => o.created_at || o.pickup_date);
+  if (!validOrders.length) {
+    const wrap = document.getElementById('cust-chart-wrap');
+    if (wrap) {
+      wrap.innerHTML = `<div style="text-align:center;padding:48px 20px;color:var(--text-muted);"><i class="fas fa-chart-line" style="font-size:2.8em;opacity:0.3;margin-bottom:12px;display:block;"></i>No order history available yet to plot graph.</div>`;
+    }
+    return;
+  }
+
+  // Aggregate total order amounts per date (YYYY-MM-DD)
+  const dateMap = {};
+  validOrders.forEach(o => {
+    const rawDate = o.created_at || o.pickup_date;
+    const dateKey = rawDate.slice(0, 10);
+    dateMap[dateKey] = (dateMap[dateKey] || 0) + (parseFloat(o.total_amount) || 0);
+  });
+
+  // Sort dates chronologically (oldest to newest)
+  const sortedDates = Object.keys(dateMap).sort();
+  const labels = sortedDates.map(d => new Date(d).toLocaleDateString('en-GB', { day: 'numeric', month: 'short', year: 'numeric' }));
+  const values = sortedDates.map(d => dateMap[d]);
+
+  const isDark = document.documentElement.classList.contains('dark');
+  const gridColor = isDark ? 'rgba(255,255,255,0.07)' : 'rgba(0,0,0,0.07)';
+  const textColor = isDark ? '#94a3b8' : '#64748b';
+
+  const ctx = chartCanvas.getContext('2d');
+  
+  // Gradient fill under the smooth curve
+  const gradient = ctx.createLinearGradient(0, 0, 0, 320);
+  gradient.addColorStop(0, 'rgba(139, 92, 246, 0.35)');
+  gradient.addColorStop(1, 'rgba(139, 92, 246, 0.02)');
+
+  custOrderChartInstance = new Chart(ctx, {
+    type: 'line',
+    data: {
+      labels,
+      datasets: [{
+        label: 'Order Value (LKR)',
+        data: values,
+        borderColor: '#8b5cf6',
+        backgroundColor: gradient,
+        borderWidth: 2.5,
+        tension: 0.38, // Smooth non-linear curve
+        fill: true,
+        pointBackgroundColor: '#8b5cf6',
+        pointBorderColor: isDark ? '#1e293b' : '#ffffff',
+        pointBorderWidth: 2,
+        pointRadius: 5,
+        pointHoverRadius: 8,
+        pointHoverBackgroundColor: '#7c3aed',
+        pointHoverBorderColor: '#ffffff',
+        pointHoverBorderWidth: 2
+      }]
+    },
+    options: {
+      responsive: true,
+      maintainAspectRatio: false,
+      interaction: {
+        mode: 'index',
+        intersect: false
+      },
+      plugins: {
+        legend: {
+          display: true,
+          position: 'top',
+          labels: { color: textColor, font: { size: 11 }, boxWidth: 12 }
+        },
+        tooltip: {
+          callbacks: {
+            label: c => `Order Value: LKR ${Number(c.parsed.y).toLocaleString('en-LK', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`
+          }
+        }
+      },
+      scales: {
+        x: {
+          grid: { color: gridColor },
+          ticks: { color: textColor, font: { size: 10 }, maxRotation: 45, minRotation: 0 }
+        },
+        y: {
+          beginAtZero: true,
+          grid: { color: gridColor },
+          ticks: {
+            color: textColor,
+            font: { size: 10 },
+            callback: function(value) { return fmtLkr(value); }
+          }
+        }
+      }
+    }
+  });
+}
 
 function showAddCustomerModal() {
   createModal('add-cust-modal','Add Hotel Customer',`
@@ -665,6 +1010,7 @@ function showAddCustomerModal() {
     </div>`);
   showModal('add-cust-modal');
 }
+
 async function saveNewCustomer() {
   const hotel_name = document.getElementById('c-hotel').value.trim();
   const phone      = document.getElementById('c-phone').value.trim();
@@ -685,8 +1031,11 @@ async function saveNewCustomer() {
     { id: custId, hotel_name, phone, contact_person: contact, address, email },
     'Customer'
   );
-  hideModal('add-cust-modal'); toast('Customer added!'); renderCustomers();
+  hideModal('add-cust-modal');
+  toast('Customer added!');
+  renderCustomers();
 }
+
 async function showEditCustomerModal(id) {
   const c = await DB.getCustomer(id); if(!c) return;
   createModal('edit-cust-modal','Edit Customer',`
@@ -708,6 +1057,7 @@ async function showEditCustomerModal(id) {
     </div>`);
   showModal('edit-cust-modal');
 }
+
 async function saveEditCustomer(id) {
   const hotel_name = document.getElementById('ec-hotel').value.trim();
   const phone      = document.getElementById('ec-phone').value.trim();
@@ -744,8 +1094,15 @@ async function saveEditCustomer(id) {
     );
   }
 
-  hideModal('edit-cust-modal'); toast('Customer updated!'); renderCustomers();
+  hideModal('edit-cust-modal');
+  toast('Customer updated!');
+  if (currentDetailCustomerId === id) {
+    openCustomerDetail(id, currentCustDetailTab);
+  } else {
+    renderCustomers();
+  }
 }
+
 async function deleteCustomerConfirm(id) {
   if (!canDelete()) return toast('Admin permission required to delete customers', 'error');
   const cust = await DB.getCustomer(id);
@@ -761,6 +1118,7 @@ async function deleteCustomerConfirm(id) {
         'Customer'
       );
       toast('Customer deleted successfully');
+      currentDetailCustomerId = null;
       renderCustomers();
     } catch (err) {
       console.error('Delete customer error:', err);
@@ -768,21 +1126,9 @@ async function deleteCustomerConfirm(id) {
     }
   });
 }
+
 async function viewCustomerOrders(customerId) {
-  const [customer, orders] = await Promise.all([DB.getCustomer(customerId), DB.getOrdersByCustomer(customerId)]);
-  createModal('cust-orders-modal',`Orders: ${escapeHtml(customer?.hotel_name)}`,`
-    <div class="table-wrap"><table>
-      <thead><tr><th>Batch ID</th><th>Status</th><th>Total</th><th>Date</th><th></th></tr></thead>
-      <tbody>
-        ${orders.sort((a,b)=>new Date(b.created_at)-new Date(a.created_at)).map(o=>`<tr>
-          <td><strong>${o.batch_id}</strong></td><td>${statusBadge(o.status)}</td>
-          <td>${formatCurrency(o.total_amount)}</td><td>${formatDate(o.created_at)}</td>
-          <td><button class="btn btn-primary btn-sm" onclick="hideModal('cust-orders-modal');navigate('orders');setTimeout(()=>viewOrderDetails(${o.id}),200)"><i class="fas fa-eye"></i></button></td>
-        </tr>`).join('')||`<tr><td colspan="5" style="text-align:center;padding:24px;color:var(--text-muted);">No orders</td></tr>`}
-      </tbody>
-    </table></div>
-    <div style="margin-top:12px;text-align:right;"><button class="btn btn-secondary" onclick="hideModal('cust-orders-modal')">Close</button></div>`);
-  showModal('cust-orders-modal');
+  openCustomerDetail(customerId, 'orders');
 }
 
 async function printCustomerSalesSummary(customerId) {
@@ -1047,12 +1393,13 @@ async function deleteDriverConfirm(id) {
 async function exportCustomers() {
   const all = await DB.getCustomers();
   const exportData = {
-    type:'swc_customers_backup', version:1,
+    type:'swc_customers_backup', version:2,
     exported_at:new Date().toISOString(), count:all.length,
     customers:all.map(c=>({
       hotel_name:c.hotel_name, contact_person:c.contact_person||'',
       phone:c.phone||'', email:c.email||'',
-      address:c.address||'', created_date:c.created_date||''
+      address:c.address||'', created_date:c.created_date||'',
+      custom_prices:c.custom_prices||{}
     }))
   };
   const blob=new Blob([JSON.stringify(exportData,null,2)],{type:'application/json'});
@@ -1080,10 +1427,17 @@ async function importCustomers(input) {
         try {
           const match = (rec.phone&&byPhone[rec.phone]) || byName[rec.hotel_name?.toLowerCase().trim()];
           if(match){
-            await DB.updateCustomer(match.id,{hotel_name:rec.hotel_name,contact_person:rec.contact_person||'',phone:rec.phone||'',email:rec.email||'',address:rec.address||''});
+            const updateData = {hotel_name:rec.hotel_name,contact_person:rec.contact_person||'',phone:rec.phone||'',email:rec.email||'',address:rec.address||''};
+            if(rec.created_date) updateData.created_date = rec.created_date;
+            if(rec.custom_prices && Object.keys(rec.custom_prices).length > 0) updateData.custom_prices = rec.custom_prices;
+            await DB.updateCustomer(match.id, updateData);
             updated++;
           } else {
-            await DB.addCustomer({hotel_name:rec.hotel_name,contact_person:rec.contact_person||'',phone:rec.phone||'',email:rec.email||'',address:rec.address||''});
+            const addData = {hotel_name:rec.hotel_name,contact_person:rec.contact_person||'',phone:rec.phone||'',email:rec.email||'',address:rec.address||''};
+            if(rec.custom_prices && Object.keys(rec.custom_prices).length > 0) addData.custom_prices = rec.custom_prices;
+            // Use the original created_date if available, otherwise DB.addCustomer will set it
+            if(rec.created_date) addData.created_date = rec.created_date;
+            await DB.addCustomer(addData);
             added++;
           }
         } catch(e){errors++;console.error(e);}
@@ -2316,84 +2670,7 @@ async function printBatchSummaryReceipt(details, totalAmount) {
 }
 
 async function showCustomerProfileModal(id) {
-  const [c, items] = await Promise.all([DB.getCustomer(id), DB.getItems()]);
-  if (!c) return;
-
-  const customPrices = c.custom_prices || {};
-
-  // Sort items alphabetically by name
-  items.sort((a,b) => (a.item_name||'').localeCompare(b.item_name||''));
-
-  const itemsRowsHTML = items.map(item => {
-    const custom = customPrices[item.id] || {};
-    const dcVal = custom.dry_clean != null ? custom.dry_clean : '';
-    const wpVal = custom.wash_press != null ? custom.wash_press : '';
-    const wdVal = custom.wash_dry != null ? custom.wash_dry : '';
-
-    return `
-      <tr class="cust-price-row" data-item-id="${item.id}" data-search-text="${escapeHtml(item.item_name.toLowerCase())} ${escapeHtml(item.item_id.toLowerCase())}">
-        <td style="padding:10px 12px; border-top: 1px solid var(--border);">
-          <strong>${escapeHtml(item.item_name)}</strong>
-          <div style="font-size:0.78em;color:var(--text-muted);font-family:monospace;margin-top:2px;">Code: ${escapeHtml(item.item_id)}</div>
-        </td>
-        <td style="padding:8px; border-top: 1px solid var(--border);">
-          <input type="number" step="0.01" min="0" class="form-input cprice-dc" value="${dcVal}" placeholder="${item.dry_clean_price || 0}" style="padding:6px 10px;font-size:0.9em;width:100%;margin:0;"/>
-        </td>
-        <td style="padding:8px; border-top: 1px solid var(--border);">
-          <input type="number" step="0.01" min="0" class="form-input cprice-wp" value="${wpVal}" placeholder="${item.wash_press_price || 0}" style="padding:6px 10px;font-size:0.9em;width:100%;margin:0;"/>
-        </td>
-        <td style="padding:8px; border-top: 1px solid var(--border);">
-          <input type="number" step="0.01" min="0" class="form-input cprice-wd" value="${wdVal}" placeholder="${item.wash_dry_price || 0}" style="padding:6px 10px;font-size:0.9em;width:100%;margin:0;"/>
-        </td>
-      </tr>`;
-  }).join('');
-
-  createModal('customer-profile-modal', `Customer Profile & Custom Prices`, `
-    <div style="display:grid;grid-template-columns:1fr 1fr;gap:16px;margin-bottom:20px;background:var(--bg);padding:14px;border-radius:10px;">
-      <div>
-        <div class="form-label" style="font-weight:700;color:var(--primary);font-size:1.1em;margin-bottom:4px;">${escapeHtml(c.hotel_name)}</div>
-        <div style="font-size:0.85em;color:var(--text-muted);margin-bottom:2px;"><i class="fas fa-user-tie" style="width:16px;"></i> ${escapeHtml(c.contact_person || '—')}</div>
-        <div style="font-size:0.85em;color:var(--text-muted);"><i class="fas fa-map-marker-alt" style="width:16px;"></i> ${escapeHtml(c.address || '—')}</div>
-      </div>
-      <div>
-        <div style="font-size:0.85em;color:var(--text-muted);margin-top:4px;margin-bottom:2px;"><i class="fas fa-phone" style="width:16px;"></i> ${escapeHtml(c.phone || '—')}</div>
-        <div style="font-size:0.85em;color:var(--text-muted);margin-bottom:2px;"><i class="fas fa-envelope" style="width:16px;"></i> ${escapeHtml(c.email || '—')}</div>
-        <div style="font-size:0.85em;color:var(--text-muted);"><i class="fas fa-calendar-alt" style="width:16px;"></i> Customer since: ${formatDate(c.created_date)}</div>
-      </div>
-    </div>
-
-    <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:12px;gap:12px;flex-wrap:wrap;">
-      <span style="font-family:'Playfair Display',serif;font-size:1.1em;font-weight:700;color:var(--primary);">Custom Laundry Prices</span>
-      <div class="search-wrap" style="width:250px;margin:0;">
-        <i class="fas fa-search"></i>
-        <input class="form-input" placeholder="Search items..." oninput="filterCustomerProfileItems(this.value)" autocomplete="off" spellcheck="false"/>
-      </div>
-    </div>
-    
-    <div style="font-size:0.8em;color:var(--text-muted);margin-bottom:10px;"><i class="fas fa-info-circle"></i> Leave price inputs empty to use the default catalog prices (displayed as placeholders).</div>
-
-    <div class="table-wrap" style="max-height:300px;overflow-y:auto;border:1px solid var(--border);border-radius:8px;">
-      <table style="border-collapse:collapse;width:100%;">
-        <thead>
-          <tr style="position:sticky;top:0;background:var(--bg);z-index:10;box-shadow:0 1px 0 var(--border);">
-            <th style="padding:10px 12px;text-align:left;background:var(--bg);">Item Name</th>
-            <th style="padding:10px 12px;width:120px;background:var(--bg);">Dry Clean</th>
-            <th style="padding:10px 12px;width:120px;background:var(--bg);">Wash & Press</th>
-            <th style="padding:10px 12px;width:120px;background:var(--bg);">Wash & Dry</th>
-          </tr>
-        </thead>
-        <tbody id="cust-prices-table-body">
-          ${itemsRowsHTML}
-        </tbody>
-      </table>
-    </div>
-
-    <div style="display:flex;gap:10px;justify-content:flex-end;margin-top:18px;padding-top:14px;border-top:1px solid var(--border);">
-      <button class="btn btn-secondary" onclick="hideModal('customer-profile-modal')">Close</button>
-      ${!isDriver() ? `<button class="btn btn-primary" onclick="saveCustomerProfilePrices(${c.id})"><i class="fas fa-save"></i> Save Custom Prices</button>` : ''}
-    </div>`, 'modal-lg');
-  
-  showModal('customer-profile-modal');
+  openCustomerDetail(id, 'prices');
 }
 
 function filterCustomerProfileItems(q) {
@@ -2415,9 +2692,9 @@ async function saveCustomerProfilePrices(id) {
 
   document.querySelectorAll('#cust-prices-table-body .cust-price-row').forEach(row => {
     const itemId = row.dataset.itemId;
-    const dcVal = row.querySelector('.cprice-dc').value.trim();
-    const wpVal = row.querySelector('.cprice-wp').value.trim();
-    const wdVal = row.querySelector('.cprice-wd').value.trim();
+    const dcVal = row.querySelector('.cprice-dc')?.value.trim() ?? '';
+    const wpVal = row.querySelector('.cprice-wp')?.value.trim() ?? '';
+    const wdVal = row.querySelector('.cprice-wd')?.value.trim() ?? '';
 
     const custom = {};
     let hasCustom = false;
@@ -2454,7 +2731,15 @@ async function saveCustomerProfilePrices(id) {
     await DB.updateCustomer(id, { custom_prices: customPricesMap });
     hideModal('customer-profile-modal');
     toast('Custom prices updated successfully!');
-    renderCustomers();
+    if (currentDetailCustomerId === id) {
+      const [c, orders] = await Promise.all([
+        DB.getCustomer(id),
+        DB.getOrdersByCustomer(id)
+      ]);
+      if (c) await renderCustomerDetailTabBody(c, orders, 'prices');
+    } else {
+      renderCustomers();
+    }
   } catch (err) {
     toast('Failed to save prices: ' + (err.message || err), 'error');
   }
