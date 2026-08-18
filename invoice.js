@@ -1659,12 +1659,12 @@ async function renderDeductions() {
           <thead>
             <tr>
               <th>Date</th>
-              <th>Invoice #</th>
+              <th>OrderID</th>
               <th>Customer</th>
-              <th style="text-align:right;">Original Total</th>
+              <th style="text-align:right;">Total Paid Amount</th>
               <th style="text-align:right;color:#ef4444;">Deduction Amt</th>
-              <th style="text-align:right;color:#16a34a;">Final Paid Amt</th>
               <th>Reason</th>
+              <th style="text-align:right;color:#16a34a;">Final Paid Amt</th>
               <th>Actions</th>
             </tr>
           </thead>
@@ -1714,16 +1714,16 @@ async function _refreshDeductionsTable() {
       return `
         <tr style="border-bottom:1px solid var(--border);">
           <td>${formatDate(d.created_at)}</td>
-          <td><strong>${d.invoice_number}</strong></td>
+          <td><strong>${order ? order.id : '—'}</strong></td>
           <td>${escapeHtml(customerName)}</td>
           <td style="text-align:right;"><strong>${formatCurrency(d.original_amount)}</strong></td>
           <td style="text-align:right;color:#ef4444;font-weight:700;">-${formatCurrency(d.deduction_amount)}</td>
-          <td style="text-align:right;color:#16a34a;font-weight:700;">${formatCurrency(d.final_amount)}</td>
           <td><span style="font-size:0.9em;color:var(--text-muted);">${escapeHtml(d.reason || '—')}</span></td>
+          <td style="text-align:right;color:#16a34a;font-weight:700;">${formatCurrency(d.final_amount)}</td>
           <td>
             <div style="display:flex;gap:6px;">
               <button class="btn btn-secondary btn-sm" onclick="printInvoice(${d.invoice_id})"><i class="fas fa-print"></i> Print</button>
-              ${isAdmin() ? `<button class="btn btn-danger btn-sm" onclick="deleteDeductionConfirm(${d.id}, ${d.invoice_id}, ${d.deduction_amount})"><i class="fas fa-trash"></i> Delete</button>` : ''}
+              ${isAdmin() ? `<button class="btn btn-sm" style="background:#ea580c;border-color:#d97706;color:#fff;" onclick="undoDeductionConfirm(${d.id}, ${d.invoice_id}, ${d.deduction_amount})"><i class="fas fa-undo"></i> Undo</button>` : ''}
             </div>
           </td>
         </tr>
@@ -1735,35 +1735,39 @@ async function _refreshDeductionsTable() {
   }
 }
 
-async function deleteDeductionConfirm(deductionId, invoiceId, amount) {
-  confirmDialog(`Are you sure you want to revert this deduction of LKR ${amount.toFixed(2)}? This deduction entry will be deleted and the invoice balance updated.`, async () => {
+async function undoDeductionConfirm(deductionId, invoiceId, amount) {
+  confirmDialog(`Are you sure you want to undo this deduction of LKR ${amount.toFixed(2)}? The amount will be re-added to the total paid amount and the final paid amount will be updated accordingly.`, async () => {
     try {
       const inv = await DB.getInvoice(invoiceId);
       if (inv) {
         const newDeduct = Math.max(0, (inv.deduction_amount || 0) - amount);
         const payments = await DB.getPaymentsByInvoice(invoiceId);
-        const totalPaid = payments.reduce((s, p) => s + p.amount, 0) + (inv.advance_payment || 0);
-        const newBalance = Math.max(0, inv.total_amount - newDeduct - totalPaid);
-        const paidStatus = newBalance <= 0 ? 'Paid' : 'Unpaid';
+        const fin = Financials.computeInvoiceFinancials({ ...inv, deduction_amount: newDeduct }, [], payments);
 
         await DB.updateInvoice(invoiceId, {
           deduction_amount: newDeduct,
-          balance: newBalance,
-          paid_status: paidStatus
+          balance: fin.balance,
+          paid_status: fin.status
         });
 
-        await DB.updateOrder(inv.order_id, {
-          status: paidStatus
-        });
-        refreshCustomerDetailForOrder(inv.order_id);
+        if (inv.batch_order_ids) {
+          const orderIds = inv.batch_order_ids.split(',').map(Number);
+          for (const oId of orderIds) {
+            await DB.updateOrder(oId, { status: fin.status });
+            refreshCustomerDetailForOrder(oId);
+          }
+        } else {
+          await DB.updateOrder(inv.order_id, { status: fin.status });
+          refreshCustomerDetailForOrder(inv.order_id);
+        }
       }
 
       await DB.deleteDeduction(deductionId);
 
-      toast('Deduction successfully reverted!');
+      toast('Deduction undone successfully!');
       await _refreshDeductionsTable();
     } catch (err) {
-      toast('Error reverting deduction: ' + (err.message || err), 'error');
+      toast('Error undoing deduction: ' + (err.message || err), 'error');
     }
-  });
+  }, 'Undo Deduction');
 }
