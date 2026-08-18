@@ -2217,8 +2217,687 @@ async function importDrivers(input) {
   } catch(e){ toast('Failed to read file: '+(e.message||e),'error'); }
 }
 
+
+// ─────────────────────────────────────────────
+// VEHICLES
+// ─────────────────────────────────────────────
+let vehPage = 1, vehSearch = '', vehPerPage = 12;
+let currentDetailVehicleId = null;
+let currentVehicleDetailTab = 'details';
+let vehTripChartInstance = null;
+
+async function renderVehicles() {
+  currentDetailVehicleId = null;
+  document.getElementById('page-title').textContent = 'Vehicles';
+  if (document.getElementById('veh-table-body')) { await _refreshVehiclesGrid(); return; }
+
+  const [vehicles, trips] = await Promise.all([
+    DB.getVehicles(),
+    DB.getTrips()
+  ]);
+
+  const totalDistance = (trips || []).reduce((sum, t) => sum + (parseFloat(t.distance_km) || 0), 0);
+
+  document.getElementById('content').innerHTML = `
+    <div class="section-header">
+      <span class="section-title">Vehicles</span>
+      <div style="display:flex;gap:8px;">
+        ${canBackupRestore() ? `
+          <button class="btn btn-secondary" onclick="exportVehicles()" title="Export vehicles to JSON"><i class="fas fa-download"></i> Backup</button>
+          <button class="btn btn-secondary" onclick="document.getElementById('veh-import-file').click()" title="Import vehicles from JSON"><i class="fas fa-upload"></i> Import</button>
+          <input type="file" id="veh-import-file" accept=".json" style="display:none" onchange="importVehicles(this)"/>
+        ` : ''}
+        ${canEditVehicles() ? `
+          <button class="btn btn-primary" onclick="showAddVehicleModal()"><i class="fas fa-plus"></i> Add Vehicle</button>
+        ` : ''}
+      </div>
+    </div>
+
+    <!-- Overview Element Cards -->
+    <div style="display:grid;grid-template-columns:repeat(auto-fit,minmax(220px,1fr));gap:16px;margin-bottom:20px;">
+      <div class="stat-card">
+        <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:8px;">
+          <div class="label">Total Vehicles</div>
+          <div style="background:#e0f2fe;color:#0284c7;width:38px;height:38px;border-radius:10px;display:flex;align-items:center;justify-content:center;">
+            <i class="fas fa-car"></i>
+          </div>
+        </div>
+        <div class="value" style="color:#0284c7;" id="veh-stat-count">${vehicles.length} <span style="font-size:0.6em;font-weight:600;">Vehicles</span></div>
+        <div class="sub" id="veh-stat-sub">${vehicles.filter(v => (v.status || 'available') === 'available').length} available</div>
+      </div>
+
+      <div class="stat-card">
+        <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:8px;">
+          <div class="label">Total Distance Travelled</div>
+          <div style="background:#dcfce7;color:#16a34a;width:38px;height:38px;border-radius:10px;display:flex;align-items:center;justify-content:center;">
+            <i class="fas fa-route"></i>
+          </div>
+        </div>
+        <div class="value" style="color:#16a34a;" id="veh-stat-distance">${totalDistance.toLocaleString('en-LK', { maximumFractionDigits: 1 })} <span style="font-size:0.6em;font-weight:600;">KM</span></div>
+        <div class="sub">Across all registered vehicles</div>
+      </div>
+    </div>
+
+    <div class="card" style="margin-bottom:18px;">
+      <div style="display:flex;gap:12px;align-items:center;">
+        <div class="search-wrap" style="flex:1;">
+          <i class="fas fa-search"></i>
+          <input class="form-input" id="veh-search-input" placeholder="Search vehicle no, category, model..."
+            autocomplete="off" spellcheck="false"
+            oninput="vehSearch=this.value;vehPage=1;_refreshVehiclesGrid()"/>
+        </div>
+        <span id="veh-count" style="font-size:0.82em;color:var(--text-muted);"></span>
+      </div>
+    </div>
+
+    <div class="card" style="padding:0;">
+      <div class="table-wrap">
+        <table>
+          <thead>
+            <tr>
+              <th style="width:60px;text-align:center;">No</th>
+              <th>Vehicle NO</th>
+              <th>Vehicle Type</th>
+              <th>Model</th>
+              <th>Total Distance</th>
+              <th style="width:140px;text-align:center;">Status</th>
+              <th style="width:120px;text-align:center;">Actions</th>
+            </tr>
+          </thead>
+          <tbody id="veh-table-body"></tbody>
+        </table>
+      </div>
+      <div id="veh-pagination" style="padding:14px 18px;display:flex;justify-content:space-between;align-items:center;border-top:1px solid var(--border);"></div>
+    </div>`;
+
+  await _refreshVehiclesGrid();
+  document.getElementById('veh-search-input')?.focus();
+}
+
+async function _refreshVehiclesGrid() {
+  const tbody = document.getElementById('veh-table-body');
+  if (!tbody) { await renderVehicles(); return; }
+
+  const [vehicles, trips] = await Promise.all([
+    DB.getVehicles(),
+    DB.getTrips()
+  ]);
+
+  // Compute distance map per vehicle
+  const distMap = {};
+  (trips || []).forEach(t => {
+    const vNo = (t.vehicle_no || t.vehicle || '').toUpperCase().trim();
+    if (vNo) distMap[vNo] = (distMap[vNo] || 0) + (parseFloat(t.distance_km) || 0);
+    if (t.vehicle_id) distMap[String(t.vehicle_id)] = (distMap[String(t.vehicle_id)] || 0) + (parseFloat(t.distance_km) || 0);
+  });
+
+  let filtered = filterData(vehicles, vehSearch, ['vehicle_no', 'category', 'model', 'status']);
+  filtered = filtered.sort((a, b) => (a.vehicle_no || '').localeCompare(b.vehicle_no || ''));
+
+  const { items, totalPages, total } = paginateData(filtered, vehPage, vehPerPage);
+  const countEl = document.getElementById('veh-count');
+  if (countEl) countEl.textContent = total + ' vehicle' + (total !== 1 ? 's' : '');
+
+  // Update stat cards
+  const statCount = document.getElementById('veh-stat-count');
+  if (statCount) statCount.innerHTML = `${vehicles.length} <span style="font-size:0.6em;font-weight:600;">Vehicles</span>`;
+  const statSub = document.getElementById('veh-stat-sub');
+  if (statSub) statSub.textContent = `${vehicles.filter(v => (v.status || 'available') === 'available').length} available`;
+  const statDist = document.getElementById('veh-stat-distance');
+  if (statDist) {
+    const totalDist = (trips || []).reduce((sum, t) => sum + (parseFloat(t.distance_km) || 0), 0);
+    statDist.innerHTML = `${totalDist.toLocaleString('en-LK', { maximumFractionDigits: 1 })} <span style="font-size:0.6em;font-weight:600;">KM</span>`;
+  }
+
+  const catIcons = { 'car':'fa-car','double cab':'fa-truck-pickup','bike':'fa-motorcycle','lorry':'fa-truck' };
+
+  tbody.innerHTML = items.length === 0
+    ? `<tr><td colspan="7" style="text-align:center;padding:32px;color:var(--text-muted);">No vehicles found</td></tr>`
+    : items.map((v, idx) => {
+        const rowNum = String((vehPage - 1) * vehPerPage + idx + 1).padStart(2, '0');
+        const vNo = (v.vehicle_no || '').toUpperCase().trim();
+        const vDist = distMap[vNo] || distMap[String(v.id)] || 0;
+        const statusVal = (v.status || 'available').toLowerCase();
+        const stBadgeClass = statusVal === 'available' ? 'badge-green' : (statusVal === 'busy' || statusVal === 'on-trip') ? 'badge-yellow' : 'badge-gray';
+        const stLabel = statusVal === 'available' ? 'Available' : (statusVal === 'busy' || statusVal === 'on-trip') ? 'On Trip' : 'Maintenance';
+        const catIcon = catIcons[(v.category || '').toLowerCase()] || 'fa-car';
+
+        return `<tr>
+          <td style="text-align:center;font-weight:700;color:var(--text-muted);font-family:monospace;font-size:1.05em;">${rowNum}</td>
+          <td><div style="font-weight:700;font-size:1.05em;color:var(--primary);font-family:monospace;letter-spacing:0.5px;">${escapeHtml(v.vehicle_no)}</div></td>
+          <td><span style="display:inline-flex;align-items:center;gap:6px;font-weight:600;font-size:0.9em;color:var(--text);"><i class="fas ${catIcon}" style="color:var(--primary);width:16px;"></i> ${escapeHtml(v.category || 'Car')}</span></td>
+          <td><div style="font-weight:600;font-size:0.95em;color:var(--text);">${escapeHtml(v.model || '—')}</div></td>
+          <td><span style="font-weight:700;color:#16a34a;">${vDist.toLocaleString('en-LK', { maximumFractionDigits: 1 })} KM</span></td>
+          <td style="text-align:center;">
+            <button class="btn btn-sm badge ${stBadgeClass}" onclick="cycleVehicleStatus(${v.id}, '${statusVal}')" title="Click to cycle status" style="cursor:pointer;padding:5px 12px;font-size:0.82em;border:none;display:inline-flex;align-items:center;gap:6px;">
+              <i class="fas fa-circle" style="font-size:0.6em;"></i> ${stLabel} <i class="fas fa-rotate" style="font-size:0.75em;opacity:0.7;"></i>
+            </button>
+          </td>
+          <td style="text-align:center;">
+            <button class="btn btn-primary btn-sm" onclick="openVehicleDetail(${v.id})" style="padding:6px 16px;font-weight:600;">
+              <i class="fas fa-eye"></i> View
+            </button>
+          </td>
+        </tr>`;
+      }).join('');
+
+  const pg = document.getElementById('veh-pagination');
+  if (pg) pg.innerHTML = `<span style="font-size:0.82em;color:var(--text-muted);">Page ${vehPage} of ${totalPages}</span>` + renderPagination(vehPage, totalPages, 'changeVehPage');
+}
+
+function changeVehPage(p) { vehPage = p; _refreshVehiclesGrid(); }
+
+async function cycleVehicleStatus(id, current) {
+  const currentNorm = (current || 'available').toLowerCase() === 'on-trip' ? 'busy' : (current || 'available').toLowerCase();
+  const statuses = ['available', 'busy', 'maintenance'];
+  const nextStatus = statuses[(statuses.indexOf(currentNorm) + 1) % statuses.length];
+  await DB.updateVehicle(id, { status: nextStatus });
+  const veh = await DB.getVehicle(id);
+  await DB.logAction('Edit Vehicle', `Changed vehicle "${veh?.vehicle_no || '#' + id}" status to "${nextStatus}"`, { id, status: nextStatus }, 'Vehicle');
+  toast(`Status changed to ${nextStatus === 'available' ? 'Available' : nextStatus === 'busy' ? 'On Trip' : 'Maintenance'}`);
+  if (currentDetailVehicleId === id) {
+    openVehicleDetail(id, currentVehicleDetailTab);
+  } else {
+    _refreshVehiclesGrid();
+  }
+}
+
+async function openVehicleDetail(vehicleId, tab = 'details') {
+  currentDetailVehicleId = vehicleId;
+  currentVehicleDetailTab = tab;
+
+  const [v, allTrips] = await Promise.all([
+    DB.getVehicle(vehicleId),
+    DB.getTrips()
+  ]);
+
+  if (!v) {
+    toast('Vehicle not found', 'error');
+    currentDetailVehicleId = null;
+    return renderVehicles();
+  }
+
+  const vNo = (v.vehicle_no || '').toUpperCase().trim();
+  const vehicleTrips = (allTrips || []).filter(t =>
+    (t.vehicle_id && String(t.vehicle_id) === String(v.id)) ||
+    (t.vehicle_no && t.vehicle_no.toUpperCase().trim() === vNo) ||
+    (t.vehicle && t.vehicle.toUpperCase().trim() === vNo)
+  );
+
+  const totalKms = vehicleTrips.reduce((sum, t) => sum + (parseFloat(t.distance_km) || 0), 0);
+  const totalTripsCount = vehicleTrips.length;
+
+  const catIcons = { 'car':'fa-car','double cab':'fa-truck-pickup','bike':'fa-motorcycle','lorry':'fa-truck' };
+  const catIcon = catIcons[(v.category || '').toLowerCase()] || 'fa-car';
+  const statusVal = (v.status || 'available').toLowerCase();
+  const stBadgeClass = statusVal === 'available' ? 'badge-green' : (statusVal === 'busy' || statusVal === 'on-trip') ? 'badge-yellow' : 'badge-gray';
+  const stLabel = statusVal === 'available' ? 'Available' : (statusVal === 'busy' || statusVal === 'on-trip') ? 'Busy / On Trip' : 'Maintenance';
+
+  document.getElementById('page-title').textContent = v.vehicle_no || 'Vehicle Details';
+
+  const contentEl = document.getElementById('content');
+  contentEl.innerHTML = `
+    <div class="section-header" style="margin-bottom:16px;">
+      <div style="display:flex;align-items:center;gap:12px;">
+        <button class="btn btn-secondary btn-sm" onclick="currentDetailVehicleId=null;renderVehicles()"><i class="fas fa-arrow-left"></i> Back to Vehicles</button>
+        <span class="section-title" style="font-size:1.25em;">Vehicle Profile</span>
+      </div>
+      <div style="display:flex;gap:8px;">
+        ${canEditVehicles() ? `<button class="btn btn-primary btn-sm" onclick="showEditVehicleModal(${v.id})"><i class="fas fa-edit"></i> Edit</button>` : ''}
+        ${canDelete() ? `<button class="btn btn-danger btn-sm" onclick="deleteVehicleConfirm(${v.id})"><i class="fas fa-trash"></i> Delete</button>` : ''}
+      </div>
+    </div>
+
+    <!-- 4 Element Cards -->
+    <div style="display:grid;grid-template-columns:repeat(auto-fit,minmax(220px,1fr));gap:16px;margin-bottom:20px;">
+      <div class="stat-card">
+        <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:8px;">
+          <div class="label">Vehicle No</div>
+          <div style="background:#e0f2fe;color:#0284c7;width:38px;height:38px;border-radius:10px;display:flex;align-items:center;justify-content:center;"><i class="fas fa-id-badge"></i></div>
+        </div>
+        <div class="value" style="color:#0284c7;font-family:monospace;">${escapeHtml(v.vehicle_no)}</div>
+        <div class="sub">Registered plate identifier</div>
+      </div>
+
+      <div class="stat-card">
+        <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:8px;">
+          <div class="label">Vehicle Type</div>
+          <div style="background:#f3e8ff;color:#9333ea;width:38px;height:38px;border-radius:10px;display:flex;align-items:center;justify-content:center;"><i class="fas ${catIcon}"></i></div>
+        </div>
+        <div class="value" style="color:#9333ea;">${escapeHtml(v.category || 'Car')}</div>
+        <div class="sub">Category classification</div>
+      </div>
+
+      <div class="stat-card">
+        <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:8px;">
+          <div class="label">Vehicle Model</div>
+          <div style="background:#fef3c7;color:#d97706;width:38px;height:38px;border-radius:10px;display:flex;align-items:center;justify-content:center;"><i class="fas fa-car-side"></i></div>
+        </div>
+        <div class="value" style="color:#d97706;">${escapeHtml(v.model || '—')}</div>
+        <div class="sub">Model name / variant</div>
+      </div>
+
+      <div class="stat-card">
+        <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:8px;">
+          <div class="label">Total Distance Travelled</div>
+          <div style="background:#dcfce7;color:#16a34a;width:38px;height:38px;border-radius:10px;display:flex;align-items:center;justify-content:center;"><i class="fas fa-route"></i></div>
+        </div>
+        <div class="value" style="color:#16a34a;">${totalKms.toLocaleString('en-LK', { maximumFractionDigits: 1 })} <span style="font-size:0.6em;font-weight:600;">KM</span></div>
+        <div class="sub">Across ${totalTripsCount} trip${totalTripsCount !== 1 ? 's' : ''}</div>
+      </div>
+    </div>
+
+    <!-- Details summary box -->
+    <div class="card" style="margin-bottom:20px;border-left:4px solid var(--primary);">
+      <div style="display:flex;justify-content:space-between;align-items:center;flex-wrap:wrap;gap:14px;margin-bottom:14px;">
+        <div>
+          <div style="font-size:0.75em;font-weight:700;color:var(--text-muted);text-transform:uppercase;letter-spacing:0.5px;margin-bottom:4px;">Vehicle Profile</div>
+          <div style="font-family:'Playfair Display',serif;font-size:1.5em;font-weight:700;color:var(--text);">
+            ${escapeHtml(v.vehicle_no)} <span style="font-weight:400;font-size:0.75em;color:var(--text-muted);">(${escapeHtml(v.model || v.category)})</span>
+          </div>
+        </div>
+        <div>
+          <button class="btn btn-sm badge ${stBadgeClass}" onclick="cycleVehicleStatus(${v.id}, '${statusVal}')" title="Click to cycle status" style="cursor:pointer;padding:6px 14px;font-size:0.85em;border:none;display:inline-flex;align-items:center;gap:6px;">
+            <i class="fas fa-circle" style="font-size:0.6em;"></i> ${stLabel} <i class="fas fa-rotate" style="font-size:0.75em;opacity:0.7;"></i>
+          </button>
+        </div>
+      </div>
+      <div style="display:grid;grid-template-columns:repeat(auto-fit,minmax(180px,1fr));gap:16px;padding:14px;background:var(--bg);border-radius:10px;border:1px solid var(--border);">
+        <div>
+          <div style="font-size:0.72em;text-transform:uppercase;color:var(--text-muted);font-weight:700;letter-spacing:0.5px;">Category</div>
+          <div style="font-weight:600;font-size:0.95em;color:var(--text);margin-top:4px;"><i class="fas ${catIcon}" style="color:var(--primary);margin-right:6px;width:14px;"></i>${escapeHtml(v.category || 'Car')}</div>
+        </div>
+        <div>
+          <div style="font-size:0.72em;text-transform:uppercase;color:var(--text-muted);font-weight:700;letter-spacing:0.5px;">Model Name</div>
+          <div style="font-weight:600;font-size:0.95em;color:var(--text);margin-top:4px;"><i class="fas fa-tag" style="color:#06b6d4;margin-right:6px;width:14px;"></i>${escapeHtml(v.model || '—')}</div>
+        </div>
+        <div>
+          <div style="font-size:0.72em;text-transform:uppercase;color:var(--text-muted);font-weight:700;letter-spacing:0.5px;">Completed Trips</div>
+          <div style="font-weight:600;font-size:0.95em;color:var(--text);margin-top:4px;"><i class="fas fa-check-double" style="color:#10b981;margin-right:6px;width:14px;"></i>${vehicleTrips.filter(t => t.status === 'Completed').length} Completed</div>
+        </div>
+        <div>
+          <div style="font-size:0.72em;text-transform:uppercase;color:var(--text-muted);font-weight:700;letter-spacing:0.5px;">Registered Date</div>
+          <div style="font-weight:600;font-size:0.95em;color:var(--text);margin-top:4px;"><i class="fas fa-calendar-alt" style="color:#f59e0b;margin-right:6px;width:14px;"></i>${formatDate(v.created_at)}</div>
+        </div>
+      </div>
+    </div>
+
+    <!-- Bottom: Switchable Tabs -->
+    <div class="card" style="padding:0;overflow:hidden;">
+      <div style="display:flex;align-items:center;border-bottom:1px solid var(--border);background:var(--card-bg);padding:10px 16px;gap:10px;flex-wrap:wrap;">
+        <span style="font-size:0.8em;font-weight:700;text-transform:uppercase;letter-spacing:0.5px;color:var(--text-muted);margin-right:4px;">View:</span>
+        <button id="veh-tab-btn-details" class="btn btn-sm ${currentVehicleDetailTab === 'details' ? 'btn-primary' : 'btn-secondary'}" onclick="switchVehicleDetailTab(${v.id}, 'details')">
+          <i class="fas fa-list"></i> Details
+        </button>
+        <button id="veh-tab-btn-graph" class="btn btn-sm ${currentVehicleDetailTab === 'graph' ? 'btn-primary' : 'btn-secondary'}" onclick="switchVehicleDetailTab(${v.id}, 'graph')">
+          <i class="fas fa-chart-line"></i> Graph
+        </button>
+      </div>
+      <div id="veh-detail-tab-body" style="padding:20px;"></div>
+    </div>
+  `;
+
+  await renderVehicleDetailTabBody(v, vehicleTrips, currentVehicleDetailTab);
+}
+
+async function switchVehicleDetailTab(vehicleId, tab) {
+  currentVehicleDetailTab = tab;
+  ['details', 'graph'].forEach(t => {
+    const btn = document.getElementById('veh-tab-btn-' + t);
+    if (btn) btn.className = (t === tab) ? 'btn btn-sm btn-primary' : 'btn btn-sm btn-secondary';
+  });
+
+  const [v, allTrips] = await Promise.all([DB.getVehicle(vehicleId), DB.getTrips()]);
+  if (v) {
+    const vNo = (v.vehicle_no || '').toUpperCase().trim();
+    const vehicleTrips = (allTrips || []).filter(t =>
+      (t.vehicle_id && String(t.vehicle_id) === String(v.id)) ||
+      (t.vehicle_no && t.vehicle_no.toUpperCase().trim() === vNo) ||
+      (t.vehicle && t.vehicle.toUpperCase().trim() === vNo)
+    );
+    await renderVehicleDetailTabBody(v, vehicleTrips, tab);
+  }
+}
+
+async function renderVehicleDetailTabBody(v, vehicleTrips, tab) {
+  const container = document.getElementById('veh-detail-tab-body');
+  if (!container) return;
+
+  if (vehTripChartInstance) {
+    try { vehTripChartInstance.destroy(); } catch(e) {}
+    vehTripChartInstance = null;
+  }
+
+  if (tab === 'details') {
+    const sortedTrips = [...(vehicleTrips || [])].sort((a,b) => new Date(b.start_date || b.created_at || 0) - new Date(a.start_date || a.created_at || 0));
+    container.innerHTML = `
+      <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:14px;">
+        <div style="font-weight:700;font-family:'Playfair Display',serif;font-size:1.15em;">Vehicle Trip History (${sortedTrips.length})</div>
+      </div>
+      <div class="table-wrap">
+        <table>
+          <thead>
+            <tr>
+              <th>Trip ID</th><th>Vehicle No</th><th>Driver</th>
+              <th>Start Date / Time</th><th>End Date / Time</th>
+              <th>Total Distance</th><th>Status</th>
+              <th style="text-align:center;width:100px;">Action</th>
+            </tr>
+          </thead>
+          <tbody>
+            ${sortedTrips.map(t => {
+              const startDT = `${t.start_date ? formatDate(t.start_date) : '—'} ${t.start_time || ''}`;
+              const endDT   = t.end_date ? `${formatDate(t.end_date)} ${t.end_time || ''}` : '—';
+              const dist    = parseFloat(t.distance_km) > 0 ? `${parseFloat(t.distance_km).toFixed(1)} KM` : (t.status === 'Completed' ? '0 KM' : 'In Progress');
+              const stBadge = t.status === 'Completed' ? 'badge-green' : 'badge-yellow';
+              return `<tr>
+                <td><strong>${escapeHtml(t.trip_id || t.id)}</strong></td>
+                <td><span style="font-family:monospace;font-weight:700;color:var(--primary);">${escapeHtml(v.vehicle_no)}</span></td>
+                <td>${escapeHtml(t.driver_name || '—')}</td>
+                <td>${escapeHtml(startDT)}</td>
+                <td>${escapeHtml(endDT)}</td>
+                <td style="font-weight:700;color:${parseFloat(t.distance_km) > 0 ? '#16a34a' : 'var(--text-muted)'};">${dist}</td>
+                <td><span class="badge ${stBadge}">${escapeHtml(t.status || 'In Progress')}</span></td>
+                <td style="text-align:center;">
+                  <button class="btn btn-primary btn-sm" onclick="navigate('transport'); if (typeof TransportModule !== 'undefined') setTimeout(() => TransportModule.viewTripDetails('${t.id}'), 200);">
+                    <i class="fas fa-eye"></i> View
+                  </button>
+                </td>
+              </tr>`;
+            }).join('') || `<tr><td colspan="8" style="text-align:center;padding:32px;color:var(--text-muted);">No trip history found for this vehicle</td></tr>`}
+          </tbody>
+        </table>
+      </div>
+    `;
+  } else if (tab === 'graph') {
+    container.innerHTML = `
+      <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:14px;">
+        <div>
+          <div style="font-family:'Playfair Display',serif;font-size:1.15em;font-weight:700;">Distance Travelled Over Days</div>
+          <div style="font-size:0.82em;color:var(--text-muted);">Non-linear timeline of distance (KM) by ${escapeHtml(v.vehicle_no)} over days</div>
+        </div>
+      </div>
+      <div id="veh-chart-wrap" style="background:var(--bg);padding:16px;border-radius:10px;border:1px solid var(--border);">
+        <div class="chart-container" style="height:350px;position:relative;">
+          <canvas id="veh-trip-chart"></canvas>
+        </div>
+      </div>
+    `;
+    renderVehicleTripGraph(vehicleTrips || []);
+  }
+}
+
+function renderVehicleTripGraph(trips) {
+  const chartCanvas = document.getElementById('veh-trip-chart');
+  if (!chartCanvas) return;
+
+  const validTrips = (trips || []).filter(t => (t.start_date || t.created_at) && parseFloat(t.distance_km) > 0);
+  if (!validTrips.length) {
+    const wrap = document.getElementById('veh-chart-wrap');
+    if (wrap) wrap.innerHTML = `<div style="text-align:center;padding:48px 20px;color:var(--text-muted);"><i class="fas fa-chart-line" style="font-size:2.8em;opacity:0.3;margin-bottom:12px;display:block;"></i>No completed distance data available yet to plot graph.</div>`;
+    return;
+  }
+
+  const dateMap = {};
+  validTrips.forEach(t => {
+    const rawDate = t.start_date || (t.created_at ? String(t.created_at).slice(0, 10) : '');
+    if (rawDate) {
+      const dateKey = rawDate.slice(0, 10);
+      dateMap[dateKey] = (dateMap[dateKey] || 0) + (parseFloat(t.distance_km) || 0);
+    }
+  });
+
+  const sortedDates = Object.keys(dateMap).sort();
+  const labels = sortedDates.map(d => new Date(d).toLocaleDateString('en-GB', { day: 'numeric', month: 'short', year: 'numeric' }));
+  const values = sortedDates.map(d => dateMap[d]);
+
+  const isDark = document.documentElement.classList.contains('dark');
+  const gridColor = isDark ? 'rgba(255,255,255,0.07)' : 'rgba(0,0,0,0.07)';
+  const textColor = isDark ? '#94a3b8' : '#64748b';
+  const ctx = chartCanvas.getContext('2d');
+  const gradient = ctx.createLinearGradient(0, 0, 0, 320);
+  gradient.addColorStop(0, 'rgba(14, 165, 233, 0.40)');
+  gradient.addColorStop(1, 'rgba(14, 165, 233, 0.02)');
+
+  vehTripChartInstance = new Chart(ctx, {
+    type: 'line',
+    data: {
+      labels,
+      datasets: [{
+        label: 'Distance (KM)',
+        data: values,
+        borderColor: '#0ea5e9',
+        backgroundColor: gradient,
+        borderWidth: 2.5,
+        tension: 0.38,
+        fill: true,
+        pointBackgroundColor: '#0ea5e9',
+        pointBorderColor: isDark ? '#1e293b' : '#ffffff',
+        pointBorderWidth: 2,
+        pointRadius: 5,
+        pointHoverRadius: 8,
+        pointHoverBackgroundColor: '#0284c7',
+        pointHoverBorderColor: '#ffffff',
+        pointHoverBorderWidth: 2
+      }]
+    },
+    options: {
+      responsive: true,
+      maintainAspectRatio: false,
+      interaction: { mode: 'index', intersect: false },
+      plugins: {
+        legend: { display: true, position: 'top', labels: { color: textColor, font: { size: 11 }, boxWidth: 12 } },
+        tooltip: { callbacks: { label: c => `Distance: ${Number(c.parsed.y).toLocaleString('en-LK', { maximumFractionDigits: 1 })} KM` } }
+      },
+      scales: {
+        x: {
+          title: { display: true, text: 'Days', color: textColor, font: { size: 12, weight: 'bold' } },
+          grid: { color: gridColor },
+          ticks: { color: textColor, font: { size: 11 } }
+        },
+        y: {
+          title: { display: true, text: 'Distance in (KM)', color: textColor, font: { size: 12, weight: 'bold' } },
+          beginAtZero: true,
+          grid: { color: gridColor },
+          ticks: { color: textColor, font: { size: 11 }, callback: v => `${v} KM` }
+        }
+      }
+    }
+  });
+}
+
+function showAddVehicleModal() {
+  createModal('add-veh-modal', 'Add New Vehicle', `
+    <div style="display:grid;grid-template-columns:1fr 1fr;gap:14px;">
+      <div class="form-group">
+        <label class="form-label">Vehicle No * <span style="color:var(--text-muted);font-size:0.82em;">(e.g. CAD8590)</span></label>
+        <input class="form-input" id="v-no" placeholder="CAD8590" maxlength="20" style="text-transform:uppercase;" oninput="this.value=this.value.toUpperCase()"/>
+      </div>
+      <div class="form-group">
+        <label class="form-label">Vehicle Category *</label>
+        <select class="form-input form-select" id="v-category">
+          <option value="Car">Car</option>
+          <option value="Double Cab">Double Cab</option>
+          <option value="Bike">Bike</option>
+          <option value="Lorry">Lorry</option>
+        </select>
+      </div>
+      <div class="form-group">
+        <label class="form-label">Model <span style="color:var(--text-muted);font-size:0.82em;">(e.g. Prius, Hilux)</span></label>
+        <input class="form-input" id="v-model" placeholder="Prius" maxlength="50"/>
+      </div>
+      <div class="form-group">
+        <label class="form-label">Initial Status</label>
+        <select class="form-input form-select" id="v-status">
+          <option value="available">Available</option>
+          <option value="busy">Busy / On Trip</option>
+          <option value="maintenance">Maintenance</option>
+        </select>
+      </div>
+    </div>
+    <div style="display:flex;gap:10px;justify-content:flex-end;margin-top:14px;">
+      <button class="btn btn-secondary" onclick="hideModal('add-veh-modal')">Cancel</button>
+      <button class="btn btn-primary" onclick="saveNewVehicle()"><i class="fas fa-save"></i> Save</button>
+    </div>`, 'modal-md');
+  showModal('add-veh-modal');
+  setTimeout(() => document.getElementById('v-no')?.focus(), 150);
+}
+
+async function saveNewVehicle() {
+  const vehicleNo = (document.getElementById('v-no')?.value || '').toUpperCase().trim();
+  const category  = document.getElementById('v-category')?.value || 'Car';
+  const model     = (document.getElementById('v-model')?.value || '').trim();
+  const status    = document.getElementById('v-status')?.value || 'available';
+
+  if (!vehicleNo) return toast('Vehicle No is required', 'error');
+
+  const cleanPlate = vehicleNo.replace(/[\s-]/g, '');
+  if (cleanPlate.length < 3 || cleanPlate.length > 12) {
+    return toast('Vehicle No must be a valid registration plate (e.g. CAD8590)', 'error');
+  }
+
+  const all = await DB.getVehicles();
+  const dup = all.find(v => (v.vehicle_no || '').replace(/[\s-]/g, '').toUpperCase() === cleanPlate);
+  if (dup) return toast(`Vehicle No "${vehicleNo}" is already registered`, 'error');
+
+  const newId = await DB.addVehicle({ vehicle_no: vehicleNo, category, model, status });
+  await DB.logAction('Add Vehicle', `Added vehicle "${vehicleNo}" (${category}, ${model || 'N/A'})`, { id: newId, vehicle_no: vehicleNo, category, model, status }, 'Vehicle');
+
+  hideModal('add-veh-modal');
+  toast('Vehicle added successfully!');
+  renderVehicles();
+}
+
+async function showEditVehicleModal(id) {
+  const v = await DB.getVehicle(id);
+  if (!v) return;
+  const statusVal = (v.status || 'available').toLowerCase() === 'on-trip' ? 'busy' : (v.status || 'available').toLowerCase();
+
+  createModal('edit-veh-modal', 'Edit Vehicle', `
+    <div style="display:grid;grid-template-columns:1fr 1fr;gap:14px;">
+      <div class="form-group">
+        <label class="form-label">Vehicle No *</label>
+        <input class="form-input" id="ev-no" value="${escapeHtml(v.vehicle_no || '')}" maxlength="20" style="text-transform:uppercase;" oninput="this.value=this.value.toUpperCase()"/>
+      </div>
+      <div class="form-group">
+        <label class="form-label">Vehicle Category *</label>
+        <select class="form-input form-select" id="ev-category">
+          <option value="Car" ${v.category === 'Car' ? 'selected' : ''}>Car</option>
+          <option value="Double Cab" ${v.category === 'Double Cab' ? 'selected' : ''}>Double Cab</option>
+          <option value="Bike" ${v.category === 'Bike' ? 'selected' : ''}>Bike</option>
+          <option value="Lorry" ${v.category === 'Lorry' ? 'selected' : ''}>Lorry</option>
+        </select>
+      </div>
+      <div class="form-group">
+        <label class="form-label">Model</label>
+        <input class="form-input" id="ev-model" value="${escapeHtml(v.model || '')}" maxlength="50"/>
+      </div>
+      <div class="form-group">
+        <label class="form-label">Status</label>
+        <select class="form-input form-select" id="ev-status">
+          <option value="available" ${statusVal === 'available' ? 'selected' : ''}>Available</option>
+          <option value="busy" ${statusVal === 'busy' ? 'selected' : ''}>Busy / On Trip</option>
+          <option value="maintenance" ${statusVal === 'maintenance' ? 'selected' : ''}>Maintenance</option>
+        </select>
+      </div>
+    </div>
+    <div style="display:flex;gap:10px;justify-content:flex-end;margin-top:14px;">
+      <button class="btn btn-secondary" onclick="hideModal('edit-veh-modal')">Cancel</button>
+      <button class="btn btn-primary" onclick="saveEditVehicle(${id})"><i class="fas fa-save"></i> Save</button>
+    </div>`, 'modal-md');
+  showModal('edit-veh-modal');
+}
+
+async function saveEditVehicle(id) {
+  const vehicleNo = (document.getElementById('ev-no')?.value || '').toUpperCase().trim();
+  const category  = document.getElementById('ev-category')?.value || 'Car';
+  const model     = (document.getElementById('ev-model')?.value || '').trim();
+  const status    = document.getElementById('ev-status')?.value || 'available';
+
+  if (!vehicleNo) return toast('Vehicle No is required', 'error');
+  const cleanPlate = vehicleNo.replace(/[\s-]/g, '');
+  if (cleanPlate.length < 3 || cleanPlate.length > 12) return toast('Vehicle No must be a valid registration plate', 'error');
+
+  const all = await DB.getVehicles();
+  const dup = all.find(v => String(v.id) !== String(id) && (v.vehicle_no || '').replace(/[\s-]/g, '').toUpperCase() === cleanPlate);
+  if (dup) return toast(`Vehicle No "${vehicleNo}" is already registered to another vehicle`, 'error');
+
+  await DB.updateVehicle(id, { vehicle_no: vehicleNo, category, model, status });
+  await DB.logAction('Edit Vehicle', `Updated vehicle "${vehicleNo}"`, { id, vehicle_no: vehicleNo, category, model, status }, 'Vehicle');
+
+  hideModal('edit-veh-modal');
+  toast('Vehicle updated successfully!');
+  if (currentDetailVehicleId === id) {
+    openVehicleDetail(id, currentVehicleDetailTab);
+  } else {
+    _refreshVehiclesGrid();
+  }
+}
+
+async function deleteVehicleConfirm(id) {
+  if (!canDelete()) return toast('Admin permission required to delete vehicles', 'error');
+  const v = await DB.getVehicle(id);
+  const vNo = v ? v.vehicle_no : 'Vehicle #' + id;
+  confirmDialog(`Delete vehicle "${vNo}"? (Past trip records will remain in the system)`, async () => {
+    try {
+      await DB.deleteVehicle(id);
+      await DB.logAction('Delete Vehicle', `Deleted vehicle "${vNo}"`, { id, vehicle_no: vNo }, 'Vehicle');
+      toast('Vehicle deleted successfully');
+      currentDetailVehicleId = null;
+      renderVehicles();
+    } catch (err) {
+      toast('Error deleting vehicle: ' + (err.message || err), 'error');
+    }
+  });
+}
+
+// ─────────────────────────────────────────────
+// VEHICLES BACKUP & IMPORT
+// ─────────────────────────────────────────────
+async function exportVehicles() {
+  const all = await DB.getVehicles();
+  const exportData = { type: 'swc_vehicles_backup', version: 1, exported_at: new Date().toISOString(), count: all.length,
+    vehicles: all.map(v => ({ vehicle_no: v.vehicle_no, category: v.category || 'Car', model: v.model || '', status: v.status || 'available', created_at: v.created_at || '' }))
+  };
+  const blob = new Blob([JSON.stringify(exportData, null, 2)], { type: 'application/json' });
+  const url = URL.createObjectURL(blob);
+  const a = document.createElement('a');
+  a.href = url; a.download = `swc_vehicles_${new Date().toISOString().slice(0, 10)}.json`;
+  a.click(); URL.revokeObjectURL(url);
+  toast(`Exported ${all.length} vehicles`, 'success');
+}
+
+async function importVehicles(input) {
+  const file = input.files[0]; if (!file) return; input.value = '';
+  try {
+    const data = JSON.parse(await file.text());
+    if (data.type !== 'swc_vehicles_backup') return toast('Invalid vehicles backup file', 'error');
+    const records = data.vehicles || [];
+    if (!records.length) return toast('No vehicles found in file', 'warning');
+    confirmDialog(`Import ${records.length} vehicles?`, async () => {
+      const existing = await DB.getVehicles();
+      const byNo = Object.fromEntries(existing.map(v => [(v.vehicle_no || '').toUpperCase().trim(), v]));
+      let added = 0, updated = 0, errors = 0;
+      for (const rec of records) {
+        try {
+          const vNo = (rec.vehicle_no || '').toUpperCase().trim();
+          if (!vNo) continue;
+          const match = byNo[vNo];
+          const vehData = { vehicle_no: vNo, category: rec.category || 'Car', model: rec.model || '', status: rec.status || 'available' };
+          if (rec.created_at) vehData.created_at = rec.created_at;
+          if (match) { await DB.updateVehicle(match.id, vehData); updated++; }
+          else { await DB.addVehicle(vehData); added++; }
+        } catch(e) { errors++; console.error(e); }
+      }
+      renderVehicles();
+      toast(`Import done: ${added} added, ${updated} updated` + (errors ? `, ${errors} failed` : ''), 'success');
+    });
+  } catch(e) { toast('Failed to read file: ' + (e.message || e), 'error'); }
+}
+
 // ─────────────────────────────────────────────────────────────────────────────
 // PAY NOW PAGE & BATCH PAY
+
 // ─────────────────────────────────────────────────────────────────────────────
 let paynowPage = 1;
 let paynowSearch = '';
