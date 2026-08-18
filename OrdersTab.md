@@ -1,24 +1,8 @@
 ## Orders Tab Changes ##
 
-Change BatchID --> OrderID
+In a New Order Placement ,
+for the new order add an option to assign a driver, it is not a must, but if assign, it should be able to add
 
-The Table Overview should change to this
+in action column, add a toggle button to hide or show action buttons View,Edit,Print,Delete
 
-currently
-|Batch ID|Customer|Pickup Date|Status|Paid Date|Total|Advance|Actions|
-
-to
-|OrderID|Customer|Pickup Date|Status|Paid Date|Total|Driver|Actions|
-
-for the Actions Column add a toggle button to hide and show action buttons
-
-## Add Options to Filter
-
-Filter by
-- Day
-- Week
-- Month
-- Year
-- Status
-- Driver
-- Customer
+not per row, for the whole column

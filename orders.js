@@ -1,6 +1,7 @@
 // orders.js - Orders Module
 
 let ordersPage=1, ordersSearch='', ordersStatusFilter='', ordersDriverFilter='', ordersCustFilter='', ordersDateFilter='', ordersPerPage=12;
+let ordersActionsVisible = false;
 let sigPad=null;
 let _ordersCustomers=[], _ordersDrivers=[];
 
@@ -81,7 +82,14 @@ async function renderOrders() {
         <table>
           <thead><tr>
             <th>Order ID</th><th>Customer</th><th>Pickup Date</th><th>Status</th>
-            <th>Paid Date</th><th>Total</th><th>Driver</th><th style="text-align:center;">Actions</th>
+            <th>Paid Date</th><th>Total</th><th>Driver</th>
+            <th style="text-align:center;white-space:nowrap;">
+              Actions
+              <button id="orders-actions-toggle" onclick="_toggleAllOrderActions()" title="Show / Hide action buttons"
+                style="margin-left:6px;padding:2px 7px;font-size:0.75em;cursor:pointer;border-radius:5px;border:1px solid var(--border);background:var(--bg);color:var(--text-muted);vertical-align:middle;">
+                <i class="fas fa-eye-slash"></i>
+              </button>
+            </th>
           </tr></thead>
           <tbody id="orders-table-body"></tbody>
         </table>
@@ -167,6 +175,7 @@ async function _refreshOrdersTable() {
         const drv=dMap[o.driver_id];
         const inv=invMap[o.id];
         const drvName = drv ? escapeHtml(drv.name) : '<span style="color:var(--text-muted);font-style:italic;">—</span>';
+        const extraStyle = ordersActionsVisible ? 'display:inline-flex;gap:4px;' : 'display:none;';
         return `<tr>
           <td><strong style="font-family:monospace;color:var(--primary);">${o.batch_id||'—'}</strong></td>
           <td>${escapeHtml(custName)}</td>
@@ -176,10 +185,9 @@ async function _refreshOrdersTable() {
           <td><strong>${formatCurrency(o.total_amount)}</strong></td>
           <td>${drvName}</td>
           <td style="text-align:center;">
-            <div style="display:inline-flex;align-items:center;gap:4px;">
+            <div style="display:inline-flex;align-items:center;gap:4px;flex-wrap:nowrap;">
               <button class="btn btn-secondary btn-sm" onclick="viewOrderDetails(${o.id})" title="View Order"><i class="fas fa-eye"></i> View</button>
-              <button class="btn btn-sm" style="padding:5px 8px;background:var(--bg);border:1px solid var(--border);border-radius:6px;color:var(--text-muted);cursor:pointer;" onclick="_toggleOrderActions(this, ${o.id})" title="More actions"><i class="fas fa-ellipsis-v"></i></button>
-              <span class="order-extra-actions" style="display:none;">
+              <span class="order-extra-actions" style="${extraStyle}">
                 ${canEditOrders() ? `<button class="btn btn-primary btn-sm" onclick="showEditOrderModal(${o.id})"><i class="fas fa-edit"></i> Edit</button>` : ''}
                 <button class="btn btn-success btn-sm" onclick="printInvoiceByOrder(${o.id})" style="background:#10b981;border-color:#10b981;color:#fff;"><i class="fas fa-print"></i> Print</button>
                 ${isAdmin() ? `<button class="btn btn-danger btn-sm" onclick="deleteOrderConfirm(${o.id})"><i class="fas fa-trash"></i> Delete</button>` : ''}
@@ -188,6 +196,10 @@ async function _refreshOrdersTable() {
           </td>
         </tr>`;
       }).join('');
+
+  // Sync the header toggle icon
+  const toggleBtn = document.getElementById('orders-actions-toggle');
+  if (toggleBtn) toggleBtn.innerHTML = ordersActionsVisible ? '<i class="fas fa-eye"></i>' : '<i class="fas fa-eye-slash"></i>';
 
   // Update pagination
   const paginationEl = document.getElementById('orders-pagination');
@@ -205,17 +217,16 @@ function toggleOrdersFilter(){
 }
 function clearOrdersFilter(){ordersStatusFilter='';ordersDriverFilter='';ordersCustFilter='';ordersDateFilter='';ordersPage=1;renderOrders();}
 
-function _toggleOrderActions(btn, orderId) {
-  const row = btn.closest('tr');
-  if (!row) return;
-  const extra = row.querySelector('.order-extra-actions');
-  if (!extra) return;
-  const isOpen = extra.style.display !== 'none';
-  extra.style.display = isOpen ? 'none' : 'inline-flex';
-  extra.style.gap = '4px';
-  btn.style.background = isOpen ? 'var(--bg)' : 'var(--primary)';
-  btn.style.color = isOpen ? 'var(--text-muted)' : '#fff';
-  btn.style.borderColor = isOpen ? 'var(--border)' : 'var(--primary)';
+function _toggleAllOrderActions() {
+  ordersActionsVisible = !ordersActionsVisible;
+  // Toggle all rows at once
+  document.querySelectorAll('.order-extra-actions').forEach(span => {
+    span.style.display = ordersActionsVisible ? 'inline-flex' : 'none';
+    if (ordersActionsVisible) span.style.gap = '4px';
+  });
+  // Update the header toggle button icon
+  const toggleBtn = document.getElementById('orders-actions-toggle');
+  if (toggleBtn) toggleBtn.innerHTML = ordersActionsVisible ? '<i class="fas fa-eye"></i>' : '<i class="fas fa-eye-slash"></i>';
 }
 
 function _syncOrdersDateBtns() {
@@ -594,6 +605,7 @@ async function showAddOrderModal() {
   const [customers,drivers]=await Promise.all([DB.getCustomers(),DB.getDrivers()]);
   window._aoCustomersList = customers;
   window._aoMinDiscount = parseFloat(await DB.getSetting('min_discount_amount')||'0') || 0;
+  const driverOpts = drivers.map(d=>`<option value="${d.id}">${escapeHtml(d.name)}</option>`).join('');
   createModal('add-order-modal','New Order',`
     <div style="display:grid;grid-template-columns:1fr 1fr;gap:14px;">
       <div class="form-group" style="grid-column: span 2;"><label class="form-label">Customer *</label>${pickerHTML('ao-cust','Type customer name...')}</div>
@@ -601,6 +613,13 @@ async function showAddOrderModal() {
         <input type="date" class="form-input" id="ao-pickup" value="${today()}"/></div>
       <div class="form-group"><label class="form-label">Delivery Date</label>
         <input type="date" class="form-input" id="ao-delivery"/></div>
+      <div class="form-group" style="grid-column: span 2;">
+        <label class="form-label"><i class="fas fa-user-tie" style="color:var(--primary);margin-right:6px;"></i>Assign Driver <span style="color:var(--text-muted);font-weight:400;font-size:0.85em;">(optional)</span></label>
+        <select class="form-input form-select" id="ao-driver">
+          <option value="">— No driver assigned —</option>
+          ${driverOpts}
+        </select>
+      </div>
       <div class="form-group"><label class="form-label">Advance Payment (LKR)</label>
         <input type="number" class="form-input" id="ao-advance" value="0" min="0" oninput="calcOrderTotal()"/></div>
       <div class="form-group"><label class="form-label">Extra Payments (LKR)</label>
@@ -937,6 +956,8 @@ async function saveNewOrder(){
   const extra   = parseFloat(document.getElementById('ao-extra-payment')?.value)||0;
   const deliveryCharge = parseFloat(document.getElementById('ao-delivery-charge')?.value)||0;
   const discRate       = parseFloat(document.getElementById('ao-discount')?.value)||0;
+  const driverIdRaw    = document.getElementById('ao-driver')?.value || '';
+  const driverId       = driverIdRaw ? parseInt(driverIdRaw) : null;
   if(!custId) {
     if (saveBtn) saveBtn.disabled = false;
     return toast('Please select a customer','error');
@@ -975,7 +996,7 @@ async function saveNewOrder(){
     // Only pass columns that exist on the orders table
     const orderId = await DB.addOrder({
       customer_id:     custId,
-      driver_id:       null,
+      driver_id:       driverId,
       pickup_date:     pickup,
       delivery_date:   delivery,
       status:          orderStatus,
