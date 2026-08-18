@@ -330,11 +330,15 @@ async function renderDashboard() {
   if (!contentEl) return;
 
   let orders = [], invoices = [], payments = [];
+  let expenseCategories = [], expenseTypes = [], expenseAmounts = [];
   try {
-    [orders, invoices, payments] = await Promise.all([
+    [orders, invoices, payments, expenseCategories, expenseTypes, expenseAmounts] = await Promise.all([
       DB.getOrders().catch(() => []),
       DB.getInvoices().catch(() => []),
-      DB.getPayments().catch(() => [])
+      DB.getPayments().catch(() => []),
+      DB.getExpenseCategories().catch(() => []),
+      DB.getExpenseTypes().catch(() => []),
+      DB.getExpenseAmounts().catch(() => [])
     ]);
   } catch (e) { console.warn('Dashboard data fetch:', e); }
 
@@ -394,7 +398,7 @@ async function renderDashboard() {
         <div class="chart-container"><canvas id="revenue-chart"></canvas></div>
       </div>
       <div class="card">
-        <div style="font-weight:700;margin-bottom:14px;font-family:'Playfair Display',serif;">Order Status Distribution</div>
+        <div style="font-weight:700;margin-bottom:14px;font-family:'Playfair Display',serif;"><i class="fas fa-receipt" style="color:var(--primary);margin-right:8px;"></i>Expense Status Distribution</div>
         <div class="chart-container"><canvas id="status-chart"></canvas></div>
       </div>
     </div>
@@ -411,7 +415,7 @@ async function renderDashboard() {
       </div>
     </div>`;
 
-  try { await renderDashCharts(orders, payments); } catch(e) { console.warn('charts:', e); }
+  try { await renderDashCharts(orders, payments, expenseCategories, expenseTypes, expenseAmounts); } catch(e) { console.warn('charts:', e); }
   try { await renderRecentOrders(orders); } catch(e) { console.warn('recent orders:', e); }
   try { await renderUnpaidInvoices(invoices, orders); } catch(e) { console.warn('unpaid invoices:', e); }
 }
@@ -451,7 +455,23 @@ function fmtLkr(val) {
   return num.toFixed(0);
 }
 
-async function renderDashCharts(orders, payments) {
+// Curated palette for expense category doughnut — cycles if more categories than colours
+const EXPENSE_CAT_COLORS = [
+  '#6366f1', // indigo
+  '#f59e0b', // amber
+  '#10b981', // emerald
+  '#ef4444', // red
+  '#3b82f6', // blue
+  '#8b5cf6', // violet
+  '#06b6d4', // cyan
+  '#f97316', // orange
+  '#ec4899', // pink
+  '#14b8a6', // teal
+  '#a855f7', // purple
+  '#84cc16', // lime
+];
+
+async function renderDashCharts(orders, payments, expenseCategories = [], expenseTypes = [], expenseAmounts = []) {
   const days = Array.from({ length: 14 }, (_, i) => {
     const d = new Date(); d.setDate(d.getDate() - (13 - i));
     return d.toISOString().split('T')[0];
@@ -512,17 +532,64 @@ async function renderDashCharts(orders, payments) {
     });
   }
 
-  // ── Order Status Distribution (doughnut) — same colours as the bar chart ──
-  const statusCounts = {};
-  orders.forEach(o => { statusCounts[o.status] = (statusCounts[o.status] || 0) + 1; });
-  const statusLabels = Object.keys(statusCounts);
+  // ── Expense Status Distribution (doughnut) — total LKR spent per top-level category ──
+  // Build a lookup: expense_type_id → category_id
+  const typeToCat = {};
+  expenseTypes.forEach(t => { typeToCat[t.expense_type_id] = t.category_id; });
+  // Sum amounts per category
+  const catTotals = {};
+  expenseAmounts.forEach(a => {
+    const catId = typeToCat[a.expense_type_id];
+    if (catId) catTotals[catId] = (catTotals[catId] || 0) + (parseFloat(a.amount) || 0);
+  });
+  // Build ordered labels + data from expense_categories (already sorted by sort_order)
+  const catLabels = [];
+  const catData   = [];
+  const catColors = [];
+  expenseCategories.forEach((cat, idx) => {
+    const total = catTotals[cat.category_id] || 0;
+    if (total > 0) {
+      catLabels.push(cat.name);
+      catData.push(total);
+      catColors.push(EXPENSE_CAT_COLORS[idx % EXPENSE_CAT_COLORS.length]);
+    }
+  });
   const sCtx = document.getElementById('status-chart')?.getContext('2d');
   if (sCtx) {
-    dashCharts.status = new Chart(sCtx, {
-      type: 'doughnut',
-      data: { labels: statusLabels, datasets: [{ data: Object.values(statusCounts), backgroundColor: statusLabels.map(statusChartColor), borderWidth: 2, borderColor: isDark ? '#1e293b' : '#fff' }] },
-      options: { responsive: true, maintainAspectRatio: false, plugins: { legend: { position: 'right', labels: { color: textColor, font: { size: 11 }, boxWidth: 12 } } } }
-    });
+    if (catData.length === 0) {
+      // No expense data yet — show a friendly placeholder
+      sCtx.canvas.parentElement.innerHTML =
+        `<div style="display:flex;flex-direction:column;align-items:center;justify-content:center;height:100%;color:var(--text-muted);gap:8px;">
+           <i class="fas fa-receipt" style="font-size:2rem;opacity:0.3;"></i>
+           <span style="font-size:0.85em;">No expense data yet</span>
+         </div>`;
+    } else {
+      dashCharts.status = new Chart(sCtx, {
+        type: 'doughnut',
+        data: {
+          labels: catLabels,
+          datasets: [{
+            data: catData,
+            backgroundColor: catColors,
+            borderWidth: 2,
+            borderColor: isDark ? '#1e293b' : '#fff',
+            hoverOffset: 6
+          }]
+        },
+        options: {
+          responsive: true,
+          maintainAspectRatio: false,
+          plugins: {
+            legend: { position: 'right', labels: { color: textColor, font: { size: 11 }, boxWidth: 12, padding: 10 } },
+            tooltip: {
+              callbacks: {
+                label: c => ` ${c.label}: LKR ${Number(c.parsed).toLocaleString('en-LK', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`
+              }
+            }
+          }
+        }
+      });
+    }
   }
 }
 
