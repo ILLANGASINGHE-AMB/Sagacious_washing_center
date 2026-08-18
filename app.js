@@ -3653,17 +3653,22 @@ async function showBatchPayConfirmModal() {
     let inv = invMap[oId];
     let invNum = inv?.invoice_number;
     let balance = 0;
+    let payments = [];
 
     if (!inv) {
       const items = await DB.getOrderItems(oId);
       if (!items.length) {
         return toast(`Cannot batch pay: Order ${o.batch_id} has no items. Please deselect it or add items first.`, 'warning');
       }
-      const invNumGen = await DB.generateInvoiceNumber();
+      // Preview only — no DB write. An invoice must only ever be generated
+      // once a payment actually happens (here, at confirm time in
+      // processBatchPayment), never just for opening this summary. Writing
+      // one here would leave a stray Unpaid invoice behind if the user
+      // cancels instead of confirming.
       const itemsSubtotal = items.reduce((s,i) => s + (i.subtotal || 0), 0);
-      const invId = await DB.addInvoice({
+      inv = {
         order_id: oId,
-        invoice_number: invNumGen,
+        invoice_number: null,
         issue_date: new Date().toISOString(),
         delivery_date: o.delivery_date,
         invoice_type: o.status === 'Credits' ? 'Credit' : 'Standard',
@@ -3675,13 +3680,13 @@ async function showBatchPayConfirmModal() {
         discount_amount: 0,
         delivery_charge: Math.max(0, (o.total_amount || 0) - itemsSubtotal),
         subtotal_before_discount: itemsSubtotal
-      });
-      inv = await DB.getInvoice(invId);
-      invNum = invNumGen;
+      };
+      invNum = null;
       invMap[oId] = inv;
+    } else {
+      payments = await DB.getPaymentsByInvoice(inv.id);
     }
 
-    const payments = await DB.getPaymentsByInvoice(inv.id);
     // Canonical calc — the raw `total_amount - totalPaid` formula this replaced
     // ignored `inv.deduction_amount`, which would overcharge a batch payment for
     // any invoice that had a deduction applied (collecting the pre-deduction amount).
@@ -3889,18 +3894,17 @@ async function processBatchPayment(method = 'Cash', notes = 'Paid fully via Batc
         orderDeduction = Math.round((orderBalance / totalAmount) * deductionAmount * 100) / 100;
       }
 
-      // Delete any pre-existing invoice/payments for this order — both modes
-      // fold this order into a fresh invoice below (its own, or the shared one).
       const existingInv = existingInvMap[oId];
-      if (existingInv) {
-        await DB.deletePaymentsForInvoice(existingInv.id);
-        await DB.deleteInvoice(existingInv.id);
-      }
-
       const payAmount = Math.max(0, orderBalance - orderDeduction);
 
       if (isSingleInvoice) {
-        // All orders share one invoice number (different order IDs, one bill).
+        // Multiple orders are being folded into one shared invoice below, so
+        // any invoice this order already had on its own can't be reused —
+        // it has to go before the consolidated one is created.
+        if (existingInv) {
+          await DB.deletePaymentsForInvoice(existingInv.id);
+          await DB.deleteInvoice(existingInv.id);
+        }
         singleInvoiceTotal += orderTotal;
         singleInvoiceAdvance += orderAdvance;
         singleInvoiceDetails.push({
@@ -3909,8 +3913,44 @@ async function processBatchPayment(method = 'Cash', notes = 'Paid fully via Batc
           customerName: detail.customerName,
           amount: orderBalance
         });
+      } else if (existingInv) {
+        // This order already has its own invoice (e.g. from an earlier Pay
+        // Now partial payment) — settle it in place under its existing
+        // invoice number instead of discarding it and minting a new one.
+        const newInvId = existingInv.id;
+        const invNum = existingInv.invoice_number;
+
+        await DB.updateInvoice(newInvId, {
+          balance: 0,
+          paid_status: 'Paid',
+          deduction_amount: (existingInv.deduction_amount || 0) + orderDeduction,
+          payment_date: new Date().toISOString()
+        });
+
+        createdInvoiceIds.push(newInvId);
+
+        if (orderDeduction > 0) {
+          await DB.addDeduction({
+            invoice_id: newInvId,
+            invoice_number: invNum,
+            original_amount: orderTotal,
+            deduction_amount: orderDeduction,
+            final_amount: orderTotal - orderDeduction,
+            reason: reason
+          });
+        }
+
+        if (payAmount > 0) {
+          await DB.addPayment({
+            invoice_id: newInvId,
+            amount: payAmount,
+            method: method,
+            notes: notes
+          });
+        }
       } else {
-        // Separate Invoice mode — one invoice per order (original behavior).
+        // First ever payment on this order — Separate Invoice mode, one
+        // invoice per order.
         const invNum = await DB.generateInvoiceNumber();
         const newInvId = await DB.addInvoice({
           order_id:                 oId,

@@ -71,7 +71,6 @@ async function renderInvoices() {
             <option value="">All Statuses</option>
             <option value="Paid">Paid</option>
             <option value="Partially Paid">Partially Paid</option>
-            <option value="Unpaid">Unpaid</option>
           </select>
         </div>
 
@@ -251,6 +250,11 @@ async function _refreshInvoicesTable() {
     };
   });
 
+  // This tab only ever shows invoices with money actually against them —
+  // an invoice is a record of a payment, not a placeholder for one. Any
+  // stray Unpaid row (legacy data, a Credit Bill, etc.) stays out of view.
+  filtered = filtered.filter(inv => inv.computedStatus !== 'Unpaid');
+
   // Apply filters
   if (invoiceSearch) {
     const q = invoiceSearch.toLowerCase().trim();
@@ -355,19 +359,17 @@ async function _refreshInvoicesTable() {
   const totalOutstanding = filtered.reduce((s, inv) => s + inv.computedBalance, 0);
   const paidCount = filtered.filter(inv => inv.computedStatus === 'Paid').length;
   const partialCount = filtered.filter(inv => inv.computedStatus === 'Partially Paid').length;
-  const unpaidCount = filtered.filter(inv => inv.computedStatus === 'Unpaid').length;
-  const unpaidOrPartialCount = partialCount + unpaidCount;
 
   const elInvoices = document.getElementById('card-total-invoices');
   if (elInvoices) elInvoices.textContent = totalInvoices;
   const elInvoicesSub = document.getElementById('card-total-invoices-sub');
-  if (elInvoicesSub) elInvoicesSub.textContent = `${paidCount} Paid · ${partialCount} Partial · ${unpaidCount} Unpaid`;
+  if (elInvoicesSub) elInvoicesSub.textContent = `${paidCount} Paid · ${partialCount} Partially Paid`;
   const elRevenue = document.getElementById('card-total-revenue');
   if (elRevenue) elRevenue.textContent = formatCurrency(totalRevenue);
   const elOutstanding = document.getElementById('card-outstanding-balance');
   if (elOutstanding) elOutstanding.textContent = formatCurrency(totalOutstanding);
   const elOutstandingSub = document.getElementById('card-outstanding-balance-sub');
-  if (elOutstandingSub) elOutstandingSub.textContent = `Across ${unpaidOrPartialCount} invoice${unpaidOrPartialCount !== 1 ? 's' : ''}`;
+  if (elOutstandingSub) elOutstandingSub.textContent = `Across ${partialCount} invoice${partialCount !== 1 ? 's' : ''}`;
 
   // Set Count Label
   const countEl = document.getElementById('inv-count');
