@@ -25,10 +25,11 @@ async function renderInvoices() {
 
     <!-- Summary Cards -->
     <div style="display:grid;grid-template-columns:repeat(auto-fit,minmax(220px,1fr));gap:16px;margin-bottom:20px;">
-      ${renderInvStatCard("Total Invoices", "0", "fa-file-invoice", "#3b82f6", "#dbeafe", "Across current filter", "card-total-invoices")}
+      ${renderInvStatCard("Total Invoices", "0", "fa-file-invoice", "#3b82f6", "#dbeafe", '<span id="card-total-invoices-sub">Across current filter</span>', "card-total-invoices")}
       ${renderInvStatCard("Total Revenue Collected", "LKR 0.00", "fa-hand-holding-dollar", "#22c55e", "#dcfce7", "Calculated from payments", "card-total-revenue")}
-      ${renderInvStatCard("Outstanding Balance", "LKR 0.00", "fa-file-invoice-dollar", "#ef4444", "#fee2e2", "Awaiting payment", "card-outstanding-balance")}
-      ${renderInvStatCard("Overdue Invoices", "0", "fa-calendar-times", "#f59e0b", "#fef9c3", "Past due date", "card-overdue-count", "card-overdue-container")}
+      ${renderInvStatCard("Outstanding Balance", "LKR 0.00", "fa-file-invoice-dollar", "#ef4444", "#fee2e2", '<span id="card-outstanding-balance-sub">Awaiting payment</span>', "card-outstanding-balance")}
+      ${renderInvStatCard("Overdue Invoices", "0", "fa-calendar-times", "#f59e0b", "#fef9c3", "Credit Bills past due date", "card-overdue-count", "card-overdue-container")}
+      ${renderInvStatCard("Credit Bills Outstanding", "0", "fa-hourglass-half", "#7c3aed", "#f3e8ff", '<span id="card-credit-outstanding-sub">LKR 0.00 unpaid</span>', "card-credit-count")}
     </div>
 
     <!-- Filters & Search -->
@@ -70,6 +71,7 @@ async function renderInvoices() {
           <select class="form-input form-select" id="inv-filter-sel" onchange="invoiceFilter=this.value;invoicePage=1;_refreshInvoicesTable()">
             <option value="">All Statuses</option>
             <option value="Paid">Paid</option>
+            <option value="Partially Paid">Partially Paid</option>
             <option value="Unpaid">Unpaid</option>
           </select>
         </div>
@@ -340,13 +342,23 @@ async function _refreshInvoicesTable() {
     const isCredit = inv.invoice_type === 'Credit';
     return isCredit && inv.credit_due_date && new Date(inv.credit_due_date) < new Date() && inv.computedBalance > 0;
   }).length;
+  const paidCount = filtered.filter(inv => inv.computedStatus === 'Paid').length;
+  const partialCount = filtered.filter(inv => inv.computedStatus === 'Partially Paid').length;
+  const unpaidCount = filtered.filter(inv => inv.computedStatus === 'Unpaid').length;
+  const unpaidOrPartialCount = partialCount + unpaidCount;
+  const creditOutstanding = filtered.filter(inv => inv.invoice_type === 'Credit' && inv.computedBalance > 0);
+  const creditOutstandingTotal = creditOutstanding.reduce((s, inv) => s + inv.computedBalance, 0);
 
   const elInvoices = document.getElementById('card-total-invoices');
   if (elInvoices) elInvoices.textContent = totalInvoices;
+  const elInvoicesSub = document.getElementById('card-total-invoices-sub');
+  if (elInvoicesSub) elInvoicesSub.textContent = `${paidCount} Paid · ${partialCount} Partial · ${unpaidCount} Unpaid`;
   const elRevenue = document.getElementById('card-total-revenue');
   if (elRevenue) elRevenue.textContent = formatCurrency(totalRevenue);
   const elOutstanding = document.getElementById('card-outstanding-balance');
   if (elOutstanding) elOutstanding.textContent = formatCurrency(totalOutstanding);
+  const elOutstandingSub = document.getElementById('card-outstanding-balance-sub');
+  if (elOutstandingSub) elOutstandingSub.textContent = `Across ${unpaidOrPartialCount} invoice${unpaidOrPartialCount !== 1 ? 's' : ''}`;
 
   const overdueEl = document.getElementById('card-overdue-count');
   if (overdueEl) overdueEl.textContent = overdueCount;
@@ -362,6 +374,11 @@ async function _refreshInvoicesTable() {
       overdueEl.style.color = 'inherit';
     }
   }
+
+  const creditCountEl = document.getElementById('card-credit-count');
+  if (creditCountEl) creditCountEl.textContent = creditOutstanding.length;
+  const creditSubEl = document.getElementById('card-credit-outstanding-sub');
+  if (creditSubEl) creditSubEl.textContent = `${formatCurrency(creditOutstandingTotal)} unpaid`;
 
   // Set Count Label
   const countEl = document.getElementById('inv-count');
@@ -379,9 +396,11 @@ async function _refreshInvoicesTable() {
         const overdue = isCredit && inv.credit_due_date && new Date(inv.credit_due_date) < new Date() && inv.computedBalance > 0;
         
         const typeBadge = isCredit ? '<span class="badge badge-purple">Credit</span>' : '<span class="badge badge-blue">Standard</span>';
-        const paidBadge = inv.computedStatus === 'Paid' 
-          ? '<span class="badge badge-green">Paid</span>' 
-          : '<span class="badge badge-red">Unpaid</span>';
+        const paidBadge = inv.computedStatus === 'Paid'
+          ? '<span class="badge badge-green">Paid</span>'
+          : inv.computedStatus === 'Partially Paid'
+            ? '<span class="badge badge-orange">Partially Paid</span>'
+            : '<span class="badge badge-red">Unpaid</span>';
         const overdueBadge = overdue ? '<span class="badge badge-red" style="margin-top:4px;display:inline-block;">Overdue</span>' : '';
 
         // Notes tooltip helper
