@@ -2885,7 +2885,6 @@ let paynowSearch = '';
 let paynowStatusFilter = '';
 let paynowPerPage = 10;
 let paynowSelectedIds = [];
-let paynowShowHidden = false;
 
 // Payment status filter for Pay Now — distinct from the global ORDER_STATUSES
 // (which only drives the Paid/Unpaid dropdown on order creation) since this
@@ -2920,10 +2919,6 @@ async function renderPayNow() {
           <option value="">All Statuses</option>
           ${statusOpts}
         </select>
-        <label style="display:flex;align-items:center;gap:6px;font-size:0.85em;color:var(--text-muted);cursor:pointer;white-space:nowrap;">
-          <input type="checkbox" id="paynow-show-hidden" ${paynowShowHidden ? 'checked' : ''} onchange="paynowShowHidden=this.checked;_refreshPayNowTable()"/>
-          Show Hidden
-        </label>
         <span id="paynow-count" style="font-size:0.82em;color:var(--text-muted);"></span>
       </div>
     </div>
@@ -2969,8 +2964,6 @@ async function _refreshPayNowTable() {
   // Sync filters
   const sel = document.getElementById('paynow-filter-sel');
   if (sel && sel.value !== paynowStatusFilter) sel.value = paynowStatusFilter;
-  const hiddenChk = document.getElementById('paynow-show-hidden');
-  if (hiddenChk) hiddenChk.checked = paynowShowHidden;
 
   // Filter orders: only pending payment (order status is not 'Paid', or invoice paid_status is not 'Paid')
   let pending = orders.filter(o => {
@@ -2981,11 +2974,6 @@ async function _refreshPayNowTable() {
       return o.status !== 'Paid';
     }
   });
-
-  // Hidden orders are excluded from the default view
-  if (!paynowShowHidden) {
-    pending = pending.filter(o => !o.hidden);
-  }
 
   // Apply search query
   if (paynowSearch) {
@@ -3021,7 +3009,7 @@ async function _refreshPayNowTable() {
         const isChecked = paynowSelectedIds.includes(o.id) ? 'checked' : '';
         const overdueDays = getOverdueDays(o.created_at);
 
-        return `<tr style="${o.hidden ? 'opacity:0.55;' : ''}">
+        return `<tr>
           <td style="text-align: center;">
             <input type="checkbox" class="paynow-checkbox" data-order-id="${o.id}" ${isChecked} onchange="onPayNowCheckboxChange()"/>
           </td>
@@ -3032,14 +3020,9 @@ async function _refreshPayNowTable() {
           <td style="color:${balance > 0 ? 'var(--danger)' : 'var(--success)'};font-weight:700;">${formatCurrency(balance)}</td>
           <td style="color:${overdueDays > 7 ? 'var(--danger)' : 'var(--text-muted)'};font-weight:${overdueDays > 7 ? '700' : '400'};">${overdueDays} day${overdueDays !== 1 ? 's' : ''}</td>
           <td>
-            <div style="display:flex;gap:6px;flex-wrap:wrap;">
-              <button class="btn btn-success btn-sm" style="background:#22c55e; border-color:#16a34a; font-weight:700;" onclick="showPayNowOptionsModal(${o.id})">
-                <i class="fas fa-money-bill-wave"></i> Pay Now
-              </button>
-              <button class="btn btn-secondary btn-sm" onclick="toggleOrderHidden(${o.id}, ${!!o.hidden})">
-                <i class="fas fa-eye${o.hidden ? '' : '-slash'}"></i> ${o.hidden ? 'Unhide' : 'Hide'}
-              </button>
-            </div>
+            <button class="btn btn-success btn-sm" style="background:#22c55e; border-color:#16a34a; font-weight:700;" onclick="showPayNowOptionsModal(${o.id})">
+              <i class="fas fa-money-bill-wave"></i> Pay Now
+            </button>
           </td>
         </tr>`;
       }).join('');
@@ -3064,25 +3047,6 @@ function getOverdueDays(createdAt) {
   return Math.max(0, Math.floor(diffMs / 86400000));
 }
 
-async function toggleOrderHidden(orderId, currentlyHidden) {
-  const action = currentlyHidden ? 'unhide' : 'hide';
-  confirmDialog(`Are you sure you want to ${action} this order from the Pay Now list?`, async () => {
-    try {
-      await DB.updateOrder(orderId, { hidden: !currentlyHidden });
-      await DB.logAction(
-        currentlyHidden ? 'Order Unhidden' : 'Order Hidden',
-        `Order #${orderId} was ${currentlyHidden ? 'unhidden' : 'hidden'} in Pay Now`,
-        { order_id: orderId },
-        'Order'
-      );
-      toast(`Order ${currentlyHidden ? 'unhidden' : 'hidden'}.`);
-      await _refreshPayNowTable();
-    } catch (err) {
-      toast('Error: ' + (err.message || err), 'error');
-    }
-  }, currentlyHidden ? 'Unhide' : 'Hide', false);
-}
-
 async function toggleSelectAllPayNow(masterCheckbox) {
   if (masterCheckbox.checked) {
     // Select ALL unpaid orders across all pages, not just the visible ones
@@ -3091,8 +3055,7 @@ async function toggleSelectAllPayNow(masterCheckbox) {
     const allPendingIds = orders
       .filter(o => {
         const inv = invMap[o.id];
-        const isPending = inv ? inv.paid_status !== 'Paid' : o.status !== 'Paid';
-        return isPending && (paynowShowHidden || !o.hidden);
+        return inv ? inv.paid_status !== 'Paid' : o.status !== 'Paid';
       })
       .map(o => o.id);
     paynowSelectedIds = allPendingIds;
