@@ -1,6 +1,6 @@
 // orders.js - Orders Module
 
-let ordersPage=1, ordersSearch='', ordersStatusFilter='', ordersDriverFilter='', ordersCustFilter='', ordersDateFilter='', ordersPerPage=12;
+let ordersPage=1, ordersSearch='', ordersStatusFilter='', ordersDriverFilter='', ordersCustFilter='', ordersDateFilter='', ordersDateFrom='', ordersDateTo='', ordersPerPage=12;
 let ordersActionsVisible = true;
 let sigPad=null;
 let _ordersCustomers=[], _ordersDrivers=[];
@@ -18,7 +18,7 @@ async function renderOrders() {
   showLoading('content', 'Loading Orders...');
   const [allOrders, customers, drivers] = await Promise.all([DB.getOrders(), DB.getCustomers(), DB.getDrivers()]);
   _ordersCustomers=customers; _ordersDrivers=drivers;
-  const hasFilter = ordersStatusFilter||ordersDriverFilter||ordersCustFilter;
+  const hasFilter = ordersStatusFilter||ordersDriverFilter||ordersCustFilter||ordersDateFrom||ordersDateTo;
   const statusOpts = ORDER_STATUSES.map(s=>`<option value="${s}" ${s===ordersStatusFilter?'selected':''}>${s}</option>`).join('');
   const driverOpts = drivers.map(d=>`<option value="${d.id}" ${String(d.id)===ordersDriverFilter?'selected':''}>${escapeHtml(d.name)}</option>`).join('');
   const custOpts   = customers.map(c=>`<option value="${c.id}" ${String(c.id)===ordersCustFilter?'selected':''}>${escapeHtml(c.hotel_name)}</option>`).join('');
@@ -47,14 +47,25 @@ async function renderOrders() {
       </div>
       <div id="orders-filter-panel" style="display:none;margin-top:14px;padding-top:14px;border-top:1px solid var(--border);">
         <!-- Date Range Row -->
-        <div style="display:flex;gap:8px;flex-wrap:wrap;margin-bottom:12px;align-items:center;">
+        <div style="display:flex;gap:8px;flex-wrap:wrap;margin-bottom:10px;align-items:center;">
           <span style="font-size:0.8em;font-weight:700;text-transform:uppercase;letter-spacing:0.5px;color:var(--text-muted);margin-right:4px;">Period:</span>
           ${['Day','Week','Month','Year'].map(p => `
-            <button class="btn btn-sm" id="orders-date-btn-${p.toLowerCase()}" onclick="ordersDateFilter='${p.toLowerCase()}';ordersPage=1;_syncOrdersDateBtns();_refreshOrdersTable()"
+            <button class="btn btn-sm" id="orders-date-btn-${p.toLowerCase()}" onclick="setOrdersDatePeriod('${p.toLowerCase()}')"
               style="padding:5px 14px;font-weight:600;font-size:0.82em;">${p}
             </button>`).join('')}
-          <button class="btn btn-sm btn-secondary" onclick="ordersDateFilter='';ordersPage=1;_syncOrdersDateBtns();_refreshOrdersTable()"
+          <button class="btn btn-sm btn-secondary" onclick="clearOrdersDatePeriod()"
             id="orders-date-btn-all" style="padding:5px 14px;font-size:0.82em;">All Time</button>
+        </div>
+        <div style="display:flex;gap:14px;flex-wrap:wrap;align-items:center;margin-bottom:12px;">
+          <div style="display:flex;align-items:center;gap:6px;">
+            <label class="form-label" style="margin:0;white-space:nowrap;">From</label>
+            <input type="date" class="form-input" id="orders-date-from" style="width:150px;" value="${ordersDateFrom}" onchange="onOrdersDateInputChange()"/>
+          </div>
+          <div style="display:flex;align-items:center;gap:6px;">
+            <label class="form-label" style="margin:0;white-space:nowrap;">To</label>
+            <input type="date" class="form-input" id="orders-date-to" style="width:150px;" value="${ordersDateTo}" onchange="onOrdersDateInputChange()"/>
+          </div>
+          <span style="font-size:0.78em;color:var(--text-muted);">A period button fills in its default range — edit From/To for any specific date or custom range.</span>
         </div>
         <!-- Field Filters Row -->
         <div style="display:grid;grid-template-columns:1fr 1fr 1fr;gap:12px;">
@@ -130,22 +141,16 @@ async function _refreshOrdersTable() {
   if (ordersStatusFilter) filtered = filtered.filter(o=>o.status===ordersStatusFilter);
   if (ordersDriverFilter) filtered = filtered.filter(o=>String(o.driver_id)===ordersDriverFilter);
   if (ordersCustFilter)   filtered = filtered.filter(o=>String(o.customer_id)===ordersCustFilter);
-  // Date period filter
-  if (ordersDateFilter) {
-    const now = new Date();
+  // Date range filter — Day/Week/Month/Year buttons pre-fill From/To with
+  // that period's current instance, but the fields are freely editable so a
+  // user can pick any specific date (From === To) or an arbitrary range.
+  if (ordersDateFrom || ordersDateTo) {
     filtered = filtered.filter(o => {
-      const d = new Date(o.pickup_date || o.created_at);
-      if (isNaN(d)) return false;
-      if (ordersDateFilter === 'day') {
-        return d.toDateString() === now.toDateString();
-      } else if (ordersDateFilter === 'week') {
-        const startOfWeek = new Date(now); startOfWeek.setDate(now.getDate() - now.getDay()); startOfWeek.setHours(0,0,0,0);
-        return d >= startOfWeek;
-      } else if (ordersDateFilter === 'month') {
-        return d.getMonth() === now.getMonth() && d.getFullYear() === now.getFullYear();
-      } else if (ordersDateFilter === 'year') {
-        return d.getFullYear() === now.getFullYear();
-      }
+      const raw = o.pickup_date || o.created_at;
+      if (!raw) return false;
+      const dateStr = String(raw).slice(0, 10); // YYYY-MM-DD, compares lexicographically
+      if (ordersDateFrom && dateStr < ordersDateFrom) return false;
+      if (ordersDateTo && dateStr > ordersDateTo) return false;
       return true;
     });
   }
@@ -159,7 +164,7 @@ async function _refreshOrdersTable() {
   if (countEl) countEl.textContent = total + ' order' + (total!==1?'s':'');
 
   // Update filter button style
-  const hasFilter = ordersStatusFilter||ordersDriverFilter||ordersCustFilter||ordersDateFilter;
+  const hasFilter = ordersStatusFilter||ordersDriverFilter||ordersCustFilter||ordersDateFrom||ordersDateTo;
   const filterBtn = document.getElementById('orders-filter-btn');
   if (filterBtn) {
     filterBtn.className = 'btn ' + (hasFilter?'btn-primary':'btn-secondary') + ' btn-sm';
@@ -207,7 +212,7 @@ function toggleOrdersFilter(){
   const p=document.getElementById('orders-filter-panel');
   if(p) p.style.display=p.style.display==='none'?'block':'none';
 }
-function clearOrdersFilter(){ordersStatusFilter='';ordersDriverFilter='';ordersCustFilter='';ordersDateFilter='';ordersPage=1;renderOrders();}
+function clearOrdersFilter(){ordersStatusFilter='';ordersDriverFilter='';ordersCustFilter='';ordersDateFilter='';ordersDateFrom='';ordersDateTo='';ordersPage=1;renderOrders();}
 
 function _toggleAllOrderActions() {
   ordersActionsVisible = !ordersActionsVisible;
@@ -222,12 +227,82 @@ function _toggleAllOrderActions() {
 }
 
 function _syncOrdersDateBtns() {
+  const isAllTime = !ordersDateFilter && !ordersDateFrom && !ordersDateTo;
   ['day','week','month','year','all'].forEach(p => {
     const btn = document.getElementById('orders-date-btn-' + p);
     if (!btn) return;
-    const isActive = (p === 'all') ? !ordersDateFilter : (ordersDateFilter === p);
+    const isActive = (p === 'all') ? isAllTime : (ordersDateFilter === p);
     btn.className = 'btn btn-sm ' + (isActive ? 'btn-primary' : 'btn-secondary');
   });
+}
+
+function _syncOrdersDateInputs() {
+  const fromEl = document.getElementById('orders-date-from');
+  const toEl = document.getElementById('orders-date-to');
+  if (fromEl) fromEl.value = ordersDateFrom;
+  if (toEl) toEl.value = ordersDateTo;
+}
+
+// Default From/To range for a period's *current* instance (today / this
+// week / this month / this year) — a starting point the user can then edit
+// to pick any other specific date or a custom range.
+function _ordersPeriodDefaultRange(period) {
+  const now = new Date();
+  const pad = n => String(n).padStart(2, '0');
+  const toISO = d => `${d.getFullYear()}-${pad(d.getMonth() + 1)}-${pad(d.getDate())}`;
+
+  if (period === 'day') {
+    return { from: toISO(now), to: toISO(now) };
+  }
+  if (period === 'week') {
+    const start = new Date(now); start.setDate(now.getDate() - now.getDay());
+    const end = new Date(start); end.setDate(start.getDate() + 6);
+    return { from: toISO(start), to: toISO(end) };
+  }
+  if (period === 'month') {
+    const start = new Date(now.getFullYear(), now.getMonth(), 1);
+    const end = new Date(now.getFullYear(), now.getMonth() + 1, 0);
+    return { from: toISO(start), to: toISO(end) };
+  }
+  if (period === 'year') {
+    return { from: `${now.getFullYear()}-01-01`, to: `${now.getFullYear()}-12-31` };
+  }
+  return { from: '', to: '' };
+}
+
+function setOrdersDatePeriod(period) {
+  ordersDateFilter = period;
+  const range = _ordersPeriodDefaultRange(period);
+  ordersDateFrom = range.from;
+  ordersDateTo = range.to;
+  ordersPage = 1;
+  _syncOrdersDateBtns();
+  _syncOrdersDateInputs();
+  _refreshOrdersTable();
+}
+
+function clearOrdersDatePeriod() {
+  ordersDateFilter = '';
+  ordersDateFrom = '';
+  ordersDateTo = '';
+  ordersPage = 1;
+  _syncOrdersDateBtns();
+  _syncOrdersDateInputs();
+  _refreshOrdersTable();
+}
+
+function onOrdersDateInputChange() {
+  const fromEl = document.getElementById('orders-date-from');
+  const toEl = document.getElementById('orders-date-to');
+  ordersDateFrom = fromEl ? fromEl.value : '';
+  ordersDateTo = toEl ? toEl.value : '';
+  // Manually clearing both fields drops back to All Time; manually setting
+  // either one (without having clicked a preset) is just an unlabeled
+  // custom range — filtering itself only ever looks at From/To.
+  if (!ordersDateFrom && !ordersDateTo) ordersDateFilter = '';
+  ordersPage = 1;
+  _syncOrdersDateBtns();
+  _refreshOrdersTable();
 }
 
 async function deleteOrderConfirm(id) {
