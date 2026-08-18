@@ -1122,6 +1122,7 @@ async function generateInvoiceForOrder(orderId) {
     });
     inv = { id: invId };
     toast('Invoice created');
+    refreshCustomerDetailForOrder(orderId);
   }
   viewInvoice(inv.id);
   } finally {
@@ -1151,6 +1152,7 @@ async function saveGeneratedInvoice(orderId, subtotal) {
       subtotal_before_discount: subtotal
     });
     inv = { id: invId };
+    refreshCustomerDetailForOrder(orderId);
   }
   toast('Invoice generated!');
   navigate('invoices');
@@ -1302,7 +1304,8 @@ async function submitRecordedPayment(invoiceId, balance) {
     hideModal('payment-modal');
     toast(`Payment of ${formatCurrency(amount)} recorded!`);
     _refreshInvoicesTable();
-    
+    refreshCustomerDetailForOrder(inv.order_id);
+
     if (paidStatus === 'Paid') {
       setTimeout(() => printInvoice(invoiceId), 300);
     }
@@ -1352,7 +1355,8 @@ async function submitRecordedPayment(invoiceId, balance) {
     hideModal('payment-modal');
     toast('Recorded deduction and finalized invoice payment!');
     _refreshInvoicesTable();
-    
+    refreshCustomerDetailForOrder(inv.order_id);
+
     setTimeout(() => printInvoice(invoiceId), 300);
   }
 }
@@ -1386,12 +1390,13 @@ async function undoPaymentForInvoice(invoiceId) {
       });
 
       toast('Payment undone successfully!');
-      
+
       hideModal('view-invoice-modal');
 
       if (currentPage === 'orders') renderOrders();
       else if (currentPage === 'invoices') _refreshInvoicesTable();
       else if (currentPage === 'paynow') renderPayNow();
+      refreshCustomerDetailForOrder(inv.order_id);
     } catch (err) {
       toast('Failed to undo payment: ' + (err.message || err), 'error');
     }
@@ -1412,9 +1417,11 @@ function deleteInvoiceConfirm(invoiceId) {
         const orderIds = inv.batch_order_ids.split(',').map(Number);
         for (const oId of orderIds) {
           await DB.updateOrder(oId, { status: 'Unpaid' });
+          refreshCustomerDetailForOrder(oId);
         }
       } else {
         await DB.updateOrder(inv.order_id, { status: 'Unpaid' });
+        refreshCustomerDetailForOrder(inv.order_id);
       }
 
       toast('Invoice deleted successfully!');
@@ -1542,6 +1549,7 @@ async function deleteDeductionConfirm(deductionId, invoiceId, amount) {
         await DB.updateOrder(inv.order_id, {
           status: paidStatus
         });
+        refreshCustomerDetailForOrder(inv.order_id);
       }
 
       await DB.deleteDeduction(deductionId);

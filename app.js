@@ -882,6 +882,14 @@ function refreshCustomerDetailIfOpen(customerId) {
   }
 }
 
+// Same as refreshCustomerDetailIfOpen, but looks the customer up via the
+// order — for payment/invoice/deduction flows that only know an order_id.
+async function refreshCustomerDetailForOrder(orderId) {
+  if (currentDetailCustomerId == null || orderId == null) return;
+  const order = await DB.getOrder(orderId);
+  if (order) refreshCustomerDetailIfOpen(order.customer_id);
+}
+
 async function renderCustomerDetailTabBody(c, orders, tab) {
   const container = document.getElementById('cust-detail-tab-body');
   if (!container) return;
@@ -2732,8 +2740,9 @@ async function processDeductionPayment(orderId, invoiceId, balance, deductionAmo
 
     hideModal('paynow-options-modal');
     toast(`Deduction applied and invoice fully paid!`);
-    
+
     await _refreshPayNowTable();
+    await refreshCustomerDetailForOrder(orderId);
 
     setTimeout(() => {
       printInvoice(activeInvoiceId);
@@ -2780,8 +2789,9 @@ async function processFullPayment(orderId, invoiceId, amount, method, notes) {
 
     hideModal('paynow-options-modal');
     toast(`Order fully paid!`);
-    
+
     await _refreshPayNowTable();
+    await refreshCustomerDetailForOrder(orderId);
 
     setTimeout(() => {
       printInvoice(activeInvoiceId);
@@ -2860,6 +2870,7 @@ async function processPartialPayment(orderId, invoiceId, maxAmount, amount, meth
     toast(`Partial payment of LKR ${amount.toFixed(2)} recorded!`);
 
     await _refreshPayNowTable();
+    refreshCustomerDetailIfOpen(order.customer_id);
 
     if (paidStatus === 'Paid' && activeInvoiceId) {
       setTimeout(() => {
@@ -3096,12 +3107,14 @@ async function processBatchPayment(method = 'Cash', notes = 'Paid fully via Batc
     const existingInvMap = Object.fromEntries(invoices.filter(i => orderIds.includes(i.order_id)).map(i => [i.order_id, i]));
 
     const createdInvoiceIds = [];
+    const touchedCustomerIds = new Set();
 
     // Process each order individually — separate invoice per order
     for (const detail of details) {
       const oId = detail.orderId;
       const order = oMap[oId];
       if (!order) continue;
+      touchedCustomerIds.add(order.customer_id);
 
       // Fetch order items for subtotal calculation
       const orderItems = await DB.getOrderItems(oId);
@@ -3190,6 +3203,7 @@ async function processBatchPayment(method = 'Cash', notes = 'Paid fully via Batc
     toast(`Batch payment completed! ${createdInvoiceIds.length} separate invoices created.`);
 
     await _refreshPayNowTable();
+    touchedCustomerIds.forEach(cid => refreshCustomerDetailIfOpen(cid));
 
     // Print each invoice separately with a small delay between them
     for (let i = 0; i < createdInvoiceIds.length; i++) {

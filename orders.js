@@ -508,6 +508,7 @@ async function saveCreditBill() {
     clearItemsCache();
     hideModal('credit-bill-modal');
     toast(`Credit Bill ${batchId} saved!`, 'success');
+    refreshCustomerDetailIfOpen(custId);
 
     // Navigate to invoice so they can print it immediately
     navigate('invoices');
