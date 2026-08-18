@@ -93,27 +93,30 @@ function exportDailyOrders(type) {
 // MONTHLY REVENUE
 // ─────────────────────────────────────────────
 async function generateMonthlyRevenueReport() {
-  // Cash actually collected, by month. This has TWO sources, not one:
-  // 1) advance_payment on the order — collected at order creation (or a
-  //    later edit), stored on the order whether or not an invoice exists
-  //    yet. Most walk-in/pay-on-drop-off orders are ENTIRELY captured
-  //    here with zero rows in `payments`.
-  // 2) the `payments` table — additional/partial payments recorded after
-  //    the order was created (Pay Now, deductions payoff, etc).
-  // Summing only `payments` (the old version of this report) silently
-  // dropped every order paid in full at creation.
-  const [orders, payments] = await Promise.all([DB.getOrders(), DB.getPayments()]);
+  // Cash actually collected, by month — but the month is the ORDER's own
+  // month (pickup date, falling back to when it was created), not whenever
+  // each payment happened to be logged. Bucketing by payment date meant
+  // paying off a month-old unpaid order today dumped its whole amount into
+  // *this* month's row, making the business look like it suddenly earned
+  // extra revenue this month for work actually done (and billed) earlier.
+  // Every LKR collected on an order — its advance_payment plus any later
+  // `payments` rows against its invoice (Pay Now, deduction payoff, etc.)
+  // — is summed together and attributed to that order's own month instead.
+  const [orders, invoices, payments] = await Promise.all([DB.getOrders(), DB.getInvoices(), DB.getPayments()]);
+  const invByOrder = Object.fromEntries(invoices.map(i => [i.order_id, i]));
+  const paymentsByInvoice = {};
+  payments.forEach(p => { (paymentsByInvoice[p.invoice_id] ||= []).push(p); });
+
   const monthMap = {};
   orders.forEach(o=>{
     const advance = parseFloat(o.advance_payment) || 0;
-    if (advance <= 0) return;
-    const month = (o.created_at || o.pickup_date || '').slice(0,7);
+    const inv = invByOrder[o.id];
+    const laterPayments = inv ? (paymentsByInvoice[inv.id] || []).reduce((s,p) => s + (parseFloat(p.amount) || 0), 0) : 0;
+    const collected = advance + laterPayments;
+    if (collected <= 0) return;
+    const month = (o.pickup_date || o.created_at || '').slice(0,7);
     if (!month) return;
-    monthMap[month] = (monthMap[month]||0) + advance;
-  });
-  payments.forEach(p=>{
-    const month=(p.date||'').slice(0,7); if(!month)return;
-    monthMap[month]=(monthMap[month]||0)+(parseFloat(p.amount)||0);
+    monthMap[month] = (monthMap[month]||0) + collected;
   });
   const sorted = Object.entries(monthMap).sort((a,b)=>a[0].localeCompare(b[0]));
   window._reportData = sorted.map(([m,a])=>({Month:m,Revenue:a}));
@@ -123,7 +126,8 @@ async function generateMonthlyRevenueReport() {
   const grandTotal = sorted.reduce((s,[,a])=>s+a,0);
 
   document.getElementById('report-output').innerHTML = reportWrapper('Monthly Revenue Report',
-    `<div class="table-wrap"><table>
+    `<div style="font-size:0.8em;color:var(--text-muted);margin-bottom:12px;">Revenue is grouped by each order's pickup date, not the date it was paid — settling an old unpaid order today still counts toward its original month.</div>
+    <div class="table-wrap"><table>
       <thead><tr><th>Month</th><th>Revenue (LKR)</th></tr></thead>
       <tbody>${rows}</tbody>
       <tfoot><tr><td style="font-weight:700;padding:12px 16px;">Grand Total</td><td style="font-weight:700;padding:12px 16px;">${formatCurrency(grandTotal)}</td></tr></tfoot>
