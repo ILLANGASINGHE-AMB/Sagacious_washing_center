@@ -232,8 +232,8 @@ const ExpensesModule = {
 
     bodyHTML += `
       <tr>
-        <td tabindex="0" data-cell="date" data-entry-id="new" class="sticky left-0 z-20 w-[110px] min-w-[110px] px-3 py-2 text-xs font-mono text-slate-400 bg-white dark:bg-slate-800 cursor-cell outline-none focus:ring-2 focus:ring-inset focus:ring-indigo-500 italic">+ Add row</td>
-        <td class="sticky left-[110px] z-20 w-[220px] min-w-[220px] px-3 py-2 text-xs text-slate-300 dark:text-slate-600 bg-white dark:bg-slate-800 border-r border-slate-200 dark:border-slate-700 italic">Enter a date to start a new row</td>
+        <td tabindex="0" data-cell="date" data-entry-id="new" class="sticky left-0 z-20 w-[110px] min-w-[110px] px-3 py-2 text-xs font-mono text-slate-400 bg-white dark:bg-slate-800 cursor-cell outline-none focus:ring-2 focus:ring-inset focus:ring-indigo-500 italic">${today()}</td>
+        <td class="sticky left-[110px] z-20 w-[220px] min-w-[220px] px-3 py-2 text-xs text-slate-300 dark:text-slate-600 bg-white dark:bg-slate-800 border-r border-slate-200 dark:border-slate-700 italic">Click date to start a new row</td>
         ${renderBlankAmountCells()}
         <td class="sticky right-0 z-20 w-[130px] min-w-[130px] px-3 py-2 bg-white dark:bg-slate-800 border-l border-slate-200 dark:border-slate-700"></td>
       </tr>
@@ -421,7 +421,7 @@ const ExpensesModule = {
     let inputType = 'text', existingVal = '';
     if (cellType === 'date') {
       inputType = 'date';
-      existingVal = entryId === 'new' ? '' : (this._entries.find(e => String(e.id) === entryId)?.entry_date || '');
+      existingVal = entryId === 'new' ? today() : (this._entries.find(e => String(e.id) === entryId)?.entry_date || '');
     } else if (cellType === 'description') {
       existingVal = this._entries.find(e => String(e.id) === entryId)?.description || '';
     } else if (cellType === 'amount') {
