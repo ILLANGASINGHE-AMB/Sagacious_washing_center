@@ -1,6 +1,11 @@
 // app.js - Main Application
 
 let currentPage = 'dashboard';
+// Set by navigate() the first time it's called. initApp()'s own boot-time navigate(defaultPage)
+// checks this so it never clobbers a page the user already clicked into during the brief window
+// between the sidebar becoming visible and initApp() actually running (both happen after
+// enterAppWithSession's own awaited network calls, so that window is real, not theoretical).
+let _hasNavigatedOnce = false;
 let dashCharts  = {};
 let showUndoButtonSetting = 'true';
 
@@ -197,11 +202,15 @@ function doLogout() {
 async function initApp() {
   updateTopbarDate();
   setInterval(updateTopbarDate, 60000);
-  // Navigate immediately — don't block on seed/settings
-  if (isDriver()) {
-    navigate('transport');
-  } else {
-    navigate('dashboard');
+  // Navigate immediately — don't block on seed/settings. Guarded so this boot-time default
+  // doesn't clobber a page the user already clicked into during the async gap before initApp()
+  // ran (see _hasNavigatedOnce).
+  if (!_hasNavigatedOnce) {
+    if (isDriver()) {
+      navigate('transport');
+    } else {
+      navigate('dashboard');
+    }
   }
   // Run these in background so they never delay the first page render
   DB.seedDemoData().catch(e => console.warn('seedDemoData:', e));
@@ -266,6 +275,7 @@ function navigate(page) {
     page = isDriver() ? 'transport' : 'dashboard';
   }
   currentPage = page;
+  _hasNavigatedOnce = true;
   Object.values(dashCharts).forEach(c => { try { c.destroy(); } catch(e){} });
   dashCharts = {};
 
@@ -380,6 +390,12 @@ async function renderDashboard() {
     return sum + Math.max(0, (parseFloat(o.total_amount) || 0) - (parseFloat(o.advance_payment) || 0));
   }, 0);
   const totalBilled     = orders.reduce((s, o) => s + (o.total_amount || 0), 0);
+
+  // The Promise.all above can resolve well after the user has already navigated to another
+  // page (e.g. clicking Data Analytics right after login, before Dashboard's fetch finishes) —
+  // without this guard, this stale write clobbers whatever that other page already rendered
+  // into the same #content element.
+  if (currentPage !== 'dashboard') return;
 
   contentEl.innerHTML = `
     <div style="margin-bottom:22px;">
