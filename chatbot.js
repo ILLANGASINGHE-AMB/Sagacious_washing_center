@@ -29,7 +29,11 @@ const SAGABot = {
     'balance for <customer name>',
     'order LND-0826-0001',
     'invoice INV-0826-0001',
-    "today's summary"
+    "today's summary",
+    'how do I create an order',
+    'how do I generate a report',
+    'how does pay now work',
+    'who are you'
   ],
 
   // ── Entry point ─────────────────────────────────────────────
@@ -226,6 +230,91 @@ SAGABot._intents.push({
   name: 'help',
   test: t => /\bhelp\b|what can you do|examples?\b/.test(t),
   run: async () => `Here's what I can answer:\n${SAGABot.HELP_TOPICS.map(t => `• ${t}`).join('\n')}\n\nYou can add a time period to most of these — "today", "this week", "last month", "August 2026", etc. No period usually defaults to this month.`
+});
+
+SAGABot._intents.push({
+  name: 'identity',
+  test: t => /\bwho are you\b|\bwhat are you\b|\byour name\b|what'?s your name/.test(t),
+  run: async () => `I am SAGA AI, Your System's Local ChatBot`
+});
+
+// ── How-to / feature intents ──────────────────────────────────
+// These answer "how do I..." / "what is..." questions about using the app's
+// features, as opposed to the intents above/below which answer questions
+// about the LIVE DATA in the database. They're placed before the data
+// intents so phrasing like "how do I add an expense" is routed here instead
+// of to the numeric "expenses" intent (which matches on "expense" alone).
+
+SAGABot._intents.push({
+  name: 'howToCreateOrder',
+  test: t => /how (do i|to|can i|would i).{0,15}(create|add|make|place|start).{0,15}order|new order.{0,10}(work|steps)|steps? to (create|place) an? order/.test(t),
+  run: async () => `**Creating an order**\n• Go to Orders → New Order\n• Pick a customer (and optionally a driver)\n• Add items from the catalog — pick a service type (Dry Clean / Wash & Press / Wash & Dry) and the price auto-fills\n• Set pickup/delivery dates, and optionally a delivery charge, discount, or advance payment\n• Click Create\n\nEditing works the same way via the row's Edit button. Two special flows also exist: Quick Pick-Up (a bare pickup request, no items/invoice yet) and Credit Bill (a deferred-payment order with a due date that auto-generates a Credit invoice).`
+});
+
+SAGABot._intents.push({
+  name: 'howAtomicOrderSaving',
+  test: t => /\batomic\b|order.{0,15}(no items|missing items|lost items)|why.{0,15}order.{0,15}(fail|lost)/.test(t),
+  run: async () => `Order creation and editing happens as one all-or-nothing database operation — the order and every item on it are saved together in a single step. Either everything saves successfully, or nothing does, so an order can never end up saved with missing items (which could previously happen if a network hiccup interrupted a multi-step save).`
+});
+
+SAGABot._intents.push({
+  name: 'howToPayment',
+  test: t => /how (do i|to|can i).{0,20}(record|log|add|take).{0,10}payment|how (do i|to|can i).{0,20}invoice/.test(t),
+  run: async () => `**Recording a payment**\n• Go to Invoices, find the order's invoice, and click Record Payment\n• Choose Standard Payment (cash/card against the balance) or Pay with Deductions (reduces what's owed by a reason-tagged deduction, e.g. a damaged-item discount)\n\nInvoices are generated automatically for Credit Bills, or on demand for standard orders. View opens/prints an invoice; the Deductions tab shows deduction history and lets an admin undo one.`
+});
+
+SAGABot._intents.push({
+  name: 'howToPayNow',
+  test: t => /what is pay now|pay now.{0,15}(work|do|for)|how does pay now/.test(t),
+  run: async () => `**Pay Now** is a focused view of every order/invoice that isn't fully paid yet — with search, a status filter, overdue-days per order, and batch payment tools. Paying an order later doesn't shift its income into that later month — it still counts toward the order's original pickup month.`
+});
+
+SAGABot._intents.push({
+  name: 'howToItems',
+  test: t => /how (do i|to|can i).{0,15}(add|create|edit|update).{0,10}(item|catalog)|item catalog.{0,10}(work|use)/.test(t),
+  run: async () => `**Items catalog** (Items tab) is your price list — item code, name, description, and three service prices (Dry Clean / Wash & Press / Wash & Dry). Add Item creates a new catalog entry; Edit/Delete manage existing ones. Admins can also generate customer quotations straight from catalog items.`
+});
+
+SAGABot._intents.push({
+  name: 'howToExpenses',
+  test: t => /how (do i|to|can i).{0,20}(add|log|record|create|enter).{0,15}(expense|cash book)/.test(t),
+  run: async () => `**Logging an expense**\n• Go to Expenses → Cash Book\n• Use Add Category / Add Expense to define categories and their sub-items if they don't exist yet\n• Add a dated entry against the right category/item\n\nCategory View gives a filterable flat list with a trend graph, and stat cards show this month's total, most expensive category, and entry/category counts.`
+});
+
+SAGABot._intents.push({
+  name: 'howToTransport',
+  test: t => /how (do i|to|can i).{0,15}(start|log|add|create).{0,10}trip|how does transport work/.test(t),
+  run: async () => `**Logging a trip** (Transport tab)\n• Click New Trip, pick a driver and vehicle\n• Start date/time and starting KM auto-fill from that vehicle's last trip\n• Start & Save\n• When the trip finishes, End Trip and enter the ending KM (must exceed the starting KM)\n\nA driver/vehicle stays marked busy until its trip is ended. Trips are split into Ongoing and Completed lists.`
+});
+
+SAGABot._intents.push({
+  name: 'howToVehicles',
+  test: t => /how (do i|to|can i).{0,15}(add|register).{0,10}vehicle|fuel cost.{0,15}(calculat|work|estimat)/.test(t),
+  run: async () => `**Vehicles** tab registers company vehicles (number, category, model) and tracks total distance travelled, with a per-vehicle trip history and distance-over-time graph. Fuel cost per trip is estimated as distance ÷ km-per-litre efficiency × current fuel price — efficiency and fuel price are set in Settings.`
+});
+
+SAGABot._intents.push({
+  name: 'howToReports',
+  test: t => /how (do i|to|can i).{0,20}(generate|create|make|run).{0,10}report|how do reports work/.test(t),
+  run: async () => `**Reports** tab has 9 report types. Daily Orders, Monthly Revenue, and Customer Billing generate instantly as an on-screen table. The other 6 — Full Report, Customer Summary, Expenses Report, Monthly Bills, Driver Report, Vehicle Report — open a filter modal first (date range, categories, etc.); clicking Generate builds the report and immediately opens it as a PDF in a new tab.`
+});
+
+SAGABot._intents.push({
+  name: 'howToSettings',
+  test: t => /how (do i|to|can i).{0,20}(change|update|configure|set).{0,15}(settings|company|logo|invoice prefix)/.test(t),
+  run: async () => `**Settings** (admin only) covers company profile (name, address, phone, email, logo), invoice prefix/footer, billing defaults (discount threshold, delivery charge), appearance (dark mode, text size), user accounts, and backup/restore. Staff and Driver roles only see appearance settings.`
+});
+
+SAGABot._intents.push({
+  name: 'whatIsDashboard',
+  test: t => /what.{0,10}dashboard (show|have)|what is (the )?dashboard/.test(t),
+  run: async () => `The **Dashboard** (home page) shows today's pickups, pending payments, this month's billed vs. actually collected cash, and the all-time billed total — plus a 14-day orders-by-value chart, this month's expenses by category, recent orders, and unpaid invoices.`
+});
+
+SAGABot._intents.push({
+  name: 'rolesPermissions',
+  test: t => /user roles?|permissions?|what can (an? )?(admin|staff|driver)/.test(t),
+  run: async () => `**Roles**: Admin sees every tab. Staff sees most operational tabs (Orders, Customers, Invoices, Expenses, etc.) but not Analytics, Reports, or Recent Actions. Driver only sees Transport, Vehicles, Customers, Orders, and Settings.`
 });
 
 SAGABot._intents.push({
