@@ -47,7 +47,7 @@ async function renderAnalytics() {
 
   await anLoadRefData();
 
-  const summary = await calculateThisMonthSummary();
+  const summary = await calculateAllTimeSummary();
   renderKPICards(summary);
   renderCategoryButtons();
   await renderAnalyticsBody();
@@ -524,28 +524,25 @@ function anTableCard(title, icon, color, tableHtml) {
 }
 
 // ─────────────────────────────────────────────
-// SECTION 01 — FIXED "THIS MONTH" KPI CARDS
+// SECTION 01 — FIXED "ALL TIME" KPI CARDS (start until today, independent of any filter below)
 // ─────────────────────────────────────────────
-async function calculateThisMonthSummary() {
-  const now = new Date();
-  const y = now.getFullYear(); const m = String(now.getMonth() + 1).padStart(2, '0');
-  const start = `${y}-${m}-01`;
-  const lastDay = new Date(y, now.getMonth() + 1, 0).getDate();
-  const end = `${y}-${m}-${String(lastDay).padStart(2, '0')}`;
+async function calculateAllTimeSummary() {
+  const start = '2000-01-01';
+  const end = new Date().toISOString().split('T')[0];
   const startD = new Date(start + 'T00:00:00'), endD = new Date(end + 'T23:59:59');
 
   const [orders, expEntries, expAmounts] = await Promise.all([DB.getOrders(), DB.getExpenseEntries(), DB.getExpenseAmounts()]);
   const flatExpenses = Financials.flattenExpenseData(expAmounts, expEntries, analyticsRefData.expenseTypes, analyticsRefData.expenseCategories);
 
-  const monthOrders = (orders || []).filter(o => {
+  const allOrders = (orders || []).filter(o => {
     const raw = o.pickup_date || o.created_at;
     const d = raw ? new Date(raw) : null;
     return d && !isNaN(d) && d >= startD && d <= endD;
   });
 
-  const totalIncome = monthOrders.reduce((s, o) => s + (parseFloat(o.total_amount) || 0), 0);
-  const paidAmount = monthOrders.filter(o => o.status === 'Paid').reduce((s, o) => s + (parseFloat(o.total_amount) || 0), 0);
-  const unpaidAmount = monthOrders.filter(o => o.status !== 'Paid')
+  const totalIncome = allOrders.reduce((s, o) => s + (parseFloat(o.total_amount) || 0), 0);
+  const paidAmount = allOrders.filter(o => o.status === 'Paid').reduce((s, o) => s + (parseFloat(o.total_amount) || 0), 0);
+  const unpaidAmount = allOrders.filter(o => o.status !== 'Paid')
     .reduce((s, o) => s + Math.max(0, (parseFloat(o.total_amount) || 0) - (parseFloat(o.advance_payment) || 0)), 0);
 
   const expenseCalc = Financials.computeExpenseTotals(flatExpenses, start, end);
@@ -553,7 +550,7 @@ async function calculateThisMonthSummary() {
   const profit = totalIncome - totalExpenses;
   const margin = totalIncome > 0 ? (profit / totalIncome * 100) : 0;
 
-  return { totalIncome, totalExpenses, profit, margin, paidAmount, unpaidAmount, monthLabel: startD.toLocaleDateString('en-GB', { month: 'long', year: 'numeric' }) };
+  return { totalIncome, totalExpenses, profit, margin, paidAmount, unpaidAmount, label: 'All Time' };
 }
 
 function renderKPICards(s) {
@@ -572,11 +569,11 @@ function renderKPICards(s) {
     </div>`;
 
   el.innerHTML = `
-    ${card('Total Income', formatCurrency(s.totalIncome), 'fa-coins', '#3b82f6', '#dbeafe', s.monthLabel)}
-    ${card('Total Expenses', formatCurrency(s.totalExpenses), 'fa-receipt', '#ef4444', '#fee2e2', s.monthLabel)}
+    ${card('Total Income', formatCurrency(s.totalIncome), 'fa-coins', '#3b82f6', '#dbeafe', s.label)}
+    ${card('Total Expenses', formatCurrency(s.totalExpenses), 'fa-receipt', '#ef4444', '#fee2e2', s.label)}
     ${card('Profit', formatCurrency(s.profit), 'fa-scale-balanced', profitColor, s.profit >= 0 ? '#dcfce7' : '#fee2e2', `Margin: ${s.margin.toFixed(1)}%`)}
-    ${card('Paid Amount', formatCurrency(s.paidAmount), 'fa-circle-check', '#10b981', '#dcfce7', s.monthLabel)}
-    ${card('Unpaid Amount', formatCurrency(s.unpaidAmount), 'fa-hourglass-half', '#f59e0b', '#fef3c7', s.monthLabel)}
+    ${card('Paid Amount', formatCurrency(s.paidAmount), 'fa-circle-check', '#10b981', '#dcfce7', s.label)}
+    ${card('Unpaid Amount', formatCurrency(s.unpaidAmount), 'fa-hourglass-half', '#f59e0b', '#fef3c7', s.label)}
   `;
 }
 
