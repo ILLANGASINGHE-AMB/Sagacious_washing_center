@@ -17,6 +17,25 @@ async function _q(promise) {
   return data;
 }
 
+// PostgREST caps any single response at 1000 rows by default — a bulk
+// "get everything" query silently truncates past that instead of erroring,
+// so tables that grow past 1000 rows quietly lose their tail end forever
+// (e.g. order_items ordered by id ascending: newest orders' items just
+// vanish). buildQuery must return a FRESH query builder each call (a
+// builder can't be re-used after being awaited), so pagination can slide
+// its own .range() over it page by page until a short page signals the end.
+async function _qAll(buildQuery, pageSize = 1000) {
+  let all = [];
+  let from = 0;
+  while (true) {
+    const rows = await _q(buildQuery().range(from, from + pageSize - 1));
+    all = all.concat(rows || []);
+    if (!rows || rows.length < pageSize) break;
+    from += pageSize;
+  }
+  return all;
+}
+
 // Orders only ever carry one of these three payment states — anything else
 // read back from the DB (nulls, legacy values) collapses to 'Unpaid'.
 function normalizeOrderStatus(status) {
@@ -35,7 +54,7 @@ const DB = {
   },
 
   // ── Customers ─────────────────────────────
-  async getCustomers() { return _q(_sb.from('customers').select('*').order('hotel_name')); },
+  async getCustomers() { return _qAll(() => _sb.from('customers').select('*').order('hotel_name').order('id')); },
   async addCustomer(data) {
     const rows = await _q(_sb.from('customers').insert({ created_date: new Date().toISOString(), ...data }).select());
     return rows[0].id;
@@ -72,7 +91,7 @@ const DB = {
   },
 
   // ── Drivers ───────────────────────────────
-  async getDrivers() { return _q(_sb.from('drivers').select('*').order('name')); },
+  async getDrivers() { return _qAll(() => _sb.from('drivers').select('*').order('name').order('id')); },
   async addDriver(data) {
     const rows = await _q(_sb.from('drivers').insert({ created_date: new Date().toISOString(), status: 'available', ...data }).select());
     return rows[0].id;
@@ -90,7 +109,7 @@ const DB = {
   // ── Vehicles ──────────────────────────────
   async getVehicles() {
     try {
-      const rows = await _q(_sb.from('vehicles').select('*').order('vehicle_no'));
+      const rows = await _qAll(() => _sb.from('vehicles').select('*').order('vehicle_no').order('id'));
       if (rows && rows.length >= 0) return rows;
     } catch(e) {}
     try {
@@ -167,7 +186,7 @@ const DB = {
   // ── Orders ────────────────────────────────
   async getOrders() {
     const [rows, deletedMap] = await Promise.all([
-      _q(_sb.from('orders').select('*').order('created_at', { ascending: false })),
+      _qAll(() => _sb.from('orders').select('*').order('created_at', { ascending: false })),
       DB.getDeletedCustomerOrders()
     ]);
     window._deletedCustOrders = deletedMap || {};
@@ -220,7 +239,7 @@ const DB = {
 
   // ── Order Items ───────────────────────────
   async getOrderItems(orderId) { return _q(_sb.from('order_items').select('*').eq('order_id', orderId).order('id', { ascending: true })); },
-  async getAllOrderItems() { return _q(_sb.from('order_items').select('*').order('id', { ascending: true })); },
+  async getAllOrderItems() { return _qAll(() => _sb.from('order_items').select('*').order('id', { ascending: true })); },
   async addOrderItem(data) {
     const rows = await _q(_sb.from('order_items').insert(data).select());
     return rows[0].id;
@@ -230,7 +249,7 @@ const DB = {
   async deleteOrderItems(orderId) { await _q(_sb.from('order_items').delete().eq('order_id', orderId)); },
 
   // ── Invoices ──────────────────────────────
-  async getInvoices() { return _q(_sb.from('invoices').select('*').order('id', { ascending: false })); },
+  async getInvoices() { return _qAll(() => _sb.from('invoices').select('*').order('id', { ascending: false })); },
   async addInvoice(data) {
     const rows = await _q(_sb.from('invoices').insert(data).select());
     return rows[0].id;
@@ -247,7 +266,7 @@ const DB = {
   async deleteInvoice(id) { await _q(_sb.from('invoices').delete().eq('id', id)); },
 
   // ── Payments ──────────────────────────────
-  async getPayments() { return _q(_sb.from('payments').select('*').order('date', { ascending: false })); },
+  async getPayments() { return _qAll(() => _sb.from('payments').select('*').order('date', { ascending: false }).order('id', { ascending: false })); },
   async addPayment(data) {
     const rows = await _q(_sb.from('payments').insert({ ...data, date: new Date().toISOString() }).select());
     return rows[0].id;
@@ -260,7 +279,7 @@ const DB = {
   },
 
   // ── Items Catalog ─────────────────────────
-  async getItems() { return _q(_sb.from('items').select('*').order('item_id')); },
+  async getItems() { return _qAll(() => _sb.from('items').select('*').order('item_id')); },
   async addItem(data) {
     const rows = await _q(_sb.from('items').insert(data).select());
     return rows[0].id;
@@ -610,7 +629,7 @@ const DB = {
 
   // ── Deductions ─────────────────────────────
   async getDeductions() {
-    return _q(_sb.from('deductions').select('*').order('created_at', { ascending: false }));
+    return _qAll(() => _sb.from('deductions').select('*').order('created_at', { ascending: false }).order('id', { ascending: false }));
   },
   async addDeduction(data) {
     const rows = await _q(_sb.from('deductions').insert({ ...data, created_at: new Date().toISOString() }).select());
@@ -774,7 +793,7 @@ const DB = {
 
   // ── Expenses: Categories (Cash Book top-level columns) ─
   async getExpenseCategories() {
-    return _q(_sb.from('expense_categories').select('*').order('sort_order'));
+    return _qAll(() => _sb.from('expense_categories').select('*').order('sort_order').order('category_id'));
   },
   async addExpenseCategory(name) {
     const category_id = await DB._generateSequentialId('next_category_id', 'CAT-', 'category ID');
@@ -797,7 +816,10 @@ const DB = {
 
   // ── Expenses: Types (Cash Book sub-columns nested under a category) ─
   async getExpenseTypes() {
-    return _q(_sb.from('expense_types').select('*').order('sort_order'));
+    // sort_order is scoped per-category (see addExpenseType), so it ties
+    // across categories — add expense_type_id as a stable tiebreaker so
+    // paged .range() calls don't skip/duplicate rows.
+    return _qAll(() => _sb.from('expense_types').select('*').order('sort_order').order('expense_type_id'));
   },
   async addExpenseType(name, categoryId) {
     const expense_type_id = await DB._generateSequentialId('next_expense_type_id', 'EXP-', 'expense ID');
@@ -823,7 +845,7 @@ const DB = {
 
   // ── Expenses: Cash Book rows (Date + Description journal lines) ─
   async getExpenseEntries() {
-    return _q(_sb.from('expense_entries').select('*').order('entry_date'));
+    return _qAll(() => _sb.from('expense_entries').select('*').order('entry_date').order('id'));
   },
   async addExpenseEntry(entry_date, description = '') {
     const rows = await _q(_sb.from('expense_entries').insert({ entry_date, description }).select());
@@ -838,7 +860,10 @@ const DB = {
 
   // ── Expenses: Cash Book cells (one amount per row x expense type) ─
   async getExpenseAmounts() {
-    return _q(_sb.from('expense_amounts').select('*'));
+    // No surrogate id column here (entry_id+expense_type_id is the natural
+    // key, see the upsert onConflict below) — order by that pair so paged
+    // .range() calls see a stable, non-overlapping row order.
+    return _qAll(() => _sb.from('expense_amounts').select('*').order('entry_id').order('expense_type_id'));
   },
   async setExpenseAmount(entryId, expenseTypeId, amount) {
     // Sparse-matrix convention: a blank/zero cell is DELETED, not stored as
@@ -875,7 +900,7 @@ const DB = {
   // ── Transport & Trips ─────────────────────
   async getTrips() {
     try {
-      const rows = await _q(_sb.from('trips').select('*').order('start_date', { ascending: false }).order('created_at', { ascending: false }));
+      const rows = await _qAll(() => _sb.from('trips').select('*').order('start_date', { ascending: false }).order('created_at', { ascending: false }).order('id', { ascending: false }));
       if (rows) return rows;
     } catch(e) {}
     try {
