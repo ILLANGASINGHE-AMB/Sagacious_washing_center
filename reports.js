@@ -252,8 +252,8 @@ async function generateDriverReport() {
   if (!selectedDriverIds.length) return toast('Please select at least one driver', 'warning');
 
   showProcessingOverlay('Generating Driver Report', 'Fetching order data...');
-  document.getElementById('dr-report-body').innerHTML = `<div style="text-align:center;padding:20px;"><i class="fas fa-spinner fa-spin fa-2x" style="color:var(--primary);"></i><div style="margin-top:8px;color:var(--text-muted);">Loading...</div></div>`;
 
+  let summaryList;
   try {
     const [orders, drivers] = await Promise.all([DB.getOrders(), DB.getDrivers()]);
     const dMap = Object.fromEntries(drivers.map(d=>[d.id,d]));
@@ -274,43 +274,23 @@ async function generateDriverReport() {
       if(['Delivered','Paid'].includes(o.status)) drvSummary[o.driver_id].delivered++;
     });
 
-    const summaryList = Object.values(drvSummary).sort((a,b)=>b.total-a.total);
+    summaryList = Object.values(drvSummary).sort((a,b)=>b.total-a.total);
     window._driverReportData = summaryList;
     window._driverReportMeta = { from, to };
-
-    if (!summaryList.length) {
-      document.getElementById('dr-report-body').innerHTML = `<div style="text-align:center;padding:30px;color:var(--text-muted);">No drivers selected.</div>`;
-      document.getElementById('dr-report-export').style.display = 'none';
-      return;
-    }
-
-    const rows = summaryList.map(d=>`<tr>
-      <td>${d.name}</td><td style="text-align:center;">${d.trips}</td><td style="text-align:center;">${d.delivered}</td>
-      <td style="text-align:center;">${d.trips>0?Math.round(d.delivered/d.trips*100):0}%</td>
-      <td style="text-align:right;font-weight:600;">${formatCurrency(d.total)}</td>
-    </tr>`).join('');
-
-    const grandTotal = summaryList.reduce((s,d)=>s+d.total,0);
-
-    document.getElementById('dr-report-body').innerHTML = `
-      <div style="display:grid;grid-template-columns:repeat(2,1fr);gap:12px;margin-bottom:16px;">
-        <div class="stat-card"><div class="label">Drivers</div><div class="value">${summaryList.length}</div></div>
-        <div class="stat-card"><div class="label">Total Value</div><div class="value" style="font-size:1.1em;">${formatCurrency(grandTotal)}</div></div>
-      </div>
-      <div class="table-wrap" style="max-height:420px;overflow-y:auto;">
-        <table>
-          <thead style="position:sticky;top:0;z-index:2;"><tr><th>Driver</th><th style="text-align:center;">Total Trips</th><th style="text-align:center;">Delivered</th><th style="text-align:center;">Success Rate</th><th style="text-align:right;">Total Value</th></tr></thead>
-          <tbody>${rows}</tbody>
-          <tfoot><tr><td colspan="4" style="font-weight:700;padding:12px 16px;text-align:right;border-top:2px solid var(--border);">Grand Total</td><td style="font-weight:700;padding:12px 16px;text-align:right;border-top:2px solid var(--border);">${formatCurrency(grandTotal)}</td></tr></tfoot>
-        </table>
-      </div>`;
-
-    document.getElementById('dr-report-export').style.display = 'flex';
   } catch(err) {
-    toast('Error generating report: ' + (err.message||err), 'error');
-  } finally {
     hideProcessingOverlay();
+    toast('Error generating report: ' + (err.message||err), 'error');
+    return;
   }
+
+  if (!summaryList.length) {
+    hideProcessingOverlay();
+    toast('No data found for the selected drivers', 'warning');
+    return;
+  }
+
+  await printDriverReport();
+  hideModal('driver-report-modal');
 }
 
 function exportDriverReport(type) {
@@ -446,7 +426,6 @@ async function generateFullReport() {
   if(from>to)    return toast('From date must be before To date','error');
 
   showProcessingOverlay('Generating Full Report', 'Fetching orders and calculations...');
-  document.getElementById('full-report-body').innerHTML = `<div style="text-align:center;padding:20px;"><i class="fas fa-spinner fa-spin fa-2x" style="color:var(--primary);"></i><div style="margin-top:8px;color:var(--text-muted);">Loading...</div></div>`;
   try {
 
   const [orders,customers,drivers,invoices,payments,orderItemsAll] = await Promise.all([
@@ -476,7 +455,8 @@ async function generateFullReport() {
   });
 
   if(!filtered.length){
-    document.getElementById('full-report-body').innerHTML=`<div style="text-align:center;padding:30px;color:var(--text-muted);">No orders in this date range.</div>`;
+    hideProcessingOverlay();
+    toast('No orders in this date range', 'warning');
     return;
   }
 
@@ -540,53 +520,14 @@ async function generateFullReport() {
 
   window._fullReportData = reportRows;
   window._fullReportMeta = { from, to, grandTotal, grandAdvance, grandPaid, grandRemaining, count: filtered.length };
-
-  const tableRows = reportRows.map(r=>`<tr>
-    <td style="white-space:nowrap;">${r.date==='No date'?'<span style="color:var(--danger);font-style:italic;">No date</span>':(r.date?formatDate(r.date):'')}</td>
-    <td style="white-space:nowrap;">${r.pickup_date||''}</td>
-    <td style="white-space:nowrap;">${r.paid_date||''}</td>
-    <td style="font-family:monospace;font-size:0.85em;font-weight:700;">${r.batch_id||''}</td>
-    <td>${r.customer||''}</td>
-    <td>${r.driver||''}</td>
-    <td>${r.item}</td>
-    <td style="text-align:center;">${r.qty!==undefined&&r.qty!=='—'?r.qty:'—'}</td>
-    <td style="text-align:right;">${r.unit_price!==undefined&&r.unit_price!=='—'?formatCurrency(r.unit_price):'—'}</td>
-    <td style="text-align:center;">${r.service_type&&r.service_type!=='—'?`<span class="badge ${({'Dry Clean':'badge-purple','Wash & Press':'badge-cyan','Wash & Dry':'badge-green'})[r.service_type]||'badge-gray'}">${r.service_type}</span>`:'—'}</td>
-    <td style="text-align:right;color:var(--success);">${r.advance!==''?formatCurrency(r.advance):''}</td>
-    <td style="text-align:right;color:var(--success);">${r.full_payments!==''?formatCurrency(r.full_payments):''}</td>
-    <td style="text-align:right;color:var(--danger);">${r.remaining!==''?formatCurrency(r.remaining):''}</td>
-    <td style="text-align:right;font-weight:700;">${r.total!==''?formatCurrency(r.total):''}</td>
-  </tr>`).join('');
-
-  document.getElementById('full-report-body').innerHTML = `
-    <div style="display:grid;grid-template-columns:repeat(4,1fr);gap:12px;margin-bottom:16px;">
-      <div class="stat-card"><div class="label">Orders</div><div class="value">${filtered.length}</div></div>
-      <div class="stat-card"><div class="label">Grand Total</div><div class="value" style="font-size:1.1em;">${formatCurrency(grandTotal)}</div></div>
-      <div class="stat-card"><div class="label">Total Paid</div><div class="value" style="font-size:1.1em;color:var(--success);">${formatCurrency(grandAdvance+grandPaid)}</div></div>
-      <div class="stat-card"><div class="label">Remaining</div><div class="value" style="font-size:1.1em;color:var(--danger);">${formatCurrency(grandRemaining)}</div></div>
-    </div>
-    <div class="table-wrap" style="max-height:420px;overflow-y:auto;">
-      <table>
-        <thead style="position:sticky;top:0;z-index:2;"><tr>
-          <th>Order Date</th><th>Pickup Date</th><th>Paid Date</th><th>Batch ID</th><th>Customer</th><th>Driver</th>
-          <th>Item</th><th>Qty</th><th>Unit Price</th><th>Service</th>
-          <th>Advance</th><th>Paid</th><th>Remaining</th><th>Total</th>
-        </tr></thead>
-        <tbody>${tableRows}</tbody>
-        <tfoot><tr>
-          <td colspan="10" style="font-weight:700;padding:12px 16px;text-align:right;border-top:2px solid var(--border);">Totals</td>
-          <td style="font-weight:700;padding:12px 16px;border-top:2px solid var(--border);color:var(--success);">${formatCurrency(grandAdvance)}</td>
-          <td style="font-weight:700;padding:12px 16px;border-top:2px solid var(--border);color:var(--success);">${formatCurrency(grandPaid)}</td>
-          <td style="font-weight:700;padding:12px 16px;border-top:2px solid var(--border);color:var(--danger);">${formatCurrency(grandRemaining)}</td>
-          <td style="font-weight:700;padding:12px 16px;border-top:2px solid var(--border);">${formatCurrency(grandTotal)}</td>
-        </tr></tfoot>
-      </table>
-    </div>`;
-
-  document.getElementById('full-report-export').style.display='flex';
-  } finally {
+  } catch(err) {
     hideProcessingOverlay();
+    toast('Error generating report: ' + (err.message||err), 'error');
+    return;
   }
+
+  await printFullReport();
+  hideModal('full-report-modal');
 }
 
 function exportFullReport(type) {
@@ -847,7 +788,6 @@ async function generateCustomerSummaryReport() {
   }
 
   showProcessingOverlay('Generating Customer Summary', 'Fetching order data...');
-  document.getElementById('cs-report-body').innerHTML = `<div style="text-align:center;padding:20px;"><i class="fas fa-spinner fa-spin fa-2x" style="color:var(--primary);"></i><div style="margin-top:8px;color:var(--text-muted);">Loading...</div></div>`;
 
   try {
     const [orders, customers, invoices, payments, deductions, catalogItems, orderItemsAll] = await Promise.all([
@@ -896,8 +836,8 @@ async function generateCustomerSummaryReport() {
     });
 
     if(!filtered.length){
-      document.getElementById('cs-report-body').innerHTML=`<div style="text-align:center;padding:30px;color:var(--text-muted);">No orders found matching parameters.</div>`;
-      document.getElementById('cs-report-export').style.display='none';
+      hideProcessingOverlay();
+      toast('No orders found matching parameters', 'warning');
       return;
     }
 
@@ -905,62 +845,23 @@ async function generateCustomerSummaryReport() {
     const displayItemTotals = {};
     displayItems.forEach(dItem => { displayItemTotals[dItem.id] = 0; });
 
-    const tableRowsHTML = filtered.map(o => {
-      const custName = getOrderCustomerName(o, cMap);
+    filtered.forEach(o => {
       const inv = invMap[o.id];
       const advanceAmt = o.advance_payment || 0;
       const paidAmt = inv ? (payMap[inv.id] || 0) : 0;
       const fullPaid = advanceAmt + paidAmt;
       const remaining = Math.max(0, (o.total_amount || 0) - (inv?.deduction_amount || 0) - fullPaid);
-      const paidDate = o.payment_date ? formatDate(o.payment_date) : (inv?.payment_date ? formatDate(inv.payment_date) : '—');
-      
-      const descList = [];
-      if (o.advance_payment > 0) descList.push(`Advance: ${o.advance_payment}`);
-      if (inv) {
-        const pList = payListMap[inv.id] || [];
-        const dList = deductListMap[inv.id] || [];
-        pList.forEach(p => { if (p.notes) descList.push(p.notes); });
-        dList.forEach(d => { if (d.reason) descList.push(`Deduction: ${d.reason}`); });
-      }
-      const orderDescription = descList.join('; ') || '—';
 
       const orderItems = itemsByOrder[o.id] || [];
-      const qtyMap = {};
-      displayItems.forEach(dItem => { qtyMap[dItem.id] = 0; });
       orderItems.forEach(ot => {
         const dItem = matchCatalogItem(displayItems, ot);
-        if (dItem) {
-          qtyMap[dItem.id] += parseFloat(ot.quantity) || 0;
-          displayItemTotals[dItem.id] += parseFloat(ot.quantity) || 0;
-        }
+        if (dItem) displayItemTotals[dItem.id] += parseFloat(ot.quantity) || 0;
       });
 
       grandTotal += o.total_amount || 0;
       grandPaid += fullPaid;
       grandRemaining += remaining;
-
-      const qtyCells = displayItems.map(dItem => {
-        const q = qtyMap[dItem.id] || 0;
-        return `<td style="text-align:center;">${q > 0 ? q : '0'}</td>`;
-      }).join('');
-
-      return `
-        <tr>
-          <td style="white-space:nowrap;">${_orderDate(o) ? formatDate(_orderDate(o)) : '<span style="color:var(--danger);font-style:italic;">No date</span>'}</td>
-          <td>${custName}</td>
-          <td style="font-family:monospace;font-weight:700;">${o.batch_id}</td>
-          ${qtyCells}
-          <td style="text-align:right;font-weight:600;">${formatCurrency(o.total_amount)}</td>
-          <td style="text-align:right;font-weight:600;color:var(--success);">${formatCurrency(fullPaid)}</td>
-          <td>${paidDate}</td>
-          <td style="text-align:right;font-weight:600;color:${remaining > 0 ? 'var(--danger)' : 'var(--success)'};">${formatCurrency(remaining)}</td>
-          <td>${orderDescription}</td>
-        </tr>`;
-    }).join('');
-
-    const qtyFooterCells = displayItems.map(dItem => {
-      return `<td style="text-align:center;font-weight:700;">${displayItemTotals[dItem.id]}</td>`;
-    }).join('');
+    });
 
     window._csReportData = {
       filteredOrders: filtered,
@@ -974,55 +875,14 @@ async function generateCustomerSummaryReport() {
       displayItemTotals: displayItemTotals,
       meta: { from, to, grandTotal, grandPaid, grandRemaining, customerId }
     };
-
-    document.getElementById('cs-report-body').innerHTML = `
-      <div style="display:grid;grid-template-columns:repeat(4,1fr);gap:12px;margin-bottom:16px;">
-        <div class="stat-card"><div class="label">Orders</div><div class="value">${filtered.length}</div></div>
-        <div class="stat-card"><div class="label">Grand Total</div><div class="value" style="font-size:1.1em;">${formatCurrency(grandTotal)}</div></div>
-        <div class="stat-card"><div class="label">Total Paid</div><div class="value" style="font-size:1.1em;color:var(--success);">${formatCurrency(grandPaid)}</div></div>
-        <div class="stat-card"><div class="label">Remaining</div><div class="value" style="font-size:1.1em;color:var(--danger);">${formatCurrency(grandRemaining)}</div></div>
-      </div>
-      <div class="table-wrap" style="max-height:420px;overflow-y:auto;">
-        <table style="border-collapse:collapse; width:100%;">
-          <thead style="position:sticky;top:0;z-index:2;background:var(--card-bg);">
-            <tr>
-              <th rowspan="2" style="border:1px solid var(--border);">Order Date</th>
-              <th rowspan="2" style="border:1px solid var(--border);">Customer</th>
-              <th rowspan="2" style="border:1px solid var(--border);">Order Number</th>
-              <th colspan="${displayItems.length}" style="text-align:center;border:1px solid var(--border);">Items</th>
-              <th rowspan="2" style="text-align:right;border:1px solid var(--border);">Total Amount</th>
-              <th rowspan="2" style="text-align:right;border:1px solid var(--border);">Paid Amount</th>
-              <th rowspan="2" style="border:1px solid var(--border);">Paid Date</th>
-              <th rowspan="2" style="text-align:right;border:1px solid var(--border);">Remaining Amount</th>
-              <th rowspan="2" style="border:1px solid var(--border);">Order Description</th>
-            </tr>
-            <tr>
-              ${displayItems.map(c => `<th style="border:1px solid var(--border); font-size:0.85em; font-weight:600;">${c.item_name}</th>`).join('')}
-            </tr>
-          </thead>
-          <tbody>
-            ${tableRowsHTML}
-          </tbody>
-          <tfoot>
-            <tr style="background:var(--bg);">
-              <td colspan="3" style="font-weight:700;text-align:right;border-top:2px solid var(--border);">TOTAL</td>
-              ${qtyFooterCells}
-              <td style="font-weight:700;text-align:right;border-top:2px solid var(--border);">${formatCurrency(grandTotal)}</td>
-              <td style="font-weight:700;text-align:right;border-top:2px solid var(--border);color:var(--success);">${formatCurrency(grandPaid)}</td>
-              <td style="border-top:2px solid var(--border);"></td>
-              <td style="font-weight:700;text-align:right;border-top:2px solid var(--border);color:var(--danger);">${formatCurrency(grandRemaining)}</td>
-              <td style="border-top:2px solid var(--border);"></td>
-            </tr>
-          </tfoot>
-        </table>
-      </div>`;
-
-    document.getElementById('cs-report-export').style.display='flex';
   } catch (err) {
-    toast('Error generating report: ' + (err.message || err), 'error');
-  } finally {
     hideProcessingOverlay();
+    toast('Error generating report: ' + (err.message || err), 'error');
+    return;
   }
+
+  await printCustomerSummary();
+  hideModal('customer-summary-modal');
 }
 
 function exportCustomerSummary(type) {
@@ -1279,7 +1139,6 @@ async function generateMonthlyBillsReport() {
   if (!monthVal) return toast('Please select a month', 'error');
 
   showProcessingOverlay('Generating Monthly Bills', 'Fetching monthly order data...');
-  document.getElementById('mb-report-body').innerHTML = `<div style="text-align:center;padding:20px;"><i class="fas fa-spinner fa-spin fa-2x" style="color:var(--primary);"></i><div style="margin-top:8px;color:var(--text-muted);">Loading...</div></div>`;
 
   try {
     const [orders, customers] = await Promise.all([DB.getOrders(), DB.getCustomers()]);
@@ -1297,8 +1156,8 @@ async function generateMonthlyBillsReport() {
     });
 
     if (!filtered.length) {
-      document.getElementById('mb-report-body').innerHTML = `<div style="text-align:center;padding:30px;color:var(--text-muted);">No orders found for this month.</div>`;
-      document.getElementById('mb-report-export').style.display = 'none';
+      hideProcessingOverlay();
+      toast('No orders found for this month', 'warning');
       return;
     }
 
@@ -1317,47 +1176,14 @@ async function generateMonthlyBillsReport() {
 
     window._monthlyBillsData = reportRows;
     window._monthlyBillsMeta = { month: monthVal, grandTotal, count: filtered.length };
-
-    // Parse month label
-    const [yr, mn] = monthVal.split('-');
-    const monthLabel = new Date(Number(yr), Number(mn) - 1).toLocaleDateString('en-GB', { month: 'long', year: 'numeric' });
-
-    const tableRows = reportRows.map(r => `<tr>
-      <td style="text-align:center;">${r.no}</td>
-      <td style="white-space:nowrap;">${formatDate(r.date)}</td>
-      <td style="font-family:monospace;font-size:0.88em;font-weight:700;">${r.order_id}</td>
-      <td>${r.customer}</td>
-      <td style="text-align:right;font-weight:600;">${formatCurrency(r.order_price)}</td>
-    </tr>`).join('');
-
-    document.getElementById('mb-report-body').innerHTML = `
-      <div style="display:grid;grid-template-columns:repeat(2,1fr);gap:12px;margin-bottom:16px;">
-        <div class="stat-card"><div class="label">Month</div><div class="value" style="font-size:1em;">${monthLabel}</div></div>
-        <div class="stat-card"><div class="label">Total Orders</div><div class="value">${filtered.length}</div></div>
-      </div>
-      <div class="table-wrap" style="max-height:420px;overflow-y:auto;">
-        <table>
-          <thead style="position:sticky;top:0;z-index:2;"><tr>
-            <th style="text-align:center;width:50px;">#</th>
-            <th>Date</th>
-            <th>Order ID</th>
-            <th>Customer Name</th>
-            <th style="text-align:right;">Order Price</th>
-          </tr></thead>
-          <tbody>${tableRows}</tbody>
-          <tfoot><tr>
-            <td colspan="4" style="font-weight:700;padding:12px 16px;text-align:right;border-top:2px solid var(--border);">Total</td>
-            <td style="font-weight:700;padding:12px 16px;text-align:right;border-top:2px solid var(--border);">${formatCurrency(grandTotal)}</td>
-          </tr></tfoot>
-        </table>
-      </div>`;
-
-    document.getElementById('mb-report-export').style.display = 'flex';
   } catch (err) {
-    toast('Error generating report: ' + (err.message || err), 'error');
-  } finally {
     hideProcessingOverlay();
+    toast('Error generating report: ' + (err.message || err), 'error');
+    return;
   }
+
+  await printMonthlyBills();
+  hideModal('monthly-bills-modal');
 }
 
 function exportMonthlyBills(type) {
@@ -1571,7 +1397,6 @@ async function generateExpensesReport() {
   }
 
   showProcessingOverlay('Generating Expenses Report', 'Fetching expense data...');
-  document.getElementById('exr-report-body').innerHTML = `<div style="text-align:center;padding:20px;"><i class="fas fa-spinner fa-spin fa-2x" style="color:var(--primary);"></i><div style="margin-top:8px;color:var(--text-muted);">Loading...</div></div>`;
 
   try {
     const [categories, types, entries, amounts] = await Promise.all([
@@ -1593,46 +1418,18 @@ async function generateExpensesReport() {
     window._expensesReportMeta = { from, to, total: totals.total, byCategory: totals.byCategory, mostExpensiveCategory: totals.mostExpensiveCategory };
 
     if (!inRange.length) {
-      document.getElementById('exr-report-body').innerHTML = `<div style="text-align:center;padding:30px;color:var(--text-muted);">No expenses found matching parameters.</div>`;
-      document.getElementById('exr-report-export').style.display = 'none';
+      hideProcessingOverlay();
+      toast('No expenses found matching parameters', 'warning');
       return;
     }
-
-    const rows = inRange.map(r => `<tr>
-      <td style="white-space:nowrap;">${formatDate(r.entry_date)}</td>
-      <td>${r.category_name}</td>
-      <td>${r.expense_name}</td>
-      <td>${r.description||'—'}</td>
-      <td style="text-align:right;font-weight:600;">${formatCurrency(r.amount)}</td>
-    </tr>`).join('');
-
-    const categoryCards = Object.values(totals.byCategory).sort((a,b)=>b.total-a.total).map(c => `
-      <div class="stat-card"><div class="label">${c.name}</div><div class="value" style="font-size:1em;">${formatCurrency(c.total)}</div></div>
-    `).join('');
-
-    document.getElementById('exr-report-body').innerHTML = `
-      <div style="display:grid;grid-template-columns:repeat(4,1fr);gap:12px;margin-bottom:16px;">
-        <div class="stat-card"><div class="label">Entries</div><div class="value">${inRange.length}</div></div>
-        <div class="stat-card"><div class="label">Grand Total</div><div class="value" style="font-size:1.1em;">${formatCurrency(totals.total)}</div></div>
-        <div class="stat-card" style="grid-column:span 2;"><div class="label">Top Category</div><div class="value" style="font-size:1em;">${totals.mostExpensiveCategory?`${totals.mostExpensiveCategory.name} (${formatCurrency(totals.mostExpensiveCategory.total)})`:'—'}</div></div>
-      </div>
-      <div style="display:grid;grid-template-columns:repeat(auto-fit,minmax(160px,1fr));gap:10px;margin-bottom:16px;">
-        ${categoryCards}
-      </div>
-      <div class="table-wrap" style="max-height:420px;overflow-y:auto;">
-        <table>
-          <thead style="position:sticky;top:0;z-index:2;"><tr><th>Date</th><th>Category</th><th>Expense Item</th><th>Description</th><th style="text-align:right;">Amount</th></tr></thead>
-          <tbody>${rows}</tbody>
-          <tfoot><tr><td colspan="4" style="font-weight:700;padding:12px 16px;text-align:right;border-top:2px solid var(--border);">Total</td><td style="font-weight:700;padding:12px 16px;text-align:right;border-top:2px solid var(--border);">${formatCurrency(totals.total)}</td></tr></tfoot>
-        </table>
-      </div>`;
-
-    document.getElementById('exr-report-export').style.display = 'flex';
   } catch(err) {
-    toast('Error generating report: ' + (err.message||err), 'error');
-  } finally {
     hideProcessingOverlay();
+    toast('Error generating report: ' + (err.message||err), 'error');
+    return;
   }
+
+  await printExpensesReport();
+  hideModal('expenses-report-modal');
 }
 
 function exportExpensesReport(type) {
@@ -1827,7 +1624,6 @@ async function generateVehicleReport() {
   if (!selectedVehicleIds.length) return toast('Please select at least one vehicle', 'warning');
 
   showProcessingOverlay('Generating Vehicle Report', 'Fetching trip data...');
-  document.getElementById('vr-report-body').innerHTML = `<div style="text-align:center;padding:20px;"><i class="fas fa-spinner fa-spin fa-2x" style="color:var(--primary);"></i><div style="margin-top:8px;color:var(--text-muted);">Loading...</div></div>`;
 
   try {
     const [vehicles, trips, fuelCfg] = await Promise.all([DB.getVehicles(), DB.getTrips(), DB.getFuelPriceSettings()]);
@@ -1862,53 +1658,18 @@ async function generateVehicleReport() {
     window._vehicleReportMeta = { from, to };
 
     if (!summaryList.length) {
-      document.getElementById('vr-report-body').innerHTML = `<div style="text-align:center;padding:30px;color:var(--text-muted);">No vehicles selected.</div>`;
-      document.getElementById('vr-report-export').style.display = 'none';
+      hideProcessingOverlay();
+      toast('No vehicles selected', 'warning');
       return;
     }
-
-    const totalTrips = summaryList.reduce((s,v)=>s+v.trips,0);
-    const totalDistance = summaryList.reduce((s,v)=>s+v.distance,0);
-    const totalFuelCost = summaryList.reduce((s,v)=>s+v.fuelCost,0);
-
-    const rows = summaryList.map(v => {
-      const statusStr = Object.entries(v.statusCounts).map(([s,c]) => `${s}: ${c}`).join(', ') || '—';
-      return `<tr>
-        <td style="font-family:monospace;font-weight:700;">${v.vehicle_no}</td>
-        <td>${v.category}</td>
-        <td style="text-align:center;">${v.trips}</td>
-        <td style="text-align:right;">${v.distance.toFixed(1)} km</td>
-        <td style="text-align:right;font-weight:600;">${formatCurrency(v.fuelCost)}</td>
-        <td>${statusStr}</td>
-      </tr>`;
-    }).join('');
-
-    document.getElementById('vr-report-body').innerHTML = `
-      <div style="display:grid;grid-template-columns:repeat(3,1fr);gap:12px;margin-bottom:16px;">
-        <div class="stat-card"><div class="label">Total Trips</div><div class="value">${totalTrips}</div></div>
-        <div class="stat-card"><div class="label">Total Distance</div><div class="value" style="font-size:1.1em;">${totalDistance.toFixed(1)} km</div></div>
-        <div class="stat-card"><div class="label">Est. Fuel Cost</div><div class="value" style="font-size:1.1em;color:var(--danger);">${formatCurrency(totalFuelCost)}</div></div>
-      </div>
-      <div class="table-wrap" style="max-height:420px;overflow-y:auto;">
-        <table>
-          <thead style="position:sticky;top:0;z-index:2;"><tr><th>Vehicle No</th><th>Type</th><th style="text-align:center;">Trips</th><th style="text-align:right;">Distance</th><th style="text-align:right;">Est. Fuel Cost</th><th>Status Breakdown</th></tr></thead>
-          <tbody>${rows}</tbody>
-          <tfoot><tr>
-            <td colspan="2" style="font-weight:700;padding:12px 16px;text-align:right;border-top:2px solid var(--border);">Totals</td>
-            <td style="font-weight:700;padding:12px 16px;text-align:center;border-top:2px solid var(--border);">${totalTrips}</td>
-            <td style="font-weight:700;padding:12px 16px;text-align:right;border-top:2px solid var(--border);">${totalDistance.toFixed(1)} km</td>
-            <td style="font-weight:700;padding:12px 16px;text-align:right;border-top:2px solid var(--border);">${formatCurrency(totalFuelCost)}</td>
-            <td style="border-top:2px solid var(--border);"></td>
-          </tr></tfoot>
-        </table>
-      </div>`;
-
-    document.getElementById('vr-report-export').style.display = 'flex';
   } catch(err) {
-    toast('Error generating report: ' + (err.message||err), 'error');
-  } finally {
     hideProcessingOverlay();
+    toast('Error generating report: ' + (err.message||err), 'error');
+    return;
   }
+
+  await printVehicleReport();
+  hideModal('vehicle-report-modal');
 }
 
 function exportVehicleReport(type) {
