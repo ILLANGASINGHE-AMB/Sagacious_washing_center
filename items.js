@@ -8,8 +8,6 @@ const ITEM_SERVICES = [
   { key: 'wash_dry_price',     label: 'Wash & Dry',   badge: 'badge-green'  }
 ];
 
-function clearItemsCache() {}
-
 async function renderItems() {
   document.getElementById('page-title').textContent = 'Items';
   if (document.getElementById('items-table-body')) {
@@ -181,6 +179,7 @@ async function saveNewItem() {
   if(existing) return toast(`Item ID "${escapeHtml(item_id)}" already exists`,'error');
   await DB.addItem({item_id, item_name, dry_clean_price, wash_press_price, wash_dry_price, description});
   await DB.logAction('Add Item', `Added catalog item "${item_name}" (${item_id})`, { code: item_id, name: item_name, dry_clean_price, wash_press_price, wash_dry_price }, 'Item');
+  clearItemsCache();
   hideModal('add-item-modal');
   toast(`Item "${escapeHtml(item_name)}" added!`);
   renderItems();
@@ -246,6 +245,7 @@ async function saveEditItem(id) {
   if(existing && existing.id!==id) return toast(`Item ID "${escapeHtml(item_id)}" already in use`,'error');
   await DB.updateItem(id,{item_id, item_name, dry_clean_price, wash_press_price, wash_dry_price, description});
   await DB.logAction('Edit Item', `Updated catalog item "${item_name}" (${item_id})`, { code: item_id, name: item_name, dry_clean_price, wash_press_price, wash_dry_price }, 'Item');
+  clearItemsCache();
   hideModal('edit-item-modal');
   toast('Item updated!');
   renderItems();
@@ -257,6 +257,7 @@ async function deleteItemConfirm(id) {
   confirmDialog(`Delete item "${escapeHtml(item?.item_name)}"?`, async()=>{
     await DB.deleteItem(id);
     await DB.logAction('Delete Item', `Deleted catalog item "${item?.item_name}" (${item?.item_id})`, { code: item?.item_id, name: item?.item_name }, 'Item');
+    clearItemsCache();
     toast('Item deleted'); renderItems();
   });
 }
@@ -368,6 +369,7 @@ async function importItems(input) {
           else{await DB.addItem({item_id:rec.item_id,...p});added++;}
         }catch(e){errors++;console.error(e);}
       }
+      clearItemsCache();
       renderItems();
       toast(`Import done: ${added} added, ${updated} updated`+(errors?`, ${errors} failed`:''),'success');
     });
