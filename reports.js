@@ -12,7 +12,10 @@ async function renderReports() {
       ${reportCard('Customer Billing',  'Per-customer billing summary',      'fa-hotel',         'badge-purple', 'generateCustomerBillingReport()')}
       ${reportCard('Full Report',       'Complete report with date filter',  'fa-file-alt',      'badge-cyan',   'showFullReportModal()')}
       ${reportCard('Customer Summary',  'Customer details and item columns', 'fa-file-invoice',  'badge-red',    'showCustomerSummaryModal()')}
+      ${reportCard('Expenses Report',   'Fully customizable expense breakdown', 'fa-file-invoice-dollar', 'badge-yellow', 'showExpensesReportModal()')}
       ${reportCard('Monthly Bills',     'Per-month order bills summary',     'fa-receipt',       'badge-orange', 'showMonthlyBillsModal()')}
+      ${reportCard('Driver Report',     'Per-driver performance, customizable', 'fa-id-card',    'badge-blue',   'showDriverReportModal()')}
+      ${reportCard('Vehicle Report',    'Trips, distance & fuel cost, customizable', 'fa-truck', 'badge-purple', 'showVehicleReportModal()')}
     </div>
     <div id="report-output"></div>`;
 }
@@ -184,33 +187,224 @@ async function generateCustomerBillingReport() {
 function exportCustomerBilling(type) { exportData(window._reportData||[],'customer_billing',type); }
 
 // ─────────────────────────────────────────────
-// DRIVER PERFORMANCE
+// DRIVER REPORT — customizable (date range + driver select)
 // ─────────────────────────────────────────────
-async function generateDriverReport() {
-  const [orders,drivers] = await Promise.all([DB.getOrders(),DB.getDrivers()]);
-  const drvSummary = {};
-  drivers.forEach(d=>{ drvSummary[d.id]={name:d.name,trips:0,delivered:0,total:0}; });
-  orders.forEach(o=>{
-    if(!o.driver_id||!drvSummary[o.driver_id])return;
-    drvSummary[o.driver_id].trips++;
-    drvSummary[o.driver_id].total+=o.total_amount||0;
-    if(['Delivered','Paid'].includes(o.status)) drvSummary[o.driver_id].delivered++;
-  });
+async function showDriverReportModal() {
+  const firstDay = new Date(); firstDay.setDate(1);
+  const from = firstDay.toISOString().split('T')[0];
+  const to   = today();
 
-  const rows = Object.values(drvSummary).map(d=>`<tr>
-    <td>${d.name}</td><td>${d.trips}</td><td>${d.delivered}</td>
-    <td>${d.trips>0?Math.round(d.delivered/d.trips*100):0}%</td>
-    <td>${formatCurrency(d.total)}</td>
-  </tr>`).join('')||`<tr><td colspan="5" style="text-align:center;color:var(--text-muted);">No data</td></tr>`;
+  const drivers = await DB.getDrivers();
+  const driverCheckboxes = drivers.map(d => `
+    <label style="display:flex; align-items:center; gap:8px; font-size:0.88em; cursor:pointer; user-select:none; font-weight:600; color:var(--text);">
+      <input type="checkbox" class="dr-driver-chk" value="${d.id}" checked style="cursor:pointer;" />
+      ${d.name}
+    </label>
+  `).join('');
 
-  window._reportData = Object.values(drvSummary).map(d=>({Driver:d.name,Trips:d.trips,Delivered:d.delivered,'Total Value':d.total}));
-  document.getElementById('report-output').innerHTML = reportWrapper('Driver Performance Report',
-    `<div class="table-wrap"><table>
-      <thead><tr><th>Driver</th><th>Total Trips</th><th>Delivered</th><th>Success Rate</th><th>Total Value</th></tr></thead>
-      <tbody>${rows}</tbody>
-    </table></div>`, 'exportDriverReport');
+  createModal('driver-report-modal', 'Driver Report', `
+    <div style="display:grid;grid-template-columns:1fr 1fr auto;gap:12px;align-items:flex-end;margin-bottom:18px;border-bottom:1px solid var(--border);padding-bottom:18px;">
+      <div class="form-group" style="margin:0;">
+        <label class="form-label">From Date</label>
+        <input type="date" class="form-input" id="dr-from" value="${from}"/>
+      </div>
+      <div class="form-group" style="margin:0;">
+        <label class="form-label">To Date</label>
+        <input type="date" class="form-input" id="dr-to" value="${to}"/>
+      </div>
+      <button class="btn btn-primary" onclick="generateDriverReport()" style="height:40px;">
+        <i class="fas fa-chart-bar"></i> Generate
+      </button>
+      <div class="form-group" style="grid-column: span 3; margin-top:10px; margin-bottom:0;">
+        <label class="form-label" style="font-weight:700;">Select Drivers:</label>
+        <div style="display:flex; gap:8px; margin-bottom:8px; align-items:center;">
+          <button class="btn btn-secondary btn-sm" onclick="toggleAllDrChecks(true)">Select All</button>
+          <button class="btn btn-secondary btn-sm" onclick="toggleAllDrChecks(false)">Clear All</button>
+        </div>
+        <div id="dr-driver-checkboxes" style="display:grid; grid-template-columns: repeat(auto-fill, minmax(180px, 1fr)); gap:10px; max-height:110px; overflow-y:auto; border:1px solid var(--border); padding:10px; border-radius:8px; background:var(--bg);">
+          ${driverCheckboxes}
+        </div>
+      </div>
+    </div>
+    <div id="dr-report-body" style="min-height:120px;display:flex;align-items:center;justify-content:center;color:var(--text-muted);">
+      Select parameters and click Generate.
+    </div>
+    <div id="dr-report-export" style="display:none;margin-top:14px;gap:8px;justify-content:flex-end;">
+      <button class="btn btn-secondary btn-sm" onclick="exportDriverReport('csv')"><i class="fas fa-file-csv"></i> CSV</button>
+      <button class="btn btn-secondary btn-sm" onclick="exportDriverReport('excel')"><i class="fas fa-file-excel"></i> Excel</button>
+      <button class="btn btn-secondary btn-sm" onclick="printDriverReport()"><i class="fas fa-print"></i> Print</button>
+    </div>`, 'modal-xl');
+
+  window.toggleAllDrChecks = function(checked) {
+    document.querySelectorAll('.dr-driver-chk').forEach(chk => chk.checked = checked);
+  };
+
+  showModal('driver-report-modal');
 }
-function exportDriverReport(type) { exportData(window._reportData||[],'driver_performance',type); }
+
+async function generateDriverReport() {
+  const from = document.getElementById('dr-from')?.value;
+  const to   = document.getElementById('dr-to')?.value;
+  if(!from||!to) return toast('Select both dates','error');
+  if(from>to)    return toast('From date must be before To date','error');
+
+  const selectedDriverIds = [...document.querySelectorAll('.dr-driver-chk:checked')].map(chk => Number(chk.value));
+  if (!selectedDriverIds.length) return toast('Please select at least one driver', 'warning');
+
+  showProcessingOverlay('Generating Driver Report', 'Fetching order data...');
+  document.getElementById('dr-report-body').innerHTML = `<div style="text-align:center;padding:20px;"><i class="fas fa-spinner fa-spin fa-2x" style="color:var(--primary);"></i><div style="margin-top:8px;color:var(--text-muted);">Loading...</div></div>`;
+
+  try {
+    const [orders, drivers] = await Promise.all([DB.getOrders(), DB.getDrivers()]);
+    const dMap = Object.fromEntries(drivers.map(d=>[d.id,d]));
+    const _orderDate = o => (o.pickup_date || o.created_at || '').slice(0,10);
+
+    const drvSummary = {};
+    selectedDriverIds.forEach(id => {
+      const d = dMap[id];
+      if (d) drvSummary[id] = { name: d.name, trips: 0, delivered: 0, total: 0 };
+    });
+
+    orders.forEach(o=>{
+      if(!o.driver_id||!drvSummary[o.driver_id])return;
+      const d = _orderDate(o);
+      if (d && (d < from || d > to)) return;
+      drvSummary[o.driver_id].trips++;
+      drvSummary[o.driver_id].total+=o.total_amount||0;
+      if(['Delivered','Paid'].includes(o.status)) drvSummary[o.driver_id].delivered++;
+    });
+
+    const summaryList = Object.values(drvSummary).sort((a,b)=>b.total-a.total);
+    window._driverReportData = summaryList;
+    window._driverReportMeta = { from, to };
+
+    if (!summaryList.length) {
+      document.getElementById('dr-report-body').innerHTML = `<div style="text-align:center;padding:30px;color:var(--text-muted);">No drivers selected.</div>`;
+      document.getElementById('dr-report-export').style.display = 'none';
+      return;
+    }
+
+    const rows = summaryList.map(d=>`<tr>
+      <td>${d.name}</td><td style="text-align:center;">${d.trips}</td><td style="text-align:center;">${d.delivered}</td>
+      <td style="text-align:center;">${d.trips>0?Math.round(d.delivered/d.trips*100):0}%</td>
+      <td style="text-align:right;font-weight:600;">${formatCurrency(d.total)}</td>
+    </tr>`).join('');
+
+    const grandTotal = summaryList.reduce((s,d)=>s+d.total,0);
+
+    document.getElementById('dr-report-body').innerHTML = `
+      <div style="display:grid;grid-template-columns:repeat(2,1fr);gap:12px;margin-bottom:16px;">
+        <div class="stat-card"><div class="label">Drivers</div><div class="value">${summaryList.length}</div></div>
+        <div class="stat-card"><div class="label">Total Value</div><div class="value" style="font-size:1.1em;">${formatCurrency(grandTotal)}</div></div>
+      </div>
+      <div class="table-wrap" style="max-height:420px;overflow-y:auto;">
+        <table>
+          <thead style="position:sticky;top:0;z-index:2;"><tr><th>Driver</th><th style="text-align:center;">Total Trips</th><th style="text-align:center;">Delivered</th><th style="text-align:center;">Success Rate</th><th style="text-align:right;">Total Value</th></tr></thead>
+          <tbody>${rows}</tbody>
+          <tfoot><tr><td colspan="4" style="font-weight:700;padding:12px 16px;text-align:right;border-top:2px solid var(--border);">Grand Total</td><td style="font-weight:700;padding:12px 16px;text-align:right;border-top:2px solid var(--border);">${formatCurrency(grandTotal)}</td></tr></tfoot>
+        </table>
+      </div>`;
+
+    document.getElementById('dr-report-export').style.display = 'flex';
+  } catch(err) {
+    toast('Error generating report: ' + (err.message||err), 'error');
+  } finally {
+    hideProcessingOverlay();
+  }
+}
+
+function exportDriverReport(type) {
+  const rows = (window._driverReportData||[]).map(d=>({Driver:d.name,'Total Trips':d.trips,Delivered:d.delivered,'Success Rate %':d.trips>0?Math.round(d.delivered/d.trips*100):0,'Total Value':d.total}));
+  const meta = window._driverReportMeta||{};
+  exportData(rows, `driver_report_${meta.from||''}__${meta.to||''}`, type);
+}
+
+async function printDriverReport() {
+  const rows = window._driverReportData || [];
+  const meta = window._driverReportMeta || {};
+  if (!rows.length) return toast('Generate the report first', 'error');
+
+  showProcessingOverlay('Printing Driver Report', 'Preparing print layout...');
+  try {
+    const settings = {
+      company_name: await DB.getSetting('company_name') || 'Sagacious Washing Center',
+      address:      await DB.getSetting('address') || '',
+      phone:        await DB.getSetting('phone') || '',
+      email:        await DB.getSetting('email') || ''
+    };
+    const logoData = await DB.getSetting('logo_data');
+    const logoHTML = logoData
+      ? `<img src="${logoData}" style="height:56px;width:56px;object-fit:cover;border-radius:10px;"/>`
+      : `<div style="height:56px;width:56px;border-radius:10px;background:linear-gradient(135deg,#00b4d8,#1a4d8f);display:flex;align-items:center;justify-content:center;color:#fff;font-weight:700;font-size:1.4em;">SW</div>`;
+
+    const grandTotal = rows.reduce((s,d)=>s+d.total,0);
+
+    let shade = false;
+    const bodyRows = rows.map(d => {
+      shade = !shade;
+      const bg = shade ? '#f6f9fc' : '#ffffff';
+      return `<tr style="background:${bg};">
+        <td style="padding:7px 9px;">${d.name}</td>
+        <td style="padding:7px 9px;text-align:center;">${d.trips}</td>
+        <td style="padding:7px 9px;text-align:center;">${d.delivered}</td>
+        <td style="padding:7px 9px;text-align:center;">${d.trips>0?Math.round(d.delivered/d.trips*100):0}%</td>
+        <td style="padding:7px 9px;text-align:right;font-weight:600;">${formatCurrency(d.total)}</td>
+      </tr>`;
+    }).join('');
+
+    const printHTML = `<!DOCTYPE html><html><head><meta charset="UTF-8"/>
+      <title>Driver Report ${meta.from||''} to ${meta.to||''}</title>
+      <link href="https://fonts.googleapis.com/css2?family=DM+Sans:wght@400;600;700&family=Playfair+Display:wght@600;700;800&display=swap" rel="stylesheet"/>
+      <style>
+        *{box-sizing:border-box;margin:0;padding:0;}
+        body{font-family:'DM Sans',sans-serif;color:#1e293b;background:#fff;font-size:11px;}
+        @page{size:A4 portrait;margin:14mm 12mm;}
+        table{width:100%;border-collapse:collapse;}
+        thead{display:table-header-group;}
+        tr{page-break-inside:avoid;}
+        th{background:#1a4d8f;color:#fff;padding:8px 9px;text-align:left;font-size:0.78em;text-transform:uppercase;letter-spacing:0.4px;font-weight:700;}
+        td{border-bottom:1px solid #eef2f7;}
+      </style></head><body>
+      <div style="padding:4px 6px;">
+        <div style="display:flex;justify-content:space-between;align-items:flex-start;border-bottom:2px solid #e2e8f0;padding-bottom:14px;margin-bottom:16px;">
+          <div style="display:flex;align-items:center;gap:12px;">
+            ${logoHTML}
+            <div>
+              <div style="font-family:'Playfair Display',serif;font-size:1.5em;font-weight:700;color:#1a4d8f;">${settings.company_name}</div>
+              ${settings.address?`<div style="font-size:0.9em;color:#64748b;margin-top:2px;">${settings.address}</div>`:''}
+              <div style="font-size:0.9em;color:#64748b;">${[settings.phone,settings.email].filter(Boolean).join('  |  ')}</div>
+            </div>
+          </div>
+          <div style="text-align:right;">
+            <div style="font-family:'Playfair Display',serif;font-size:1.7em;font-weight:800;color:#1a4d8f;">Driver Report</div>
+            <div style="font-size:0.95em;color:#374151;margin-top:4px;"><strong>${formatDate(meta.from)} &rarr; ${formatDate(meta.to)}</strong></div>
+            <div style="font-size:0.85em;color:#94a3b8;margin-top:2px;">Generated: ${formatDateTime(new Date().toISOString())}</div>
+          </div>
+        </div>
+        <table>
+          <thead><tr><th>Driver</th><th style="text-align:center;">Total Trips</th><th style="text-align:center;">Delivered</th><th style="text-align:center;">Success Rate</th><th style="text-align:right;">Total Value</th></tr></thead>
+          <tbody>${bodyRows}
+            <tr style="page-break-inside:avoid;">
+              <td colspan="4" style="text-align:right;font-weight:700;border-top:2.5px solid #1a4d8f;padding:11px 9px;">Grand Total</td>
+              <td style="text-align:right;font-weight:700;border-top:2.5px solid #1a4d8f;padding:11px 9px;">${formatCurrency(grandTotal)}</td>
+            </tr>
+          </tbody>
+        </table>
+        <div style="margin-top:18px;text-align:center;font-size:0.82em;color:#94a3b8;border-top:1px solid #e2e8f0;padding-top:10px;">
+          ${settings.company_name} &mdash; Driver Report &mdash; ${formatDate(meta.from)} to ${formatDate(meta.to)}
+        </div>
+      </div>
+      <script>document.fonts.ready.then(()=>window.print());<\/script>
+      </body></html>`;
+
+    const w = window.open('', '_blank');
+    if (!w) { hideProcessingOverlay(); return toast('Please allow pop-ups to print', 'warning'); }
+    w.document.write(printHTML);
+    w.document.close();
+  } finally {
+    hideProcessingOverlay();
+  }
+}
 
 // ─────────────────────────────────────────────
 // FULL REPORT MODAL — date range picker
@@ -257,8 +451,7 @@ async function generateFullReport() {
 
   const [orders,customers,drivers,invoices,payments,orderItemsAll] = await Promise.all([
     DB.getOrders(), DB.getCustomers(), DB.getDrivers(),
-    DB.getInvoices(), DB.getPayments(),
-    (async()=>{ const all=await DB.getOrders(); const items=[]; for(const o of all){ const its=await DB.getOrderItems(o.id); items.push(...its.map(i=>({...i,order_id:o.id}))); } return items; })()
+    DB.getInvoices(), DB.getPayments(), DB.getAllOrderItems()
   ]);
 
   const cMap   = Object.fromEntries(customers.map(c=>[c.id,c]));
@@ -302,10 +495,14 @@ async function generateFullReport() {
     // forgiven/deducted amount shows up here as if it's still owed.
     const remaining=Math.max(0,(o.total_amount||0)-(inv?.deduction_amount||0)-fullPaid);
     const items=itemsByOrder[o.id]||[];
+    const pickupDate = o.pickup_date ? formatDate(o.pickup_date) : '—';
+    const paidDate    = inv?.payment_date ? formatDate(inv.payment_date) : '—';
 
     if(items.length===0){
       reportRows.push({
         date: _orderDate(o) || 'No date',
+        pickup_date: pickupDate,
+        paid_date: paidDate,
         batch_id: o.batch_id,
         customer: getOrderCustomerName(o, cMap),
         driver:   drv?.name||'—',
@@ -318,6 +515,8 @@ async function generateFullReport() {
       items.forEach((it,idx)=>{
         reportRows.push({
           date:         idx===0?(_orderDate(o) || 'No date'):'',
+          pickup_date:  idx===0?pickupDate:'',
+          paid_date:    idx===0?paidDate:'',
           batch_id:     idx===0?o.batch_id:'',
           customer:     idx===0?(cust?.hotel_name||'—'):'',
           driver:       idx===0?(drv?.name||'—'):'',
@@ -344,6 +543,8 @@ async function generateFullReport() {
 
   const tableRows = reportRows.map(r=>`<tr>
     <td style="white-space:nowrap;">${r.date==='No date'?'<span style="color:var(--danger);font-style:italic;">No date</span>':(r.date?formatDate(r.date):'')}</td>
+    <td style="white-space:nowrap;">${r.pickup_date||''}</td>
+    <td style="white-space:nowrap;">${r.paid_date||''}</td>
     <td style="font-family:monospace;font-size:0.85em;font-weight:700;">${r.batch_id||''}</td>
     <td>${r.customer||''}</td>
     <td>${r.driver||''}</td>
@@ -367,13 +568,13 @@ async function generateFullReport() {
     <div class="table-wrap" style="max-height:420px;overflow-y:auto;">
       <table>
         <thead style="position:sticky;top:0;z-index:2;"><tr>
-          <th>Date</th><th>Batch ID</th><th>Customer</th><th>Driver</th>
+          <th>Order Date</th><th>Pickup Date</th><th>Paid Date</th><th>Batch ID</th><th>Customer</th><th>Driver</th>
           <th>Item</th><th>Qty</th><th>Unit Price</th><th>Service</th>
           <th>Advance</th><th>Paid</th><th>Remaining</th><th>Total</th>
         </tr></thead>
         <tbody>${tableRows}</tbody>
         <tfoot><tr>
-          <td colspan="8" style="font-weight:700;padding:12px 16px;text-align:right;border-top:2px solid var(--border);">Totals</td>
+          <td colspan="10" style="font-weight:700;padding:12px 16px;text-align:right;border-top:2px solid var(--border);">Totals</td>
           <td style="font-weight:700;padding:12px 16px;border-top:2px solid var(--border);color:var(--success);">${formatCurrency(grandAdvance)}</td>
           <td style="font-weight:700;padding:12px 16px;border-top:2px solid var(--border);color:var(--success);">${formatCurrency(grandPaid)}</td>
           <td style="font-weight:700;padding:12px 16px;border-top:2px solid var(--border);color:var(--danger);">${formatCurrency(grandRemaining)}</td>
@@ -390,7 +591,9 @@ async function generateFullReport() {
 
 function exportFullReport(type) {
   const rows = (window._fullReportData||[]).map(r=>({
-    'Date':           r.date,
+    'Order Date':     r.date,
+    'Pickup Date':    r.pickup_date,
+    'Paid Date':      r.paid_date,
     'Batch ID':       r.batch_id,
     'Customer':       r.customer,
     'Driver':         r.driver,
@@ -438,6 +641,8 @@ async function printFullReport() {
       : '—';
     return `<tr style="background:${bg};${r.batch_id?'border-top:1.5px solid #d8e2ee;':''}">
       <td style="padding:7px 9px;white-space:nowrap;">${r.date==='No date'?'<span style="color:#e11d48;font-style:italic;">No date</span>':(r.date?formatDate(r.date):'')}</td>
+      <td style="padding:7px 9px;white-space:nowrap;">${r.pickup_date||''}</td>
+      <td style="padding:7px 9px;white-space:nowrap;">${r.paid_date||''}</td>
       <td style="padding:7px 9px;font-family:monospace;font-weight:700;white-space:nowrap;">${r.batch_id||''}</td>
       <td style="padding:7px 9px;">${r.customer||''}</td>
       <td style="padding:7px 9px;">${r.driver||''}</td>
@@ -503,7 +708,7 @@ async function printFullReport() {
       </div>
       <table>
         <thead><tr>
-          <th>Date</th><th>Batch ID</th><th>Customer</th><th>Driver</th>
+          <th>Order Date</th><th>Pickup Date</th><th>Paid Date</th><th>Batch ID</th><th>Customer</th><th>Driver</th>
           <th>Item</th><th style="text-align:center;">Qty</th><th style="text-align:right;">Unit Price</th>
           <th style="text-align:center;">Service</th>
           <th style="text-align:right;">Advance</th><th style="text-align:right;">Paid</th>
@@ -511,7 +716,7 @@ async function printFullReport() {
         </tr></thead>
         <tbody>${bodyRows}
           <tr style="page-break-inside:avoid;">
-            <td colspan="8" style="text-align:right;font-weight:700;border-top:2.5px solid #1a4d8f;padding:11px 9px;">Totals</td>
+            <td colspan="10" style="text-align:right;font-weight:700;border-top:2.5px solid #1a4d8f;padding:11px 9px;">Totals</td>
             <td style="text-align:right;font-weight:700;border-top:2.5px solid #1a4d8f;padding:11px 9px;color:#16a34a;">${formatCurrency(meta.grandAdvance||0)}</td>
             <td style="text-align:right;font-weight:700;border-top:2.5px solid #1a4d8f;padding:11px 9px;color:#16a34a;">${formatCurrency(meta.grandPaid||0)}</td>
             <td style="text-align:right;font-weight:700;border-top:2.5px solid #1a4d8f;padding:11px 9px;color:#e11d48;">${formatCurrency(meta.grandRemaining||0)}</td>
@@ -541,9 +746,26 @@ async function printFullReport() {
 // ─────────────────────────────────────────────
 // CUSTOMER SUMMARY REPORT (Dynamic Catalog Columns with Selection)
 // ─────────────────────────────────────────────
+// Matches an order_item to a catalog item for report grouping: prefer the
+// stored catalog_item_id, but fall back to a case/whitespace-insensitive
+// name match — order_items.item_name is a point-in-time snapshot, so a
+// later-renamed or recreated catalog item can't be found by id alone, and
+// an exact-string name match is too brittle (drops the quantity silently).
+function matchCatalogItem(displayItems, orderItem) {
+  if (orderItem.catalog_item_id != null) {
+    const byId = displayItems.find(c => c.id === orderItem.catalog_item_id);
+    if (byId) return byId;
+  }
+  const name = (orderItem.item_name || '').trim().toLowerCase();
+  if (!name) return null;
+  return displayItems.find(c => (c.item_name || '').trim().toLowerCase() === name) || null;
+}
+
 async function showCustomerSummaryModal() {
-  const firstDay = new Date(); firstDay.setDate(1);
-  const from = firstDay.toISOString().split('T')[0];
+  // All-time by default (still fully customizable) — a "this month only"
+  // default silently hid historical data and looked like the report just
+  // wasn't fetching it.
+  const from = '2000-01-01';
   const to   = today();
 
   const [customers, items] = await Promise.all([
@@ -630,15 +852,7 @@ async function generateCustomerSummaryReport() {
   try {
     const [orders, customers, invoices, payments, deductions, catalogItems, orderItemsAll] = await Promise.all([
       DB.getOrders(), DB.getCustomers(), DB.getInvoices(), DB.getPayments(), DB.getDeductions(), DB.getItems(),
-      (async()=>{ 
-        const all=await DB.getOrders(); 
-        const items=[]; 
-        for(const o of all){ 
-          const its=await DB.getOrderItems(o.id); 
-          items.push(...its.map(i=>({...i,order_id:o.id}))); 
-        } 
-        return items; 
-      })()
+      DB.getAllOrderItems()
     ]);
 
     catalogItems.sort((a, b) => a.item_name.localeCompare(b.item_name));
@@ -714,7 +928,7 @@ async function generateCustomerSummaryReport() {
       const qtyMap = {};
       displayItems.forEach(dItem => { qtyMap[dItem.id] = 0; });
       orderItems.forEach(ot => {
-        const dItem = displayItems.find(c => c.id === ot.catalog_item_id || c.item_name === ot.item_name);
+        const dItem = matchCatalogItem(displayItems, ot);
         if (dItem) {
           qtyMap[dItem.id] += parseFloat(ot.quantity) || 0;
           displayItemTotals[dItem.id] += parseFloat(ot.quantity) || 0;
@@ -841,7 +1055,7 @@ function exportCustomerSummary(type) {
     const qtyMap = {};
     displayItems.forEach(dItem => { qtyMap[dItem.id] = 0; });
     orderItems.forEach(ot => {
-      const dItem = displayItems.find(c => c.id === ot.catalog_item_id || c.item_name === ot.item_name);
+      const dItem = matchCatalogItem(displayItems, ot);
       if (dItem) { qtyMap[dItem.id] += parseFloat(ot.quantity) || 0; }
     });
 
@@ -909,7 +1123,7 @@ async function printCustomerSummary() {
     const qtyMap = {};
     displayItems.forEach(dItem => { qtyMap[dItem.id] = 0; });
     orderItems.forEach(ot => {
-      const dItem = displayItems.find(c => c.id === ot.catalog_item_id || c.item_name === ot.item_name);
+      const dItem = matchCatalogItem(displayItems, ot);
       if (dItem) { qtyMap[dItem.id] += parseFloat(ot.quantity) || 0; }
     });
 
@@ -1264,6 +1478,555 @@ async function printMonthlyBills() {
     w.document.close();
   } catch (err) {
     toast('Error printing monthly bills: ' + (err.message || err), 'error');
+  } finally {
+    hideProcessingOverlay();
+  }
+}
+
+// ─────────────────────────────────────────────
+// EXPENSES REPORT — customizable (date range, category, item)
+// ─────────────────────────────────────────────
+async function showExpensesReportModal() {
+  const from = '2000-01-01';
+  const to   = today();
+
+  const [categories, types] = await Promise.all([DB.getExpenseCategories(), DB.getExpenseTypes()]);
+
+  const categoryCheckboxes = categories.map(c => `
+    <label style="display:flex; align-items:center; gap:8px; font-size:0.88em; cursor:pointer; user-select:none; font-weight:600; color:var(--text);">
+      <input type="checkbox" class="exr-cat-chk" value="${escapeHtml(c.category_id)}" checked style="cursor:pointer;" />
+      ${c.name}
+    </label>
+  `).join('');
+
+  const typeCheckboxes = types.map(t => {
+    const cat = categories.find(c => c.category_id === t.category_id);
+    return `
+    <label style="display:flex; align-items:center; gap:8px; font-size:0.88em; cursor:pointer; user-select:none; font-weight:600; color:var(--text);">
+      <input type="checkbox" class="exr-type-chk" value="${escapeHtml(t.expense_type_id)}" checked style="cursor:pointer;" />
+      ${t.name}${cat ? ` <span style="color:var(--text-muted);font-weight:400;font-size:0.85em;">(${cat.name})</span>` : ''}
+    </label>`;
+  }).join('');
+
+  createModal('expenses-report-modal', 'Expenses Report', `
+    <div style="display:grid;grid-template-columns:1fr 1fr auto;gap:12px;align-items:flex-end;margin-bottom:18px;border-bottom:1px solid var(--border);padding-bottom:18px;">
+      <div class="form-group" style="margin:0;">
+        <label class="form-label">From Date</label>
+        <input type="date" class="form-input" id="exr-from" value="${from}"/>
+      </div>
+      <div class="form-group" style="margin:0;">
+        <label class="form-label">To Date</label>
+        <input type="date" class="form-input" id="exr-to" value="${to}"/>
+      </div>
+      <button class="btn btn-primary" onclick="generateExpensesReport()" style="height:40px;">
+        <i class="fas fa-chart-bar"></i> Generate
+      </button>
+      <div class="form-group" style="grid-column: span 3; margin-top:10px; margin-bottom:0;">
+        <label class="form-label" style="font-weight:700;">Categories:</label>
+        <div style="display:flex; gap:8px; margin-bottom:8px; align-items:center;">
+          <button class="btn btn-secondary btn-sm" onclick="toggleAllExrChecks('.exr-cat-chk', true)">Select All</button>
+          <button class="btn btn-secondary btn-sm" onclick="toggleAllExrChecks('.exr-cat-chk', false)">Clear All</button>
+        </div>
+        <div id="exr-cat-checkboxes" style="display:grid; grid-template-columns: repeat(auto-fill, minmax(180px, 1fr)); gap:10px; max-height:90px; overflow-y:auto; border:1px solid var(--border); padding:10px; border-radius:8px; background:var(--bg);">
+          ${categoryCheckboxes || '<span style="color:var(--text-muted);">No categories found</span>'}
+        </div>
+      </div>
+      <div class="form-group" style="grid-column: span 3; margin-top:10px; margin-bottom:0;">
+        <label class="form-label" style="font-weight:700;">Expense Items:</label>
+        <div style="display:flex; gap:8px; margin-bottom:8px; align-items:center;">
+          <button class="btn btn-secondary btn-sm" onclick="toggleAllExrChecks('.exr-type-chk', true)">Select All</button>
+          <button class="btn btn-secondary btn-sm" onclick="toggleAllExrChecks('.exr-type-chk', false)">Clear All</button>
+        </div>
+        <div id="exr-type-checkboxes" style="display:grid; grid-template-columns: repeat(auto-fill, minmax(200px, 1fr)); gap:10px; max-height:110px; overflow-y:auto; border:1px solid var(--border); padding:10px; border-radius:8px; background:var(--bg);">
+          ${typeCheckboxes || '<span style="color:var(--text-muted);">No expense items found</span>'}
+        </div>
+      </div>
+    </div>
+    <div id="exr-report-body" style="min-height:120px;display:flex;align-items:center;justify-content:center;color:var(--text-muted);">
+      Select parameters and click Generate.
+    </div>
+    <div id="exr-report-export" style="display:none;margin-top:14px;gap:8px;justify-content:flex-end;">
+      <button class="btn btn-secondary btn-sm" onclick="exportExpensesReport('csv')"><i class="fas fa-file-csv"></i> CSV</button>
+      <button class="btn btn-secondary btn-sm" onclick="exportExpensesReport('excel')"><i class="fas fa-file-excel"></i> Excel</button>
+      <button class="btn btn-secondary btn-sm" onclick="printExpensesReport()"><i class="fas fa-print"></i> Print</button>
+    </div>`, 'modal-xl');
+
+  window.toggleAllExrChecks = function(selector, checked) {
+    document.querySelectorAll(selector).forEach(chk => chk.checked = checked);
+  };
+
+  showModal('expenses-report-modal');
+}
+
+async function generateExpensesReport() {
+  const from = document.getElementById('exr-from')?.value;
+  const to   = document.getElementById('exr-to')?.value;
+  if(!from||!to) return toast('Select both dates','error');
+  if(from>to)    return toast('From date must be before To date','error');
+
+  const selectedCatIds  = [...document.querySelectorAll('.exr-cat-chk:checked')].map(chk => chk.value);
+  const selectedTypeIds = [...document.querySelectorAll('.exr-type-chk:checked')].map(chk => chk.value);
+  if (!selectedCatIds.length || !selectedTypeIds.length) {
+    return toast('Please select at least one category and expense item', 'warning');
+  }
+
+  showProcessingOverlay('Generating Expenses Report', 'Fetching expense data...');
+  document.getElementById('exr-report-body').innerHTML = `<div style="text-align:center;padding:20px;"><i class="fas fa-spinner fa-spin fa-2x" style="color:var(--primary);"></i><div style="margin-top:8px;color:var(--text-muted);">Loading...</div></div>`;
+
+  try {
+    const [categories, types, entries, amounts] = await Promise.all([
+      DB.getExpenseCategories(), DB.getExpenseTypes(), DB.getExpenseEntries(), DB.getExpenseAmounts()
+    ]);
+
+    const flat = Financials.flattenExpenseData(amounts, entries, types, categories);
+    const scoped = flat.filter(r => selectedCatIds.includes(String(r.category_id)) && selectedTypeIds.includes(String(r.expense_type_id)));
+
+    const start = new Date(from), end = new Date(to);
+    const inRange = scoped.filter(r => {
+      const d = new Date(r.entry_date);
+      return !isNaN(d) && d >= start && d <= end;
+    }).sort((a,b) => (a.entry_date||'').localeCompare(b.entry_date||''));
+
+    const totals = Financials.computeExpenseTotals(scoped, from, to);
+
+    window._expensesReportData = inRange;
+    window._expensesReportMeta = { from, to, total: totals.total, byCategory: totals.byCategory, mostExpensiveCategory: totals.mostExpensiveCategory };
+
+    if (!inRange.length) {
+      document.getElementById('exr-report-body').innerHTML = `<div style="text-align:center;padding:30px;color:var(--text-muted);">No expenses found matching parameters.</div>`;
+      document.getElementById('exr-report-export').style.display = 'none';
+      return;
+    }
+
+    const rows = inRange.map(r => `<tr>
+      <td style="white-space:nowrap;">${formatDate(r.entry_date)}</td>
+      <td>${r.category_name}</td>
+      <td>${r.expense_name}</td>
+      <td>${r.description||'—'}</td>
+      <td style="text-align:right;font-weight:600;">${formatCurrency(r.amount)}</td>
+    </tr>`).join('');
+
+    const categoryCards = Object.values(totals.byCategory).sort((a,b)=>b.total-a.total).map(c => `
+      <div class="stat-card"><div class="label">${c.name}</div><div class="value" style="font-size:1em;">${formatCurrency(c.total)}</div></div>
+    `).join('');
+
+    document.getElementById('exr-report-body').innerHTML = `
+      <div style="display:grid;grid-template-columns:repeat(4,1fr);gap:12px;margin-bottom:16px;">
+        <div class="stat-card"><div class="label">Entries</div><div class="value">${inRange.length}</div></div>
+        <div class="stat-card"><div class="label">Grand Total</div><div class="value" style="font-size:1.1em;">${formatCurrency(totals.total)}</div></div>
+        <div class="stat-card" style="grid-column:span 2;"><div class="label">Top Category</div><div class="value" style="font-size:1em;">${totals.mostExpensiveCategory?`${totals.mostExpensiveCategory.name} (${formatCurrency(totals.mostExpensiveCategory.total)})`:'—'}</div></div>
+      </div>
+      <div style="display:grid;grid-template-columns:repeat(auto-fit,minmax(160px,1fr));gap:10px;margin-bottom:16px;">
+        ${categoryCards}
+      </div>
+      <div class="table-wrap" style="max-height:420px;overflow-y:auto;">
+        <table>
+          <thead style="position:sticky;top:0;z-index:2;"><tr><th>Date</th><th>Category</th><th>Expense Item</th><th>Description</th><th style="text-align:right;">Amount</th></tr></thead>
+          <tbody>${rows}</tbody>
+          <tfoot><tr><td colspan="4" style="font-weight:700;padding:12px 16px;text-align:right;border-top:2px solid var(--border);">Total</td><td style="font-weight:700;padding:12px 16px;text-align:right;border-top:2px solid var(--border);">${formatCurrency(totals.total)}</td></tr></tfoot>
+        </table>
+      </div>`;
+
+    document.getElementById('exr-report-export').style.display = 'flex';
+  } catch(err) {
+    toast('Error generating report: ' + (err.message||err), 'error');
+  } finally {
+    hideProcessingOverlay();
+  }
+}
+
+function exportExpensesReport(type) {
+  const rows = (window._expensesReportData||[]).map(r => ({
+    'Date': r.entry_date,
+    'Category': r.category_name,
+    'Expense Item': r.expense_name,
+    'Description': r.description||'',
+    'Amount (LKR)': r.amount
+  }));
+  const meta = window._expensesReportMeta||{};
+  exportData(rows, `expenses_report_${meta.from||''}__${meta.to||''}`, type);
+}
+
+async function printExpensesReport() {
+  const rows = window._expensesReportData || [];
+  const meta = window._expensesReportMeta || {};
+  if (!rows.length) return toast('Generate the report first', 'error');
+
+  showProcessingOverlay('Printing Expenses Report', 'Preparing print layout...');
+  try {
+    const settings = {
+      company_name: await DB.getSetting('company_name') || 'Sagacious Washing Center',
+      address:      await DB.getSetting('address') || '',
+      phone:        await DB.getSetting('phone') || '',
+      email:        await DB.getSetting('email') || ''
+    };
+    const logoData = await DB.getSetting('logo_data');
+    const logoHTML = logoData
+      ? `<img src="${logoData}" style="height:56px;width:56px;object-fit:cover;border-radius:10px;"/>`
+      : `<div style="height:56px;width:56px;border-radius:10px;background:linear-gradient(135deg,#00b4d8,#1a4d8f);display:flex;align-items:center;justify-content:center;color:#fff;font-weight:700;font-size:1.4em;">SW</div>`;
+
+    let shade = false;
+    const bodyRows = rows.map(r => {
+      shade = !shade;
+      const bg = shade ? '#f6f9fc' : '#ffffff';
+      return `<tr style="background:${bg};">
+        <td style="padding:7px 9px;white-space:nowrap;">${formatDate(r.entry_date)}</td>
+        <td style="padding:7px 9px;">${r.category_name}</td>
+        <td style="padding:7px 9px;">${r.expense_name}</td>
+        <td style="padding:7px 9px;">${r.description||'—'}</td>
+        <td style="padding:7px 9px;text-align:right;font-weight:600;">${formatCurrency(r.amount)}</td>
+      </tr>`;
+    }).join('');
+
+    const categoryCards = Object.values(meta.byCategory||{}).sort((a,b)=>b.total-a.total).map(c => `
+      <div style="border:1px solid #e2e8f0;border-radius:10px;padding:10px 12px;background:#f8fafc;">
+        <div style="font-size:0.75em;text-transform:uppercase;letter-spacing:0.5px;color:#64748b;font-weight:700;">${c.name}</div>
+        <div style="font-size:1.05em;font-weight:800;color:#1a4d8f;font-family:'Playfair Display',serif;">${formatCurrency(c.total)}</div>
+      </div>`).join('');
+
+    const printHTML = `<!DOCTYPE html><html><head><meta charset="UTF-8"/>
+      <title>Expenses Report ${meta.from||''} to ${meta.to||''}</title>
+      <link href="https://fonts.googleapis.com/css2?family=DM+Sans:wght@400;600;700&family=Playfair+Display:wght@600;700;800&display=swap" rel="stylesheet"/>
+      <style>
+        *{box-sizing:border-box;margin:0;padding:0;}
+        body{font-family:'DM Sans',sans-serif;color:#1e293b;background:#fff;font-size:11px;}
+        @page{size:A4 portrait;margin:14mm 12mm;}
+        table{width:100%;border-collapse:collapse;}
+        thead{display:table-header-group;}
+        tr{page-break-inside:avoid;}
+        th{background:#1a4d8f;color:#fff;padding:8px 9px;text-align:left;font-size:0.78em;text-transform:uppercase;letter-spacing:0.4px;font-weight:700;}
+        td{border-bottom:1px solid #eef2f7;}
+      </style></head><body>
+      <div style="padding:4px 6px;">
+        <div style="display:flex;justify-content:space-between;align-items:flex-start;border-bottom:2px solid #e2e8f0;padding-bottom:14px;margin-bottom:16px;">
+          <div style="display:flex;align-items:center;gap:12px;">
+            ${logoHTML}
+            <div>
+              <div style="font-family:'Playfair Display',serif;font-size:1.5em;font-weight:700;color:#1a4d8f;">${settings.company_name}</div>
+              ${settings.address?`<div style="font-size:0.9em;color:#64748b;margin-top:2px;">${settings.address}</div>`:''}
+              <div style="font-size:0.9em;color:#64748b;">${[settings.phone,settings.email].filter(Boolean).join('  |  ')}</div>
+            </div>
+          </div>
+          <div style="text-align:right;">
+            <div style="font-family:'Playfair Display',serif;font-size:1.7em;font-weight:800;color:#1a4d8f;">Expenses Report</div>
+            <div style="font-size:0.95em;color:#374151;margin-top:4px;"><strong>${formatDate(meta.from)} &rarr; ${formatDate(meta.to)}</strong></div>
+            <div style="font-size:0.85em;color:#94a3b8;margin-top:2px;">Generated: ${formatDateTime(new Date().toISOString())}</div>
+          </div>
+        </div>
+        <div style="display:grid;grid-template-columns:repeat(4,1fr);gap:10px;margin-bottom:16px;">
+          ${categoryCards}
+        </div>
+        <table>
+          <thead><tr><th>Date</th><th>Category</th><th>Expense Item</th><th>Description</th><th style="text-align:right;">Amount</th></tr></thead>
+          <tbody>${bodyRows}
+            <tr style="page-break-inside:avoid;">
+              <td colspan="4" style="text-align:right;font-weight:700;border-top:2.5px solid #1a4d8f;padding:11px 9px;">Total</td>
+              <td style="text-align:right;font-weight:700;border-top:2.5px solid #1a4d8f;padding:11px 9px;">${formatCurrency(meta.total||0)}</td>
+            </tr>
+          </tbody>
+        </table>
+        <div style="margin-top:18px;text-align:center;font-size:0.82em;color:#94a3b8;border-top:1px solid #e2e8f0;padding-top:10px;">
+          ${settings.company_name} &mdash; Expenses Report &mdash; ${formatDate(meta.from)} to ${formatDate(meta.to)}
+        </div>
+      </div>
+      <script>document.fonts.ready.then(()=>window.print());<\/script>
+      </body></html>`;
+
+    const w = window.open('', '_blank');
+    if (!w) { hideProcessingOverlay(); return toast('Please allow pop-ups to print', 'warning'); }
+    w.document.write(printHTML);
+    w.document.close();
+  } finally {
+    hideProcessingOverlay();
+  }
+}
+
+// ─────────────────────────────────────────────
+// VEHICLE REPORT — customizable (date range, type, vehicle)
+// ─────────────────────────────────────────────
+async function showVehicleReportModal() {
+  const firstDay = new Date(); firstDay.setDate(1);
+  const from = firstDay.toISOString().split('T')[0];
+  const to   = today();
+
+  const vehicles = await DB.getVehicles();
+  const categories = [...new Set(vehicles.map(v => v.category).filter(Boolean))];
+
+  const typeCheckboxes = categories.map(cat => `
+    <label style="display:flex; align-items:center; gap:8px; font-size:0.88em; cursor:pointer; user-select:none; font-weight:600; color:var(--text);">
+      <input type="checkbox" class="vr-type-chk" value="${escapeHtml(cat)}" checked style="cursor:pointer;" />
+      ${cat}
+    </label>
+  `).join('');
+
+  const vehicleCheckboxes = vehicles.map(v => `
+    <label style="display:flex; align-items:center; gap:8px; font-size:0.88em; cursor:pointer; user-select:none; font-weight:600; color:var(--text);">
+      <input type="checkbox" class="vr-vehicle-chk" value="${v.id}" checked style="cursor:pointer;" />
+      ${v.vehicle_no}${v.category?` <span style="color:var(--text-muted);font-weight:400;font-size:0.85em;">(${v.category})</span>`:''}
+    </label>
+  `).join('');
+
+  createModal('vehicle-report-modal', 'Vehicle Report', `
+    <div style="display:grid;grid-template-columns:1fr 1fr auto;gap:12px;align-items:flex-end;margin-bottom:18px;border-bottom:1px solid var(--border);padding-bottom:18px;">
+      <div class="form-group" style="margin:0;">
+        <label class="form-label">From Date</label>
+        <input type="date" class="form-input" id="vr-from" value="${from}"/>
+      </div>
+      <div class="form-group" style="margin:0;">
+        <label class="form-label">To Date</label>
+        <input type="date" class="form-input" id="vr-to" value="${to}"/>
+      </div>
+      <button class="btn btn-primary" onclick="generateVehicleReport()" style="height:40px;">
+        <i class="fas fa-chart-bar"></i> Generate
+      </button>
+      <div class="form-group" style="grid-column: span 3; margin-top:10px; margin-bottom:0;">
+        <label class="form-label" style="font-weight:700;">Vehicle Types:</label>
+        <div style="display:flex; gap:8px; margin-bottom:8px; align-items:center;">
+          <button class="btn btn-secondary btn-sm" onclick="toggleAllVrChecks('.vr-type-chk', true)">Select All</button>
+          <button class="btn btn-secondary btn-sm" onclick="toggleAllVrChecks('.vr-type-chk', false)">Clear All</button>
+        </div>
+        <div id="vr-type-checkboxes" style="display:grid; grid-template-columns: repeat(auto-fill, minmax(140px, 1fr)); gap:10px; max-height:70px; overflow-y:auto; border:1px solid var(--border); padding:10px; border-radius:8px; background:var(--bg);">
+          ${typeCheckboxes || '<span style="color:var(--text-muted);">No vehicle types found</span>'}
+        </div>
+      </div>
+      <div class="form-group" style="grid-column: span 3; margin-top:10px; margin-bottom:0;">
+        <label class="form-label" style="font-weight:700;">Select Vehicles:</label>
+        <div style="display:flex; gap:8px; margin-bottom:8px; align-items:center;">
+          <button class="btn btn-secondary btn-sm" onclick="toggleAllVrChecks('.vr-vehicle-chk', true)">Select All</button>
+          <button class="btn btn-secondary btn-sm" onclick="toggleAllVrChecks('.vr-vehicle-chk', false)">Clear All</button>
+        </div>
+        <div id="vr-vehicle-checkboxes" style="display:grid; grid-template-columns: repeat(auto-fill, minmax(180px, 1fr)); gap:10px; max-height:110px; overflow-y:auto; border:1px solid var(--border); padding:10px; border-radius:8px; background:var(--bg);">
+          ${vehicleCheckboxes || '<span style="color:var(--text-muted);">No vehicles found</span>'}
+        </div>
+      </div>
+    </div>
+    <div id="vr-report-body" style="min-height:120px;display:flex;align-items:center;justify-content:center;color:var(--text-muted);">
+      Select parameters and click Generate.
+    </div>
+    <div id="vr-report-export" style="display:none;margin-top:14px;gap:8px;justify-content:flex-end;">
+      <button class="btn btn-secondary btn-sm" onclick="exportVehicleReport('csv')"><i class="fas fa-file-csv"></i> CSV</button>
+      <button class="btn btn-secondary btn-sm" onclick="exportVehicleReport('excel')"><i class="fas fa-file-excel"></i> Excel</button>
+      <button class="btn btn-secondary btn-sm" onclick="printVehicleReport()"><i class="fas fa-print"></i> Print</button>
+    </div>`, 'modal-xl');
+
+  window.toggleAllVrChecks = function(selector, checked) {
+    document.querySelectorAll(selector).forEach(chk => chk.checked = checked);
+  };
+
+  showModal('vehicle-report-modal');
+}
+
+async function generateVehicleReport() {
+  const from = document.getElementById('vr-from')?.value;
+  const to   = document.getElementById('vr-to')?.value;
+  if(!from||!to) return toast('Select both dates','error');
+  if(from>to)    return toast('From date must be before To date','error');
+
+  const selectedTypes      = [...document.querySelectorAll('.vr-type-chk:checked')].map(chk => chk.value);
+  const selectedVehicleIds = [...document.querySelectorAll('.vr-vehicle-chk:checked')].map(chk => chk.value);
+  if (!selectedVehicleIds.length) return toast('Please select at least one vehicle', 'warning');
+
+  showProcessingOverlay('Generating Vehicle Report', 'Fetching trip data...');
+  document.getElementById('vr-report-body').innerHTML = `<div style="text-align:center;padding:20px;"><i class="fas fa-spinner fa-spin fa-2x" style="color:var(--primary);"></i><div style="margin-top:8px;color:var(--text-muted);">Loading...</div></div>`;
+
+  try {
+    const [vehicles, trips, fuelCfg] = await Promise.all([DB.getVehicles(), DB.getTrips(), DB.getFuelPriceSettings()]);
+
+    const scopedVehicles = vehicles.filter(v => selectedVehicleIds.includes(String(v.id)) && selectedTypes.includes(v.category));
+    const vIdSet = new Set(scopedVehicles.map(v => String(v.id)));
+
+    const tripDate = t => t.start_date || (t.created_at ? String(t.created_at).slice(0,10) : null);
+    const scopedTrips = trips.filter(t => {
+      if (!vIdSet.has(String(t.vehicle_id))) return false;
+      const d = tripDate(t);
+      return d && d >= from && d <= to;
+    });
+
+    const vehStats = {};
+    scopedVehicles.forEach(v => { vehStats[v.id] = { vehicle_no: v.vehicle_no, category: v.category||'—', trips: 0, distance: 0, statusCounts: {} }; });
+    scopedTrips.forEach(t => {
+      const st = vehStats[t.vehicle_id];
+      if (!st) return;
+      st.trips++;
+      if (t.status === 'Completed') st.distance += parseFloat(t.distance_km) || 0;
+      const s = t.status || 'Unknown';
+      st.statusCounts[s] = (st.statusCounts[s]||0) + 1;
+    });
+
+    const summaryList = Object.values(vehStats).map(v => {
+      const fuel = Financials.computeTripFuelCost(v.distance, fuelCfg.current_price, fuelCfg.km_per_litre);
+      return { ...v, fuelCost: fuel.estimatedCost };
+    }).sort((a,b) => b.distance - a.distance);
+
+    window._vehicleReportData = summaryList;
+    window._vehicleReportMeta = { from, to };
+
+    if (!summaryList.length) {
+      document.getElementById('vr-report-body').innerHTML = `<div style="text-align:center;padding:30px;color:var(--text-muted);">No vehicles selected.</div>`;
+      document.getElementById('vr-report-export').style.display = 'none';
+      return;
+    }
+
+    const totalTrips = summaryList.reduce((s,v)=>s+v.trips,0);
+    const totalDistance = summaryList.reduce((s,v)=>s+v.distance,0);
+    const totalFuelCost = summaryList.reduce((s,v)=>s+v.fuelCost,0);
+
+    const rows = summaryList.map(v => {
+      const statusStr = Object.entries(v.statusCounts).map(([s,c]) => `${s}: ${c}`).join(', ') || '—';
+      return `<tr>
+        <td style="font-family:monospace;font-weight:700;">${v.vehicle_no}</td>
+        <td>${v.category}</td>
+        <td style="text-align:center;">${v.trips}</td>
+        <td style="text-align:right;">${v.distance.toFixed(1)} km</td>
+        <td style="text-align:right;font-weight:600;">${formatCurrency(v.fuelCost)}</td>
+        <td>${statusStr}</td>
+      </tr>`;
+    }).join('');
+
+    document.getElementById('vr-report-body').innerHTML = `
+      <div style="display:grid;grid-template-columns:repeat(3,1fr);gap:12px;margin-bottom:16px;">
+        <div class="stat-card"><div class="label">Total Trips</div><div class="value">${totalTrips}</div></div>
+        <div class="stat-card"><div class="label">Total Distance</div><div class="value" style="font-size:1.1em;">${totalDistance.toFixed(1)} km</div></div>
+        <div class="stat-card"><div class="label">Est. Fuel Cost</div><div class="value" style="font-size:1.1em;color:var(--danger);">${formatCurrency(totalFuelCost)}</div></div>
+      </div>
+      <div class="table-wrap" style="max-height:420px;overflow-y:auto;">
+        <table>
+          <thead style="position:sticky;top:0;z-index:2;"><tr><th>Vehicle No</th><th>Type</th><th style="text-align:center;">Trips</th><th style="text-align:right;">Distance</th><th style="text-align:right;">Est. Fuel Cost</th><th>Status Breakdown</th></tr></thead>
+          <tbody>${rows}</tbody>
+          <tfoot><tr>
+            <td colspan="2" style="font-weight:700;padding:12px 16px;text-align:right;border-top:2px solid var(--border);">Totals</td>
+            <td style="font-weight:700;padding:12px 16px;text-align:center;border-top:2px solid var(--border);">${totalTrips}</td>
+            <td style="font-weight:700;padding:12px 16px;text-align:right;border-top:2px solid var(--border);">${totalDistance.toFixed(1)} km</td>
+            <td style="font-weight:700;padding:12px 16px;text-align:right;border-top:2px solid var(--border);">${formatCurrency(totalFuelCost)}</td>
+            <td style="border-top:2px solid var(--border);"></td>
+          </tr></tfoot>
+        </table>
+      </div>`;
+
+    document.getElementById('vr-report-export').style.display = 'flex';
+  } catch(err) {
+    toast('Error generating report: ' + (err.message||err), 'error');
+  } finally {
+    hideProcessingOverlay();
+  }
+}
+
+function exportVehicleReport(type) {
+  const rows = (window._vehicleReportData||[]).map(v => ({
+    'Vehicle No': v.vehicle_no,
+    'Type': v.category,
+    'Trips': v.trips,
+    'Distance (km)': v.distance.toFixed(1),
+    'Est. Fuel Cost (LKR)': v.fuelCost,
+    'Status Breakdown': Object.entries(v.statusCounts).map(([s,c]) => `${s}: ${c}`).join(', ')
+  }));
+  const meta = window._vehicleReportMeta||{};
+  exportData(rows, `vehicle_report_${meta.from||''}__${meta.to||''}`, type);
+}
+
+async function printVehicleReport() {
+  const rows = window._vehicleReportData || [];
+  const meta = window._vehicleReportMeta || {};
+  if (!rows.length) return toast('Generate the report first', 'error');
+
+  showProcessingOverlay('Printing Vehicle Report', 'Preparing print layout...');
+  try {
+    const settings = {
+      company_name: await DB.getSetting('company_name') || 'Sagacious Washing Center',
+      address:      await DB.getSetting('address') || '',
+      phone:        await DB.getSetting('phone') || '',
+      email:        await DB.getSetting('email') || ''
+    };
+    const logoData = await DB.getSetting('logo_data');
+    const logoHTML = logoData
+      ? `<img src="${logoData}" style="height:56px;width:56px;object-fit:cover;border-radius:10px;"/>`
+      : `<div style="height:56px;width:56px;border-radius:10px;background:linear-gradient(135deg,#00b4d8,#1a4d8f);display:flex;align-items:center;justify-content:center;color:#fff;font-weight:700;font-size:1.4em;">SW</div>`;
+
+    const totalTrips = rows.reduce((s,v)=>s+v.trips,0);
+    const totalDistance = rows.reduce((s,v)=>s+v.distance,0);
+    const totalFuelCost = rows.reduce((s,v)=>s+v.fuelCost,0);
+
+    let shade = false;
+    const bodyRows = rows.map(v => {
+      shade = !shade;
+      const bg = shade ? '#f6f9fc' : '#ffffff';
+      const statusStr = Object.entries(v.statusCounts).map(([s,c]) => `${s}: ${c}`).join(', ') || '—';
+      return `<tr style="background:${bg};">
+        <td style="padding:7px 9px;font-family:monospace;font-weight:700;">${v.vehicle_no}</td>
+        <td style="padding:7px 9px;">${v.category}</td>
+        <td style="padding:7px 9px;text-align:center;">${v.trips}</td>
+        <td style="padding:7px 9px;text-align:right;">${v.distance.toFixed(1)} km</td>
+        <td style="padding:7px 9px;text-align:right;font-weight:600;">${formatCurrency(v.fuelCost)}</td>
+        <td style="padding:7px 9px;">${statusStr}</td>
+      </tr>`;
+    }).join('');
+
+    const printHTML = `<!DOCTYPE html><html><head><meta charset="UTF-8"/>
+      <title>Vehicle Report ${meta.from||''} to ${meta.to||''}</title>
+      <link href="https://fonts.googleapis.com/css2?family=DM+Sans:wght@400;600;700&family=Playfair+Display:wght@600;700;800&display=swap" rel="stylesheet"/>
+      <style>
+        *{box-sizing:border-box;margin:0;padding:0;}
+        body{font-family:'DM Sans',sans-serif;color:#1e293b;background:#fff;font-size:11px;}
+        @page{size:A4 landscape;margin:11mm 9mm;}
+        table{width:100%;border-collapse:collapse;}
+        thead{display:table-header-group;}
+        tr{page-break-inside:avoid;}
+        th{background:#1a4d8f;color:#fff;padding:8px 9px;text-align:left;font-size:0.78em;text-transform:uppercase;letter-spacing:0.4px;font-weight:700;}
+        td{border-bottom:1px solid #eef2f7;}
+      </style></head><body>
+      <div style="padding:4px 6px;">
+        <div style="display:flex;justify-content:space-between;align-items:flex-start;border-bottom:2px solid #e2e8f0;padding-bottom:14px;margin-bottom:16px;">
+          <div style="display:flex;align-items:center;gap:12px;">
+            ${logoHTML}
+            <div>
+              <div style="font-family:'Playfair Display',serif;font-size:1.5em;font-weight:700;color:#1a4d8f;">${settings.company_name}</div>
+              ${settings.address?`<div style="font-size:0.9em;color:#64748b;margin-top:2px;">${settings.address}</div>`:''}
+              <div style="font-size:0.9em;color:#64748b;">${[settings.phone,settings.email].filter(Boolean).join('  |  ')}</div>
+            </div>
+          </div>
+          <div style="text-align:right;">
+            <div style="font-family:'Playfair Display',serif;font-size:1.7em;font-weight:800;color:#1a4d8f;">Vehicle Report</div>
+            <div style="font-size:0.95em;color:#374151;margin-top:4px;"><strong>${formatDate(meta.from)} &rarr; ${formatDate(meta.to)}</strong></div>
+            <div style="font-size:0.85em;color:#94a3b8;margin-top:2px;">Generated: ${formatDateTime(new Date().toISOString())}</div>
+          </div>
+        </div>
+        <div style="display:grid;grid-template-columns:repeat(3,1fr);gap:12px;margin-bottom:16px;">
+          <div style="border:1px solid #e2e8f0;border-radius:10px;padding:12px 14px;background:#f8fafc;">
+            <div style="font-size:0.78em;text-transform:uppercase;letter-spacing:0.5px;color:#64748b;font-weight:700;">Total Trips</div>
+            <div style="font-size:1.5em;font-weight:800;color:#1a4d8f;font-family:'Playfair Display',serif;">${totalTrips}</div>
+          </div>
+          <div style="border:1px solid #e2e8f0;border-radius:10px;padding:12px 14px;background:#f8fafc;">
+            <div style="font-size:0.78em;text-transform:uppercase;letter-spacing:0.5px;color:#64748b;font-weight:700;">Total Distance</div>
+            <div style="font-size:1.25em;font-weight:800;color:#1a4d8f;font-family:'Playfair Display',serif;">${totalDistance.toFixed(1)} km</div>
+          </div>
+          <div style="border:1px solid #e2e8f0;border-radius:10px;padding:12px 14px;background:#fef2f2;">
+            <div style="font-size:0.78em;text-transform:uppercase;letter-spacing:0.5px;color:#b91c1c;font-weight:700;">Est. Fuel Cost</div>
+            <div style="font-size:1.25em;font-weight:800;color:#e11d48;font-family:'Playfair Display',serif;">${formatCurrency(totalFuelCost)}</div>
+          </div>
+        </div>
+        <table>
+          <thead><tr><th>Vehicle No</th><th>Type</th><th style="text-align:center;">Trips</th><th style="text-align:right;">Distance</th><th style="text-align:right;">Est. Fuel Cost</th><th>Status Breakdown</th></tr></thead>
+          <tbody>${bodyRows}
+            <tr style="page-break-inside:avoid;">
+              <td colspan="2" style="text-align:right;font-weight:700;border-top:2.5px solid #1a4d8f;padding:11px 9px;">Totals</td>
+              <td style="text-align:center;font-weight:700;border-top:2.5px solid #1a4d8f;padding:11px 9px;">${totalTrips}</td>
+              <td style="text-align:right;font-weight:700;border-top:2.5px solid #1a4d8f;padding:11px 9px;">${totalDistance.toFixed(1)} km</td>
+              <td style="text-align:right;font-weight:700;border-top:2.5px solid #1a4d8f;padding:11px 9px;">${formatCurrency(totalFuelCost)}</td>
+              <td style="border-top:2.5px solid #1a4d8f;"></td>
+            </tr>
+          </tbody>
+        </table>
+        <div style="margin-top:18px;text-align:center;font-size:0.82em;color:#94a3b8;border-top:1px solid #e2e8f0;padding-top:10px;">
+          ${settings.company_name} &mdash; Vehicle Report &mdash; ${formatDate(meta.from)} to ${formatDate(meta.to)}
+        </div>
+      </div>
+      <script>document.fonts.ready.then(()=>window.print());<\/script>
+      </body></html>`;
+
+    const w = window.open('', '_blank');
+    if (!w) { hideProcessingOverlay(); return toast('Please allow pop-ups to print', 'warning'); }
+    w.document.write(printHTML);
+    w.document.close();
   } finally {
     hideProcessingOverlay();
   }

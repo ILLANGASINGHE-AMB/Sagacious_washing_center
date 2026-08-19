@@ -614,7 +614,7 @@ async function saveCreditBill() {
   try {
     showProcessingOverlay('Generating Bill', 'Saving credit bill details...');
     const batchId = await DB.generateBatchId();
-    const orderId = await DB.addOrder({
+    const orderId = await DB.createOrderWithItems({
       customer_id:     custId,
       driver_id:       drvId,
       pickup_date:     pickup,
@@ -623,11 +623,7 @@ async function saveCreditBill() {
       advance_payment: 0,
       total_amount:    billTotal,
       batch_id:        batchId
-    });
-
-    if (orderItems.length > 0) {
-      await DB.addOrderItemsBatch(orderItems.map(item => ({ ...item, order_id: orderId })));
-    }
+    }, orderItems);
 
     // Auto-generate the Credit invoice immediately
     const invNum = await DB.generateInvoiceNumber();
@@ -1061,7 +1057,7 @@ async function saveNewOrder(){
     const orderStatus = advance >= grandTotal ? 'Paid' : 'Unpaid';
     
     // Only pass columns that exist on the orders table
-    const orderId = await DB.addOrder({
+    const orderId = await DB.createOrderWithItems({
       customer_id:     custId,
       driver_id:       driverId,
       pickup_date:     pickup,
@@ -1074,10 +1070,7 @@ async function saveNewOrder(){
       discount_amount: discAmt,
       total_amount:    grandTotal,
       batch_id:        batchId
-    });
-    if (orderItems.length > 0) {
-      await DB.addOrderItemsBatch(orderItems.map(item => ({ ...item, order_id: orderId })));
-    }
+    }, orderItems);
 
     if (orderStatus === 'Paid') {
       const invNum = await DB.generateInvoiceNumber();
@@ -1343,7 +1336,7 @@ async function saveEditOrder(orderId,wasPickupOnly=false){
     }
   }
 
-  await DB.updateOrder(orderId,{
+  await DB.updateOrderWithItems(orderId,{
     customer_id:     custId,
     driver_id:       null,
     pickup_date:     pickup,
@@ -1356,11 +1349,7 @@ async function saveEditOrder(orderId,wasPickupOnly=false){
     discount_amount: discAmt,
     total_amount:    eoGrandTotal,
     is_pickup_only:  orderItems.length===0
-  });
-  await DB.deleteOrderItems(orderId);
-  if (orderItems.length > 0) {
-    await DB.addOrderItemsBatch(orderItems.map(item => ({ ...item, order_id: orderId })));
-  }
+  }, orderItems);
 
   const existingOrder = await DB.getOrder(orderId);
   const batchId = existingOrder ? existingOrder.batch_id : '#' + orderId;

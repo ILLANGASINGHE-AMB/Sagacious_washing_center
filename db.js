@@ -178,6 +178,20 @@ const DB = {
     return rows[0].id;
   },
   async updateOrder(id, data) { await _q(_sb.from('orders').update(data).eq('id', id)); },
+  // Atomic order+items create/update: order row and its line items are
+  // written in one Postgres transaction (RPC), so a failed items insert
+  // can never leave behind an order with zero items. See
+  // supabase_atomic_order_rpc_migration.sql. Fails loudly on error —
+  // no silent fallback — same reasoning as _generateSequentialId below.
+  async createOrderWithItems(orderData, items) {
+    const { data, error } = await _sb.rpc('create_order_with_items', { p_order: orderData, p_items: items || [] });
+    if (error) { console.error('create_order_with_items failed:', error); throw error; }
+    return data;
+  },
+  async updateOrderWithItems(orderId, orderData, items) {
+    const { error } = await _sb.rpc('update_order_with_items', { p_order_id: orderId, p_order: orderData, p_items: items || [] });
+    if (error) { console.error('update_order_with_items failed:', error); throw error; }
+  },
   async deleteOrder(id) {
     // Delete in dependency order so foreign-key constraints don't block the order delete.
     // 1. Find the invoice(s) linked to this order
@@ -205,8 +219,8 @@ const DB = {
   },
 
   // ── Order Items ───────────────────────────
-  async getOrderItems(orderId) { return _q(_sb.from('order_items').select('*').eq('order_id', orderId)); },
-  async getAllOrderItems() { return _q(_sb.from('order_items').select('*')); },
+  async getOrderItems(orderId) { return _q(_sb.from('order_items').select('*').eq('order_id', orderId).order('id', { ascending: true })); },
+  async getAllOrderItems() { return _q(_sb.from('order_items').select('*').order('id', { ascending: true })); },
   async addOrderItem(data) {
     const rows = await _q(_sb.from('order_items').insert(data).select());
     return rows[0].id;
