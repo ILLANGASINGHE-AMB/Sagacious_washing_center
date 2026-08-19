@@ -21,6 +21,18 @@
 --
 -- Safe to run multiple times (CREATE OR REPLACE FUNCTION).
 -- ============================================================
+-- v2 fix: jsonb_populate_record(NULL::tbl, json) builds the row starting
+-- from an ALL-NULL record and only overlays the keys present in the
+-- json. Since `id` (identity/default column on both orders and
+-- order_items) is never included in the json payload from the client,
+-- the resulting row had id = NULL explicitly — and `INSERT ... SELECT *`
+-- inserts that literal NULL instead of letting the column DEFAULT fire,
+-- which raised "null value in column \"id\" ... violates not-null
+-- constraint" on every order create/edit. Fixed by building the INSERT
+-- dynamically from the json's own keys (same %I/%L pattern already used
+-- safely below for the orders UPDATE), so `id` is simply never part of
+-- the column list and the DEFAULT applies normally.
+-- ============================================================
 
 CREATE OR REPLACE FUNCTION public.create_order_with_items(p_order jsonb, p_items jsonb)
 RETURNS bigint
@@ -31,17 +43,27 @@ SET search_path = public
 AS $$
 DECLARE
   v_order_id bigint;
+  v_item     jsonb;
+  v_cols     text;
+  v_vals     text;
 BEGIN
-  INSERT INTO public.orders
-  SELECT * FROM jsonb_populate_record(NULL::public.orders, p_order)
-  RETURNING id INTO v_order_id;
+  SELECT string_agg(format('%I', key), ', '),
+         string_agg(format('%L', value), ', ')
+    INTO v_cols, v_vals
+  FROM jsonb_each_text(p_order - 'id');
 
-  INSERT INTO public.order_items
-  SELECT (jsonb_populate_record(
-      NULL::public.order_items,
-      elem || jsonb_build_object('order_id', v_order_id)
-    )).*
-  FROM jsonb_array_elements(COALESCE(p_items, '[]'::jsonb)) AS elem;
+  EXECUTE format('INSERT INTO public.orders (%s) VALUES (%s) RETURNING id', v_cols, v_vals)
+    INTO v_order_id;
+
+  FOR v_item IN SELECT * FROM jsonb_array_elements(COALESCE(p_items, '[]'::jsonb))
+  LOOP
+    SELECT string_agg(format('%I', key), ', '),
+           string_agg(format('%L', value), ', ')
+      INTO v_cols, v_vals
+    FROM jsonb_each_text((v_item - 'id') || jsonb_build_object('order_id', v_order_id));
+
+    EXECUTE format('INSERT INTO public.order_items (%s) VALUES (%s)', v_cols, v_vals);
+  END LOOP;
 
   RETURN v_order_id;
 END;
@@ -56,6 +78,9 @@ SET search_path = public
 AS $$
 DECLARE
   v_set_clause text;
+  v_item       jsonb;
+  v_cols       text;
+  v_vals       text;
 BEGIN
   SELECT string_agg(format('%I = %L', key, value), ', ')
     INTO v_set_clause
@@ -67,11 +92,14 @@ BEGIN
 
   DELETE FROM public.order_items WHERE order_id = p_order_id;
 
-  INSERT INTO public.order_items
-  SELECT (jsonb_populate_record(
-      NULL::public.order_items,
-      elem || jsonb_build_object('order_id', p_order_id)
-    )).*
-  FROM jsonb_array_elements(COALESCE(p_items, '[]'::jsonb)) AS elem;
+  FOR v_item IN SELECT * FROM jsonb_array_elements(COALESCE(p_items, '[]'::jsonb))
+  LOOP
+    SELECT string_agg(format('%I', key), ', '),
+           string_agg(format('%L', value), ', ')
+      INTO v_cols, v_vals
+    FROM jsonb_each_text((v_item - 'id') || jsonb_build_object('order_id', p_order_id));
+
+    EXECUTE format('INSERT INTO public.order_items (%s) VALUES (%s)', v_cols, v_vals);
+  END LOOP;
 END;
 $$;
