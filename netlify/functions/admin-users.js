@@ -95,19 +95,25 @@ exports.handler = async function (event) {
           if (!data.users || data.users.length < perPage) break;
           page++;
         }
+        // Join against drivers.auth_user_id so callers (the "Manage Login"
+        // UI on a driver's profile) can tell which login, if any, is
+        // already linked to which driver without a second round trip.
+        const { data: driverRows } = await admin.from('drivers').select('id, auth_user_id').not('auth_user_id', 'is', null);
+        const driverIdByAuthId = new Map((driverRows || []).map(d => [d.auth_user_id, d.id]));
         const users = all.map(u => ({
           id: u.id,
           email: u.email,
           username: u.user_metadata?.username || u.email,
           display_name: u.user_metadata?.display_name || u.user_metadata?.username || u.email,
           role: u.user_metadata?.role || 'user',
+          driver_id: driverIdByAuthId.get(u.id) ?? null,
           created_at: u.created_at
         }));
         return { statusCode: 200, body: JSON.stringify({ users }) };
       }
 
       case 'create': {
-        const { email, password, username, display_name, role } = payload || {};
+        const { email, password, username, display_name, role, driver_id } = payload || {};
         if (!email || !password) {
           return { statusCode: 400, body: JSON.stringify({ error: 'Email and password are required.' }) };
         }
@@ -124,11 +130,17 @@ exports.handler = async function (event) {
           }
         });
         if (error) throw error;
-        return { statusCode: 200, body: JSON.stringify({ id: data.user.id, bootstrap: bootstrapMode }) };
+
+        let driver_link_error = null;
+        if (driver_id) {
+          const { error: linkErr } = await admin.from('drivers').update({ auth_user_id: data.user.id }).eq('id', driver_id);
+          if (linkErr) driver_link_error = linkErr.message;
+        }
+        return { statusCode: 200, body: JSON.stringify({ id: data.user.id, bootstrap: bootstrapMode, driver_link_error }) };
       }
 
       case 'update': {
-        const { id, email, password, username, display_name, role } = payload || {};
+        const { id, email, password, username, display_name, role, driver_id } = payload || {};
         if (!id) return { statusCode: 400, body: JSON.stringify({ error: 'Missing user id.' }) };
 
         const { data: existing, error: getErr } = await admin.auth.admin.getUserById(id);
@@ -146,12 +158,28 @@ exports.handler = async function (event) {
 
         const { error } = await admin.auth.admin.updateUserById(id, updates);
         if (error) throw error;
-        return { statusCode: 200, body: JSON.stringify({ ok: true }) };
+
+        // driver_id === null means "unlink"; undefined means "leave as-is".
+        let driver_link_error = null;
+        if (driver_id !== undefined) {
+          // Clear any existing link to this auth user first (covers relinking
+          // to a different driver — a UNIQUE constraint on auth_user_id would
+          // otherwise reject the new link while the old one still points here).
+          await admin.from('drivers').update({ auth_user_id: null }).eq('auth_user_id', id);
+          if (driver_id !== null) {
+            const { error: linkErr } = await admin.from('drivers').update({ auth_user_id: id }).eq('id', driver_id);
+            if (linkErr) driver_link_error = linkErr.message;
+          }
+        }
+        return { statusCode: 200, body: JSON.stringify({ ok: true, driver_link_error }) };
       }
 
       case 'delete': {
         const { id } = payload || {};
         if (!id) return { statusCode: 400, body: JSON.stringify({ error: 'Missing user id.' }) };
+        // No manual unlink needed here: drivers.auth_user_id references
+        // auth.users(id) ON DELETE SET NULL, so Postgres clears the link
+        // automatically when the auth user row is deleted below.
         const { error } = await admin.auth.admin.deleteUser(id);
         if (error) throw error;
         return { statusCode: 200, body: JSON.stringify({ ok: true }) };

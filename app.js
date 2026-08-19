@@ -1631,9 +1631,10 @@ async function openDriverDetail(driverId, tab = 'trips') {
   currentDetailDriverId = driverId;
   currentDriverDetailTab = tab;
 
-  const [d, allTrips] = await Promise.all([
+  const [d, allTrips, linkedLogin] = await Promise.all([
     DB.getDriver(driverId),
-    DB.getTrips()
+    DB.getTrips(),
+    isAdmin() ? DB.getUserByDriverId(driverId).catch(() => null) : Promise.resolve(null)
   ]);
 
   if (!d) {
@@ -1706,9 +1707,14 @@ async function openDriverDetail(driverId, tab = 'trips') {
         </div>
         <div style="display:flex;gap:8px;">
           <button class="btn btn-primary btn-sm" onclick="showEditDriverModal(${d.id})"><i class="fas fa-edit"></i> Edit</button>
+          ${isAdmin() ? `<button class="btn btn-secondary btn-sm" onclick="showManageDriverLoginModal(${d.id})"><i class="fas fa-key"></i> ${linkedLogin ? 'Manage Login' : 'Create Login'}</button>` : ''}
           ${canDelete() ? `<button class="btn btn-danger btn-sm" onclick="deleteDriverConfirm(${d.id})"><i class="fas fa-trash"></i> Delete</button>` : ''}
         </div>
       </div>
+      ${isAdmin() ? `<div style="margin-top:-6px;margin-bottom:16px;font-size:0.82em;color:var(--text-muted);">
+        <i class="fas fa-mobile-screen-button" style="margin-right:6px;"></i>DriverApp login:
+        ${linkedLogin ? `<span style="color:var(--success);font-weight:600;">${escapeHtml(linkedLogin.email)}</span>` : `<span style="color:var(--danger);font-weight:600;">not linked</span>`}
+      </div>` : ''}
 
       <div style="display:grid;grid-template-columns:repeat(auto-fit,minmax(200px,1fr));gap:16px;padding:16px;background:var(--bg);border-radius:10px;border:1px solid var(--border);">
         <div>
@@ -1764,6 +1770,90 @@ async function openDriverDetail(driverId, tab = 'trips') {
   `;
 
   await renderDriverDetailTabBody(d, driverTrips, currentDriverDetailTab);
+}
+
+// Admin-only: create or manage the Supabase Auth login a driver uses to
+// sign into the separate DriverApp (see DriverApp/driverApp.md). Linking
+// happens server-side in netlify/functions/admin-users.js, which writes
+// drivers.auth_user_id using the service-role key.
+async function showManageDriverLoginModal(driverId) {
+  const [d, linked] = await Promise.all([
+    DB.getDriver(driverId),
+    DB.getUserByDriverId(driverId).catch(() => null)
+  ]);
+  if (!d) return;
+
+  const bodyHtml = linked ? `
+    <div class="form-group"><label class="form-label">Login Email</label>
+      <input class="form-input" id="dl-email" value="${escapeHtml(linked.email)}" type="email" maxlength="100"/></div>
+    <div class="form-group"><label class="form-label">Reset Password <span style="color:var(--text-muted);font-size:0.82em;">(leave blank to keep current password)</span></label>
+      <input class="form-input" id="dl-password" type="text" placeholder="New password" maxlength="72"/></div>
+    <div style="display:flex;gap:10px;justify-content:space-between;margin-top:8px;">
+      <button class="btn btn-danger" onclick="unlinkDriverLogin(${d.id}, '${linked.id}')"><i class="fas fa-unlink"></i> Unlink</button>
+      <div style="display:flex;gap:10px;">
+        <button class="btn btn-secondary" onclick="hideModal('drv-login-modal')">Cancel</button>
+        <button class="btn btn-primary" onclick="saveDriverLogin(${d.id}, '${linked.id}')"><i class="fas fa-save"></i> Save</button>
+      </div>
+    </div>
+  ` : `
+    <div class="form-group"><label class="form-label">Login Email *</label>
+      <input class="form-input" id="dl-email" type="email" placeholder="${(d.name||'driver').toLowerCase().replace(/\\s+/g,'.')}@swc.com" maxlength="100"/></div>
+    <div class="form-group"><label class="form-label">Password *</label>
+      <input class="form-input" id="dl-password" type="text" placeholder="At least 6 characters" maxlength="72"/></div>
+    <div style="display:flex;gap:10px;justify-content:flex-end;margin-top:8px;">
+      <button class="btn btn-secondary" onclick="hideModal('drv-login-modal')">Cancel</button>
+      <button class="btn btn-primary" onclick="saveDriverLogin(${d.id}, null)"><i class="fas fa-key"></i> Create Login</button>
+    </div>
+  `;
+
+  createModal('drv-login-modal', linked ? `Manage Login — ${escapeHtml(d.name)}` : `Create Login — ${escapeHtml(d.name)}`, bodyHtml);
+  showModal('drv-login-modal');
+}
+
+async function saveDriverLogin(driverId, existingUserId) {
+  const email = document.getElementById('dl-email').value.trim();
+  const password = document.getElementById('dl-password').value;
+  if (!email) return toast('Login email is required', 'error');
+  if (!existingUserId && (!password || password.length < 6)) return toast('Password must be at least 6 characters', 'error');
+
+  try {
+    const d = await DB.getDriver(driverId);
+    let result;
+    if (existingUserId) {
+      result = await DB._callAdminUsersFn('update', { id: existingUserId, email, ...(password ? { password } : {}), driver_id: driverId });
+    } else {
+      result = await DB._callAdminUsersFn('create', {
+        email, password, role: 'driver',
+        username: (d?.name || email.split('@')[0]).toLowerCase().replace(/\s+/g, '.'),
+        display_name: d?.name || email,
+        driver_id: driverId
+      });
+    }
+    if (result.driver_link_error) {
+      toast('Login saved, but linking to the driver profile failed: ' + result.driver_link_error, 'error');
+    } else {
+      toast('Driver login saved successfully!');
+    }
+    await DB.logAction('Manage Driver Login', `${existingUserId ? 'Updated' : 'Created'} login "${email}" for driver "${d?.name || '#' + driverId}"`, { driverId, email }, 'Driver');
+    hideModal('drv-login-modal');
+    if (currentDetailDriverId === driverId) openDriverDetail(driverId, currentDriverDetailTab);
+  } catch (err) {
+    console.error('saveDriverLogin error:', err);
+    toast('Failed to save login: ' + (err.message || err), 'error');
+  }
+}
+
+function unlinkDriverLogin(driverId, userId) {
+  confirmDialog("Unlink this login from the driver? The login account itself is kept — this only removes its access to this driver's profile in DriverApp.", async () => {
+    try {
+      await DB._callAdminUsersFn('update', { id: userId, driver_id: null });
+      toast('Login unlinked');
+      hideModal('drv-login-modal');
+      if (currentDetailDriverId === driverId) openDriverDetail(driverId, currentDriverDetailTab);
+    } catch (err) {
+      toast('Failed to unlink: ' + (err.message || err), 'error');
+    }
+  });
 }
 
 async function switchDriverDetailTab(driverId, tab) {

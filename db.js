@@ -358,6 +358,10 @@ const DB = {
     const users = await DB.getUsers();
     return users.find(u => (u.username || '').toLowerCase() === String(username).toLowerCase()) || null;
   },
+  async getUserByDriverId(driverId) {
+    const users = await DB.getUsers();
+    return users.find(u => String(u.driver_id) === String(driverId)) || null;
+  },
   async addUser({ email, password, username, display_name, role }) {
     const result = await DB._callAdminUsersFn('create', { email, password, username, display_name, role });
     return result.id;
@@ -964,18 +968,14 @@ const DB = {
     await DB.setSetting('transport_trips_records', JSON.stringify(filtered));
   },
   async generateTripId() {
-    const prefix = 'ST-';
-    let maxSeq = 0;
-    try {
-      const trips = await DB.getTrips();
-      trips.forEach(t => {
-        if (t.trip_id && t.trip_id.startsWith(prefix)) {
-          const seq = parseInt(t.trip_id.replace(prefix, ''), 10) || 0;
-          if (seq > maxSeq) maxSeq = seq;
-        }
-      });
-    } catch(e) {}
-    return `${prefix}${String(maxSeq + 1).padStart(4, '0')}`;
+    // Atomic RPC (supabase_driver_app_migration.sql) — a client-side
+    // "scan visible trips, take max, add 1" approach (the old body of
+    // this function) mints colliding IDs once RLS restricts a driver
+    // session to only their own trips, since each driver's scan would
+    // only cover their own subset.
+    const { data, error } = await _sb.rpc('next_trip_id');
+    if (error) throw error;
+    return data;
   }
 };
 
