@@ -381,9 +381,21 @@ const DB = {
       email: u.email,
       username: meta.username || u.email,
       role: meta.role || 'user',
-      display_name: meta.display_name || meta.username || u.email,
-      driver_id: meta.driver_id || null
+      display_name: meta.display_name || meta.username || u.email
+      // driver_id is NOT in user_metadata — a driver login is linked via
+      // drivers.auth_user_id (set by admin-users.js), not a metadata field.
+      // app.js's enterAppWithSession() fills currentUser.driver_id in
+      // separately via DB.getCurrentDriverId() once role === 'driver' is known.
     };
+  },
+  // Resolves the drivers.id row linked to the CURRENTLY authenticated
+  // session (via drivers.auth_user_id), using the current_driver_id()
+  // Postgres function from supabase_driver_app_migration.sql. Returns null
+  // if this login isn't linked to any driver row.
+  async getCurrentDriverId() {
+    const { data, error } = await _sb.rpc('current_driver_id');
+    if (error) { console.error('current_driver_id failed:', error); return null; }
+    return data;
   },
 
   // ── User management — proxied through the admin-only Netlify function.

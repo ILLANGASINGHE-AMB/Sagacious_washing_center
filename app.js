@@ -72,6 +72,14 @@ async function enterAppWithSession(session) {
   currentUser = DB.sessionToCurrentUser(session);
   if (!currentUser) return false;
 
+  // Driver logins are linked via drivers.auth_user_id, not user_metadata —
+  // resolve it once here so isDriver() screens (Dashboard, Transport
+  // customer scoping) have currentUser.driver_id available immediately.
+  if (currentUser.role === 'driver') {
+    try { currentUser.driver_id = await DB.getCurrentDriverId(); }
+    catch (e) { console.error('getCurrentDriverId failed:', e); currentUser.driver_id = null; }
+  }
+
   document.getElementById('login-screen').style.display = 'none';
   const appEl = document.getElementById('app');
   appEl.style.display = 'flex';
