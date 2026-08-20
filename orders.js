@@ -37,6 +37,7 @@ async function renderOrders() {
       <span class="section-title">Orders</span>
       <div style="display:flex;gap:8px;flex-wrap:wrap;">
         ${canBulkAssign ? `<button id="orders-assign-driver-btn" class="btn btn-primary" style="display:none;" onclick="showBulkAssignDriverModal()"><i class="fas fa-user-tie"></i> Assign Driver (<span id="orders-selected-count">0</span>)</button>` : ''}
+        ${isAdmin() ? `<button id="orders-mark-delivered-btn" class="btn btn-secondary" style="display:none;color:#166534;" onclick="markOrdersDeliveredBulk(Array.from(ordersSelectedIds))"><i class="fas fa-truck-ramp-box"></i> Mark Delivered (<span id="orders-selected-count-2">0</span>)</button>` : ''}
         ${canAddOrders() ? `<button class="btn btn-primary" onclick="showAddOrderModal()"><i class="fas fa-plus"></i> New Order</button>` : ''}
       </div>
     </div>
@@ -259,6 +260,11 @@ function _updateOrdersAssignBar() {
   if (countEl) countEl.textContent = ordersSelectedIds.size;
   if (btn) btn.style.display = ordersSelectedIds.size > 0 ? 'inline-flex' : 'none';
 
+  const delBtn = document.getElementById('orders-mark-delivered-btn');
+  const delCountEl = document.getElementById('orders-selected-count-2');
+  if (delCountEl) delCountEl.textContent = ordersSelectedIds.size;
+  if (delBtn) delBtn.style.display = ordersSelectedIds.size > 0 ? 'inline-flex' : 'none';
+
   const rowChecks = document.querySelectorAll('.orders-row-check');
   const selectAll = document.getElementById('orders-select-all');
   if (selectAll) {
@@ -310,6 +316,28 @@ async function submitBulkAssignDriver() {
   }
 }
 
+// Driver-initiated self-assign from the "Available Orders" section of their
+// own Dashboard (newchanges2.md: "any driver can [take an] un-assigned
+// order and can deliver them") — reuses the same admin/staff bulk-assign
+// path (DB.assignDriverToOrders), just scoped to the logged-in driver and a
+// single order.
+function driverAssignOrderToSelf(orderId) {
+  if (!isDriver() || !currentUser?.driver_id) return toast('Driver login required', 'error');
+  confirmDialog('Assign this order to yourself for delivery?', async () => {
+    try {
+      await DB.assignDriverToOrders([orderId], currentUser.driver_id);
+      const order = await DB.getOrder(orderId);
+      const batchId = order ? order.batch_id : '#' + orderId;
+      await DB.logAction('Assign Driver', `Driver "${currentUser.display_name}" self-assigned order #${batchId}`, { order_id: orderId, batch_id: batchId, driver_id: currentUser.driver_id }, 'Order');
+      toast(`Order #${batchId} assigned to you`);
+      if (typeof renderDriverDashboard === 'function' && document.getElementById('driver-dashboard-page')) await renderDriverDashboard();
+    } catch (err) {
+      console.error('driverAssignOrderToSelf error:', err);
+      toast('Failed to assign order: ' + (err.message || err), 'error');
+    }
+  }, 'Assign to Me', false);
+}
+
 // Available to admin/staff from the Orders tab, and to the driver
 // themselves from their own Dashboard (see renderDriverDashboard in app.js).
 async function markOrderDelivered(orderId) {
@@ -344,6 +372,7 @@ function markOrdersDeliveredBulk(orderIds) {
       await DB.logAction('Mark Delivered', `Marked ${orderIds.length} order(s) [${batchIds.join(', ')}] as delivered`, { order_ids: orderIds, batch_ids: batchIds }, 'Order');
       toast(`${orderIds.length} order(s) marked delivered`);
       if (typeof driverSelectedOrderIds !== 'undefined') driverSelectedOrderIds.clear();
+      ordersSelectedIds.clear();
       if (document.getElementById('orders-table-body')) await _refreshOrdersTable();
       if (typeof renderDriverDashboard === 'function' && document.getElementById('driver-dashboard-page')) await renderDriverDashboard();
     } catch (err) {

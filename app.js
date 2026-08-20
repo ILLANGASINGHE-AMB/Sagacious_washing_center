@@ -196,16 +196,32 @@ function applyRoleSidebarRestrictions() {
 }
 
 function doLogout() {
-  confirmDialog('Are you sure you want to logout?', async () => {
-    if (currentUser) {
-      await DB.logAction('User Logout', `User "${currentUser.display_name}" logged out`, { username: currentUser.username }, 'User');
-    }
-    await DB.signOut();
+  confirmDialog('Are you sure you want to logout?', () => {
+    // Clearing currentUser and swapping to the login screen is purely local
+    // — it doesn't need the Supabase sign-out round trip to finish first.
+    // The old version awaited logAction() then signOut() before touching
+    // the DOM at all, so the app just sat frozen for however long that
+    // network call took (newchanges2.md: "Logout Button is not efficient").
+    // Flip the UI now; let sign-out + the audit log finish in the background.
+    const loggingOutUser = currentUser;
     currentUser = null;
+    // Reset navigation state so the NEXT login always re-renders from
+    // scratch — without this, initApp()'s "only navigate on first boot"
+    // guard (_hasNavigatedOnce) stayed true across the logout, so logging
+    // back in as a different role (e.g. driver after admin) skipped
+    // navigate('dashboard') entirely and left the previous user's page on
+    // screen (newchanges2.md).
+    _hasNavigatedOnce = false;
+    currentPage = 'dashboard';
     document.getElementById('login-user').value = '';
     document.getElementById('login-pass').value = '';
     document.getElementById('app').style.display    = 'none';
     document.getElementById('login-screen').style.display = 'flex';
+
+    DB.signOut().catch(e => console.error('signOut error:', e));
+    if (loggingOutUser) {
+      DB.logAction('User Logout', `User "${loggingOutUser.display_name}" logged out`, { username: loggingOutUser.username }, 'User').catch(() => {});
+    }
   });
 }
 
@@ -503,27 +519,43 @@ async function renderDriverDashboard() {
   const custMap = Object.fromEntries((customers || []).map(c => [c.id, c]));
   const drvMap = Object.fromEntries((drivers || []).map(d => [d.id, d]));
 
-  const myOrders = (allOrders || []).filter(o => String(o.driver_id) === String(driverId));
-  const availableOrders = (allOrders || []).filter(o => !o.driver_id);
-  const otherOrders = (allOrders || []).filter(o => o.driver_id != null && String(o.driver_id) !== String(driverId));
+  // Delivered orders drop off every driver-facing list entirely once
+  // delivered (newchanges2.md) — there's nothing left for a driver to do
+  // with them, so they'd just be clutter.
+  const nonDelivered = o => o.delivery_status !== 'delivered';
+  const myOrders = (allOrders || []).filter(o => String(o.driver_id) === String(driverId) && nonDelivered(o));
+  const availableOrders = (allOrders || []).filter(o => !o.driver_id && nonDelivered(o));
+  const otherOrders = (allOrders || []).filter(o => o.driver_id != null && String(o.driver_id) !== String(driverId) && nonDelivered(o));
 
   const custName = o => escapeHtml(custMap[o.customer_id] ? custMap[o.customer_id].hotel_name : getOrderCustomerName(o));
 
-  const myRows = myOrders.map(o => {
-    const isDelivered = o.delivery_status === 'delivered';
-    const statusLabel = isDelivered ? 'Delivered' : 'Out for Delivery';
-    return `<tr>
-      <td style="text-align:center;">${!isDelivered ? `<input type="checkbox" class="drv-row-check" data-order-id="${o.id}" ${driverSelectedOrderIds.has(o.id)?'checked':''} onchange="toggleDriverOrderSelection(${o.id},this.checked)"/>` : ''}</td>
+  const myRows = myOrders.map(o => `<tr>
+      <td style="text-align:center;"><input type="checkbox" class="drv-row-check" data-order-id="${o.id}" ${driverSelectedOrderIds.has(o.id)?'checked':''} onchange="toggleDriverOrderSelection(${o.id},this.checked)"/></td>
       <td><strong style="font-family:monospace;color:var(--primary);">${o.batch_id || '—'}</strong></td>
       <td>${custName(o)}</td>
       <td><strong>${formatCurrency(o.total_amount)}</strong></td>
       <td>${o.driver_assigned_at ? formatDate(o.driver_assigned_at) : '—'}</td>
-      <td>${statusBadge(statusLabel)}</td>
+      <td>${statusBadge('Out for Delivery')}</td>
       <td style="text-align:center;">
-        ${!isDelivered ? `<button class="btn btn-secondary btn-sm" onclick="markOrderDelivered(${o.id})"><i class="fas fa-check"></i> Mark Delivered</button>` : '—'}
+        <button class="btn btn-secondary btn-sm" onclick="markOrderDelivered(${o.id})"><i class="fas fa-check"></i> Mark Delivered</button>
       </td>
-    </tr>`;
-  }).join('');
+    </tr>`).join('');
+
+  // Available (unassigned) orders let ANY driver pick them up themselves —
+  // newchanges2.md: "any driver can un-assigned order and can deliver them".
+  // Self-assigning moves it into "Assigned to Me" above, where Mark
+  // Delivered becomes available.
+  const availableRows = availableOrders.map(o => `<tr>
+      <td><strong style="font-family:monospace;color:var(--primary);">${o.batch_id || '—'}</strong></td>
+      <td>${custName(o)}</td>
+      <td><strong>${formatCurrency(o.total_amount)}</strong></td>
+      <td style="text-align:center;">
+        <div style="display:inline-flex;gap:4px;">
+          <button class="btn btn-secondary btn-sm" onclick="viewOrderDetails(${o.id})"><i class="fas fa-eye"></i> Order Details</button>
+          <button class="btn btn-primary btn-sm" onclick="driverAssignOrderToSelf(${o.id})"><i class="fas fa-hand-holding"></i> Assign to Me</button>
+        </div>
+      </td>
+    </tr>`).join('');
 
   const viewOnlyRows = (list, extraCol) => list.map(o => `<tr>
       <td><strong style="font-family:monospace;color:var(--primary);">${o.batch_id || '—'}</strong></td>
@@ -534,8 +566,6 @@ async function renderDriverDashboard() {
         <button class="btn btn-secondary btn-sm" onclick="viewOrderDetails(${o.id})"><i class="fas fa-eye"></i> Order Details</button>
       </td>
     </tr>`).join('');
-
-  const outstandingCount = myOrders.filter(o => o.delivery_status !== 'delivered').length;
 
   contentEl.innerHTML = `
     <div id="driver-dashboard-page">
@@ -568,7 +598,7 @@ async function renderDriverDashboard() {
             <div style="background:#fef9c3;color:#92400e;width:38px;height:38px;border-radius:10px;display:flex;align-items:center;justify-content:center;"><i class="fas fa-boxes-stacked"></i></div>
           </div>
           <div class="value" style="color:#92400e;">${myOrders.length}</div>
-          <div class="sub">${outstandingCount} still out for delivery</div>
+          <div class="sub">Currently out for delivery</div>
         </div>
       </div>
 
@@ -597,7 +627,7 @@ async function renderDriverDashboard() {
         <div class="table-wrap">
           <table>
             <thead><tr><th>Order ID</th><th>Customer Name</th><th>Order Amount</th><th style="text-align:center;">Action</th></tr></thead>
-            <tbody>${viewOnlyRows(availableOrders) || `<tr><td colspan="4" style="text-align:center;padding:32px;color:var(--text-muted);">No unassigned orders</td></tr>`}</tbody>
+            <tbody>${availableRows || `<tr><td colspan="4" style="text-align:center;padding:32px;color:var(--text-muted);">No unassigned orders</td></tr>`}</tbody>
           </table>
         </div>
       </div>
