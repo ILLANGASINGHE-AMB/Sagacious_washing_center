@@ -194,7 +194,8 @@ async function _refreshOrdersTable() {
               <button class="btn btn-secondary btn-sm" onclick="viewOrderDetails(${o.id})" title="View Order"><i class="fas fa-eye"></i> View</button>
               <span class="order-extra-actions" style="${extraStyle}">
                 ${canEditOrders() ? `<button class="btn btn-primary btn-sm" onclick="showEditOrderModal(${o.id})"><i class="fas fa-edit"></i> Edit</button>` : ''}
-                ${canMarkReturned() ? `<button class="btn btn-secondary btn-sm" onclick="showMarkReturnedModal(${o.id})" style="color:#7c2d12;" title="Record item(s) the customer handed back"><i class="fas fa-rotate-left"></i> Returned</button>` : ''}
+                ${canEditOrders() ? `<button class="btn btn-secondary btn-sm" onclick="showMarkFlagModal(${o.id},'pending')" style="color:#92400e;" title="Tick item(s) to keep as pending"><i class="fas fa-hourglass-half"></i> Pending</button>` : ''}
+                ${canMarkReturned() ? `<button class="btn btn-secondary btn-sm" onclick="showMarkFlagModal(${o.id},'returned')" style="color:#7c2d12;" title="Record item(s) the customer handed back"><i class="fas fa-rotate-left"></i> Returned</button>` : ''}
                 <button class="btn btn-success btn-sm" onclick="printInvoiceByOrder(${o.id})" style="background:#10b981;border-color:#10b981;color:#fff;"><i class="fas fa-print"></i> Print</button>
                 ${isAdmin() ? `<button class="btn btn-danger btn-sm" onclick="deleteOrderConfirm(${o.id})"><i class="fas fa-trash"></i> Delete</button>` : ''}
               </span>
@@ -692,8 +693,9 @@ async function showAddOrderModal() {
 
     <!-- Outstanding Pending/Returned items for this customer -->
     <div id="ao-open-flags-wrap" style="display:none;margin-bottom:14px;padding:12px 14px;background:#fffbeb;border:1px solid #fde68a;border-radius:10px;">
-      <div style="font-weight:700;font-size:0.85em;color:#92400e;margin-bottom:8px;"><i class="fas fa-triangle-exclamation"></i> Outstanding pending/returned items for this customer — check any this order is delivering/collecting:</div>
-      <div id="ao-open-flags-list" style="display:flex;flex-direction:column;gap:6px;"></div>
+      <div style="font-weight:700;font-size:0.85em;color:#92400e;margin-bottom:2px;"><i class="fas fa-triangle-exclamation"></i> This customer has outstanding pending/returned items — tick any this order is delivering/collecting:</div>
+      <div style="font-size:0.78em;color:#92400e;opacity:0.85;margin-bottom:8px;">Ticking an item just marks it resolved by this order — it is not re-billed and does not affect the total below.</div>
+      <div id="ao-open-flags-list" style="display:grid;grid-template-columns:repeat(auto-fill,minmax(230px,1fr));gap:10px;"></div>
     </div>
 
     <!-- Items -->
@@ -1153,19 +1155,16 @@ async function showEditOrderModal(id){
     const curSvcItem = item.service_type || 'Wash & Press';
     const curPrice   = item.price || 0;
     const svcOpts = ['Dry Clean','Wash & Press','Wash & Dry'].map(s=>`<option value="${s}" ${s===curSvcItem?'selected':''}>${s}</option>`).join('');
-    return `<div class="eo-item-row" style="display:grid;grid-template-columns:2.2fr 1.4fr 0.7fr 1.1fr auto auto;gap:8px;margin-bottom:6px;align-items:center;">
+    return `<div class="eo-item-row" style="display:grid;grid-template-columns:2.5fr 1.6fr 0.8fr 1.2fr auto;gap:8px;margin-bottom:6px;align-items:center;">
       <div class="item-picker-wrap" style="position:relative;" data-selected-id="${item.catalog_item_id||''}" data-dry-clean="${dryCleanP}" data-wash-press="${washPressP}" data-wash-dry="${washDryP}">
         <input class="form-input item-picker-input" value="${label}" autocomplete="off" placeholder="Type to search item..."
           oninput="filterEditItemDropdown(this)" onfocus="showEditItemDropdown(this)" onblur="setTimeout(()=>hideEditItemDropdown(this),200)" style="width:100%;"/>
         <div class="item-picker-dropdown" style="display:none;position:absolute;top:100%;left:0;right:0;z-index:999;background:var(--card-bg);border:1px solid var(--border);border-radius:8px;box-shadow:0 8px 24px rgba(0,0,0,0.12);max-height:200px;overflow-y:auto;margin-top:2px;"></div>
-        ${pendingQty > 0 ? `<div style="margin-top:3px;font-size:0.72em;font-weight:700;color:#92400e;"><span style="background:#facc15;padding:1px 6px;border-radius:4px;">P</span> ${pendingQty} kept pending</div>` : ''}
+        ${pendingQty > 0 ? `<div style="margin-top:3px;font-size:0.72em;font-weight:700;color:#92400e;"><span style="background:#facc15;padding:1px 6px;border-radius:4px;">P</span> ${pendingQty} kept pending — use the "Pending" button on the Orders list to change this</div>` : ''}
       </div>
       <select class="form-input form-select eo-svc" onchange="onEoSvcChange(this)" style="font-size:0.82em;padding:6px 8px;">${svcOpts}</select>
       <input type="number" class="form-input eo-qty" value="${item.quantity}" min="1" oninput="calcEditOrderTotal()"/>
       <input type="number" class="form-input eo-price" value="${curPrice}" min="0" oninput="calcEditOrderTotal()" placeholder="Price"/>
-      <button class="btn btn-secondary btn-icon btn-sm" title="Keep some of this item as pending"
-        data-order-id="${order.id}" data-customer-id="${order.customer_id||''}" data-order-item-id="${item.id}" data-item-name="${label}" data-max-qty="${item.quantity}"
-        onclick="openFlagPendingModal(this)" style="color:#92400e;"><i class="fas fa-hourglass-half"></i></button>
       <button class="btn btn-danger btn-icon btn-sm" onclick="this.closest('.eo-item-row').remove();calcEditOrderTotal()"><i class="fas fa-trash"></i></button>
     </div>`;
   }).join('');
@@ -1199,12 +1198,11 @@ async function showEditOrderModal(id){
         <button class="btn btn-secondary btn-sm" onclick="addEditOrderItemRow()"><i class="fas fa-plus"></i> Add Row</button>
       </div>
     </div>
-    <div style="display:grid;grid-template-columns:2.2fr 1.4fr 0.7fr 1.1fr auto auto;gap:8px;margin-bottom:4px;padding:0 2px;">
+    <div style="display:grid;grid-template-columns:2.5fr 1.6fr 0.8fr 1.2fr auto;gap:8px;margin-bottom:4px;padding:0 2px;">
       <span class="form-label">Item</span>
       <span class="form-label">Service Type</span>
       <span class="form-label">Qty</span>
       <span class="form-label">Price (LKR)</span>
-      <span></span>
       <span></span>
     </div>
     <div id="eo-items-container">${itemRows}</div>
@@ -1233,117 +1231,79 @@ async function showEditOrderModal(id){
 }
 
 // ─────────────────────────────────────────────
-// PENDING ITEMS — "Keep as Pending" (order_item_flags ledger)
-// Fires immediately (its own DB.flagOrderItems call), independent of the
-// edit-order modal's Save button — editing an order deletes and
-// re-inserts all its order_items (see saveEditOrder/updateOrderWithItems
-// above), so a flag needs to be created against the item's REAL current
-// id at the moment staff click it, not queued up as part of a later save.
+// MARK PENDING / MARK RETURNED — order_item_flags ledger, reached from a
+// standalone button on the Orders list (and the bill preview) instead of
+// buried inside Edit Order. Tick any number of items and set how many of
+// each, in one submission — no order-item-by-order-item single prompt,
+// and no need to open Edit at all. Fires immediately as its own
+// DB.flagOrderItems call, independent of any order Save.
+//
+// "Pending" is gated to canEditOrders() (an office/admin decision made
+// during processing, per NewChange.md); "Returned" is gated to the wider
+// canMarkReturned() so drivers get this one exception to the "drivers
+// cannot edit orders" rule (Solution.md §4.2) without gaining any other
+// order-edit capability — either way this only ever inserts a ledger row,
+// never touches orders/order_items.
 // ─────────────────────────────────────────────
-function openFlagPendingModal(btn){
-  const orderId=parseInt(btn.dataset.orderId);
-  const customerId=parseInt(btn.dataset.customerId)||null;
-  const orderItemId=parseInt(btn.dataset.orderItemId);
-  const itemName=btn.dataset.itemName;
-  const maxQty=parseFloat(btn.dataset.maxQty)||1;
-  createModal('flag-pending-modal','Keep as Pending',`
-    <div style="margin-bottom:14px;font-size:0.92em;color:var(--text-muted);">
-      How many of <strong style="color:var(--text);">${escapeHtml(itemName)}</strong> should be kept back as pending (not delivered on this trip)?
-    </div>
-    <div class="form-group">
-      <label class="form-label">Quantity (max ${maxQty})</label>
-      <input type="number" class="form-input" id="fp-qty" value="1" min="1" max="${maxQty}"/>
-    </div>
-    <div style="display:flex;gap:10px;justify-content:flex-end;margin-top:16px;">
-      <button class="btn btn-secondary" onclick="hideModal('flag-pending-modal')">Cancel</button>
-      <button class="btn btn-primary" id="fp-submit-btn"><i class="fas fa-hourglass-half"></i> Mark Pending</button>
-    </div>`);
-  showModal('flag-pending-modal');
-  document.getElementById('fp-submit-btn').onclick=()=>submitFlagPending(orderId,customerId,orderItemId,itemName,maxQty);
-  setTimeout(()=>document.getElementById('fp-qty')?.focus(),80);
-}
-
-async function submitFlagPending(orderId,customerId,orderItemId,itemName,maxQty){
-  const qty=parseFloat(document.getElementById('fp-qty')?.value)||0;
-  if(qty<=0||qty>maxQty) return toast(`Enter a quantity between 1 and ${maxQty}`,'error');
-  const btn=document.getElementById('fp-submit-btn');
-  if(btn) btn.disabled=true;
-  try {
-    await DB.flagOrderItems(orderId,customerId,[{order_item_id:orderItemId,item_name:itemName,quantity:qty,flag_type:'pending'}]);
-    await DB.logAction('Mark Pending',`Kept ${qty} × "${itemName}" as pending on order`,{order_id:orderId,order_item_id:orderItemId,item_name:itemName,quantity:qty},'Order');
-    hideModal('flag-pending-modal');
-    toast(`${qty} × ${itemName} marked pending`);
-    if(document.getElementById('edit-order-modal')) showEditOrderModal(orderId);
-    refreshCustomerDetailIfOpen(customerId);
-  } catch(err){
-    console.error('flag pending error:',err);
-    toast('Failed to mark item pending: '+(err.message||err),'error');
-  } finally {
-    if(btn) btn.disabled=false;
-  }
-}
-
-// ─────────────────────────────────────────────
-// RETURNED ITEMS — "Mark Returned" (order_item_flags ledger, flag_type
-// 'returned'). Gated by canMarkReturned() rather than canEditOrders(): it
-// only inserts a ledger row, never touches orders/order_items, so drivers
-// get this one exception to the "drivers cannot edit orders" rule
-// (Solution.md §4.2) without gaining any other order-edit capability.
-// Multiple items can be checked off in one go, matching how a driver
-// visit can hand back several things at once.
-// ─────────────────────────────────────────────
-async function showMarkReturnedModal(orderId){
-  if(!canMarkReturned()) return toast('Permission required to mark items returned','error');
+async function showMarkFlagModal(orderId,flagType){
+  const allowed = flagType==='pending' ? canEditOrders() : canMarkReturned();
+  if(!allowed) return toast('Permission required','error');
   const [order,items]=await Promise.all([DB.getOrder(orderId),DB.getOrderItems(orderId)]);
   if(!order) return toast('Order not found','error');
   if(!items.length) return toast('This order has no items','error');
-  createModal('mark-returned-modal',`Mark Returned Items — ${escapeHtml(order.batch_id||'')}`,`
-    <div style="margin-bottom:14px;font-size:0.9em;color:var(--text-muted);">Check any items the customer handed back, and how many.</div>
+  const isPending = flagType==='pending';
+  const title = isPending ? 'Mark Items Pending' : 'Mark Returned Items';
+  const verb = isPending ? 'should be kept back as pending (not delivered yet)' : 'the customer handed back';
+  const icon = isPending ? 'fa-hourglass-half' : 'fa-rotate-left';
+  createModal('mark-flag-modal',`${title} — ${escapeHtml(order.batch_id||'')}`,`
+    <div style="margin-bottom:14px;font-size:0.9em;color:var(--text-muted);">Tick any items ${verb}, and how many.</div>
     <div style="display:flex;flex-direction:column;gap:8px;">
       ${items.map(i=>`
         <label style="display:flex;align-items:center;gap:8px;padding:8px 10px;border:1px solid var(--border);border-radius:8px;">
-          <input type="checkbox" class="mr-check" data-item-id="${i.id}" data-item-name="${escapeHtml(i.item_name)}" data-max-qty="${i.quantity}" onchange="toggleMrQtyInput(this)"/>
+          <input type="checkbox" class="mf-check" data-item-id="${i.id}" data-item-name="${escapeHtml(i.item_name)}" data-max-qty="${i.quantity}" onchange="toggleMfQtyInput(this)"/>
           <span style="flex:1;">${escapeHtml(i.item_name)} <span style="color:var(--text-muted);">(qty on order: ${i.quantity})</span></span>
-          <input type="number" class="mr-qty" data-item-id="${i.id}" value="${i.quantity}" min="1" max="${i.quantity}" disabled style="width:70px;padding:4px 6px;border-radius:6px;border:1px solid var(--border);"/>
+          <input type="number" class="mf-qty" data-item-id="${i.id}" value="${i.quantity}" min="1" max="${i.quantity}" disabled style="width:70px;padding:4px 6px;border-radius:6px;border:1px solid var(--border);"/>
         </label>`).join('')}
     </div>
     <div style="display:flex;gap:10px;justify-content:flex-end;margin-top:16px;">
-      <button class="btn btn-secondary" onclick="hideModal('mark-returned-modal')">Cancel</button>
-      <button class="btn btn-primary" id="mr-submit-btn"><i class="fas fa-rotate-left"></i> Mark Returned</button>
+      <button class="btn btn-secondary" onclick="hideModal('mark-flag-modal')">Cancel</button>
+      <button class="btn btn-primary" id="mf-submit-btn"><i class="fas ${icon}"></i> ${title}</button>
     </div>`);
-  showModal('mark-returned-modal');
-  document.getElementById('mr-submit-btn').onclick=()=>submitMarkReturned(orderId,order.customer_id);
+  showModal('mark-flag-modal');
+  document.getElementById('mf-submit-btn').onclick=()=>submitMarkFlag(orderId,order.customer_id,flagType);
 }
 
-function toggleMrQtyInput(checkbox){
-  const qtyInput=document.querySelector(`.mr-qty[data-item-id="${checkbox.dataset.itemId}"]`);
+function toggleMfQtyInput(checkbox){
+  const qtyInput=document.querySelector(`.mf-qty[data-item-id="${checkbox.dataset.itemId}"]`);
   if(qtyInput) qtyInput.disabled=!checkbox.checked;
 }
 
-async function submitMarkReturned(orderId,customerId){
+async function submitMarkFlag(orderId,customerId,flagType){
   const flags=[];
-  document.querySelectorAll('.mr-check:checked').forEach(cb=>{
+  document.querySelectorAll('.mf-check:checked').forEach(cb=>{
     const itemId=cb.dataset.itemId;
     const maxQty=parseFloat(cb.dataset.maxQty)||0;
-    const qtyInput=document.querySelector(`.mr-qty[data-item-id="${itemId}"]`);
+    const qtyInput=document.querySelector(`.mf-qty[data-item-id="${itemId}"]`);
     let qty=parseFloat(qtyInput?.value)||maxQty;
     if(qty<=0) qty=maxQty;
     if(qty>maxQty) qty=maxQty;
-    flags.push({order_item_id:parseInt(itemId),item_name:cb.dataset.itemName,quantity:qty,flag_type:'returned'});
+    flags.push({order_item_id:parseInt(itemId),item_name:cb.dataset.itemName,quantity:qty,flag_type:flagType});
   });
   if(!flags.length) return toast('Select at least one item','error');
-  const btn=document.getElementById('mr-submit-btn');
+  const btn=document.getElementById('mf-submit-btn');
   if(btn) btn.disabled=true;
   try {
     await DB.flagOrderItems(orderId,customerId,flags);
-    await DB.logAction('Mark Returned',`Marked ${flags.length} item type(s) as returned on order`,{order_id:orderId,flags},'Order');
-    hideModal('mark-returned-modal');
-    toast('Item(s) marked returned');
+    const label = flagType==='pending' ? 'Mark Pending' : 'Mark Returned';
+    await DB.logAction(label,`Marked ${flags.length} item type(s) as ${flagType} on order`,{order_id:orderId,flags},'Order');
+    hideModal('mark-flag-modal');
+    toast(`Item(s) marked ${flagType}`);
     if(document.getElementById('orders-table-body')) _refreshOrdersTable();
+    if(document.getElementById('edit-order-modal')) showEditOrderModal(orderId);
     refreshCustomerDetailIfOpen(customerId);
   } catch(err){
-    console.error('mark returned error:',err);
-    toast('Failed to mark items returned: '+(err.message||err),'error');
+    console.error('mark flag error:',err);
+    toast('Failed to update items: '+(err.message||err),'error');
   } finally {
     if(btn) btn.disabled=false;
   }
@@ -1360,7 +1320,7 @@ function filterEditItemDropdown(input){
 async function addEditOrderItemRow(){
   const container=document.getElementById('eo-items-container');
   const row=document.createElement('div'); row.className='eo-item-row';
-  row.style.cssText='display:grid;grid-template-columns:2.2fr 1.4fr 0.7fr 1.1fr auto auto;gap:8px;margin-bottom:6px;align-items:center;';
+  row.style.cssText='display:grid;grid-template-columns:2.5fr 1.6fr 0.8fr 1.2fr auto;gap:8px;margin-bottom:6px;align-items:center;';
   row.innerHTML=`<div class="item-picker-wrap" style="position:relative;" data-selected-id="" data-dry-clean="0" data-wash-press="0" data-wash-dry="0">
     <input class="form-input item-picker-input" value="" autocomplete="off" placeholder="Type to search item..."
       oninput="filterEditItemDropdown(this)" onfocus="showEditItemDropdown(this)" onblur="setTimeout(()=>hideEditItemDropdown(this),200)" style="width:100%;"/>
@@ -1373,7 +1333,6 @@ async function addEditOrderItemRow(){
   </select>
   <input type="number" class="form-input eo-qty" value="1" min="1" oninput="calcEditOrderTotal()"/>
   <input type="number" class="form-input eo-price" value="0" min="0" oninput="calcEditOrderTotal()" placeholder="Price"/>
-  <span title="Save this order first to be able to keep a new item as pending"></span>
   <button class="btn btn-danger btn-icon btn-sm" onclick="this.closest('.eo-item-row').remove();calcEditOrderTotal()"><i class="fas fa-trash"></i></button>`;
   container.appendChild(row);
 }
@@ -1648,21 +1607,37 @@ async function loadOpenFlagsForAddOrder(customerId) {
   try { flags = await DB.getOpenFlagsForCustomer(customerId); } catch (e) { flags = []; }
   if (!flags.length) { wrap.style.display = 'none'; list.innerHTML = ''; return; }
 
+  // One card per source order, per your "show them with cards with order
+  // IDs" ask — groups multiple flags from the same old order together
+  // instead of one flat list.
   const orderIds = [...new Set(flags.map(f => f.order_id))];
   const sourceOrders = await Promise.all(orderIds.map(oid => DB.getOrder(oid).catch(() => null)));
-  const batchMap = {};
-  sourceOrders.forEach(o => { if (o) batchMap[o.id] = o.batch_id; });
+  const orderMap = {};
+  sourceOrders.forEach(o => { if (o) orderMap[o.id] = o; });
+  const byOrder = {};
+  flags.forEach(f => { (byOrder[f.order_id] = byOrder[f.order_id] || []).push(f); });
 
   wrap.style.display = 'block';
-  list.innerHTML = flags.map(f => `
-    <label style="display:flex;align-items:center;gap:8px;font-size:0.85em;background:#fff;padding:6px 10px;border-radius:8px;border:1px solid #fde68a;">
-      <input type="checkbox" class="ao-flag-check" data-flag-id="${f.id}" data-max-qty="${f.quantity}" onchange="toggleAoFlagQtyInput(this)"/>
-      <span style="flex:1;">
-        <span style="font-weight:700;color:${f.flag_type === 'pending' ? '#92400e' : '#7c2d12'};text-transform:capitalize;">${f.flag_type}</span>:
-        ${escapeHtml(f.item_name)} × ${f.quantity} <span style="color:var(--text-muted);">(order ${escapeHtml(batchMap[f.order_id] || ('#' + f.order_id))})</span>
-      </span>
-      <input type="number" class="ao-flag-qty" data-flag-id="${f.id}" value="${f.quantity}" min="1" max="${f.quantity}" disabled style="width:64px;padding:4px 6px;border-radius:6px;border:1px solid var(--border);"/>
-    </label>`).join('');
+  list.innerHTML = Object.keys(byOrder).map(orderId => {
+    const o = orderMap[orderId];
+    return `<div style="background:#fff;border:1px solid #fde68a;border-radius:10px;padding:10px 12px;">
+      <div style="font-weight:700;font-size:0.82em;color:#78350f;margin-bottom:8px;">
+        <i class="fas fa-box"></i> Order ${escapeHtml(o?.batch_id || ('#' + orderId))}
+        <span style="font-weight:400;color:var(--text-muted);margin-left:4px;">${o ? formatDate(o.pickup_date) : ''}</span>
+      </div>
+      <div style="display:flex;flex-direction:column;gap:6px;">
+        ${byOrder[orderId].map(f => `
+          <label style="display:flex;align-items:center;gap:8px;font-size:0.85em;">
+            <input type="checkbox" class="ao-flag-check" data-flag-id="${f.id}" data-max-qty="${f.quantity}" onchange="toggleAoFlagQtyInput(this)"/>
+            <span style="flex:1;">
+              <span style="font-weight:700;color:${f.flag_type === 'pending' ? '#92400e' : '#7c2d12'};text-transform:capitalize;">${f.flag_type}</span>:
+              ${escapeHtml(f.item_name)} × ${f.quantity}
+            </span>
+            <input type="number" class="ao-flag-qty" data-flag-id="${f.id}" value="${f.quantity}" min="1" max="${f.quantity}" disabled style="width:58px;padding:3px 5px;border-radius:6px;border:1px solid var(--border);"/>
+          </label>`).join('')}
+      </div>
+    </div>`;
+  }).join('');
 }
 
 function toggleAoFlagQtyInput(checkbox) {
