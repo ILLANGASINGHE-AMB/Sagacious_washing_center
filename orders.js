@@ -325,6 +325,28 @@ async function markOrderDelivered(orderId) {
   }, 'Mark Delivered', false);
 }
 
+// Bulk version for the driver dashboard's checkbox-select "Assigned to Me"
+// table (newchanges2.md) — same underlying DB.markOrderDelivered call as the
+// single-order action above, looped over the ticked rows.
+function markOrdersDeliveredBulk(orderIds) {
+  if (!orderIds || !orderIds.length) return;
+  confirmDialog(`Mark ${orderIds.length} order(s) as delivered?`, async () => {
+    try {
+      for (const id of orderIds) {
+        await DB.markOrderDelivered(id);
+      }
+      await DB.logAction('Mark Delivered', `Marked ${orderIds.length} order(s) as delivered`, { order_ids: orderIds }, 'Order');
+      toast(`${orderIds.length} order(s) marked delivered`);
+      if (typeof driverSelectedOrderIds !== 'undefined') driverSelectedOrderIds.clear();
+      if (document.getElementById('orders-table-body')) await _refreshOrdersTable();
+      if (typeof renderDriverDashboard === 'function' && document.getElementById('driver-dashboard-page')) await renderDriverDashboard();
+    } catch (err) {
+      console.error('markOrdersDeliveredBulk error:', err);
+      toast('Failed to mark delivered: ' + (err.message || err), 'error');
+    }
+  }, 'Mark Delivered', false);
+}
+
 function changeOrdersPage(p){ordersPage=p;renderOrders();}
 function toggleOrdersFilter(){
   const p=document.getElementById('orders-filter-panel');
@@ -1276,7 +1298,7 @@ async function showEditOrderModal(id){
         <input class="form-input item-picker-input" value="${label}" autocomplete="off" placeholder="Type to search item..."
           oninput="filterEditItemDropdown(this)" onfocus="showEditItemDropdown(this)" onblur="setTimeout(()=>hideEditItemDropdown(this),200)" style="width:100%;"/>
         <div class="item-picker-dropdown" style="display:none;position:absolute;top:100%;left:0;right:0;z-index:999;background:var(--card-bg);border:1px solid var(--border);border-radius:8px;box-shadow:0 8px 24px rgba(0,0,0,0.12);max-height:200px;overflow-y:auto;margin-top:2px;"></div>
-        ${pendingQty > 0 ? `<div style="margin-top:3px;font-size:0.72em;font-weight:700;color:#92400e;"><span style="background:#facc15;padding:1px 6px;border-radius:4px;">P</span> ${pendingQty} kept pending — use the "Pending" button on the Orders list to change this</div>` : ''}
+        ${pendingQty > 0 ? `<div style="margin-top:3px;font-size:0.72em;font-weight:700;color:#92400e;"><span style="background:#facc15;padding:1px 6px;border-radius:4px;">P</span> ${pendingQty}</div>` : ''}
       </div>
       <select class="form-input form-select eo-svc" onchange="onEoSvcChange(this)" style="font-size:0.82em;padding:6px 8px;">${svcOpts}</select>
       <input type="number" class="form-input eo-qty" value="${item.quantity}" min="1" oninput="calcEditOrderTotal()"/>
@@ -1378,7 +1400,7 @@ async function showMarkFlagModal(orderId,flagType){
         <label style="display:flex;align-items:center;gap:8px;padding:8px 10px;border:1px solid var(--border);border-radius:8px;">
           <input type="checkbox" class="mf-check" data-item-id="${i.id}" data-item-name="${escapeHtml(i.item_name)}" data-max-qty="${i.quantity}" onchange="toggleMfQtyInput(this)"/>
           <span style="flex:1;">${escapeHtml(i.item_name)} <span style="color:var(--text-muted);">(qty on order: ${i.quantity})</span></span>
-          <input type="number" class="mf-qty" data-item-id="${i.id}" value="${i.quantity}" min="1" max="${i.quantity}" disabled style="width:70px;padding:4px 6px;border-radius:6px;border:1px solid var(--border);"/>
+          <input type="number" class="mf-qty" data-item-id="${i.id}" value="" placeholder="Qty" min="1" max="${i.quantity}" disabled style="width:70px;padding:4px 6px;border-radius:6px;border:1px solid var(--border);"/>
         </label>`).join('')}
     </div>
     <div style="display:flex;gap:10px;justify-content:flex-end;margin-top:16px;">

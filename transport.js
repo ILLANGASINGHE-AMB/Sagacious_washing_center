@@ -8,6 +8,7 @@ const TransportModule = {
   selectedStatsMonth: null, // Stores selected 'YYYY-MM' month string
   tripFilter: 'ongoing', // 'ongoing' | 'completed'
   _startTripAllTrips: [],
+  _startTripVehicles: [],
 
   async init() {
     this.renderLayout();
@@ -248,6 +249,15 @@ const TransportModule = {
           <div class="text-[10px] text-slate-400">Trip Active</div>
         `;
 
+        // Admin can override the KM range on any trip — ongoing or
+        // completed (newchanges2.md) — separate from the driver-facing
+        // Start/End Trip flow which stays auto-calibrated/locked.
+        const editKmBtn = isAdmin() ? `
+          <button onclick="TransportModule.openEditKmModal('${t.id}')" class="px-2 py-1 text-amber-600 hover:bg-amber-50 dark:hover:bg-amber-950/30 rounded-lg text-xs font-medium">
+            <i class="fa-solid fa-gauge-high"></i> Edit KM
+          </button>
+        ` : '';
+
         let actionButtons = '';
         if (!isCompleted) {
           if (canEditTransport()) {
@@ -258,12 +268,14 @@ const TransportModule = {
               <button onclick="TransportModule.openEndTripModal('${t.id}')" class="px-2.5 py-1 bg-emerald-600 hover:bg-emerald-700 text-white rounded-lg text-xs font-bold flex items-center gap-1 shadow-sm">
                 <i class="fa-solid fa-flag-checkered"></i> End Trip
               </button>
+              ${editKmBtn}
             `;
           } else {
             actionButtons = `
               <button onclick="TransportModule.viewTripDetails('${t.id}')" class="px-2 py-1 text-slate-600 hover:bg-slate-100 dark:hover:bg-slate-700 rounded-lg text-xs font-medium">
                 <i class="fa-solid fa-eye"></i> Details
               </button>
+              ${editKmBtn}
             `;
           }
         } else {
@@ -271,6 +283,7 @@ const TransportModule = {
             <button onclick="TransportModule.viewTripDetails('${t.id}')" class="px-2 py-1 text-slate-600 hover:bg-slate-100 dark:hover:bg-slate-700 rounded-lg text-xs font-medium">
               <i class="fa-solid fa-eye"></i> Details
             </button>
+            ${editKmBtn}
             ${canDelete() ? `
               <button onclick="TransportModule.deleteTrip('${t.id}')" class="px-2 py-1 text-rose-500 hover:bg-rose-50 dark:hover:bg-rose-950/30 rounded-lg text-xs font-medium">
                 <i class="fa-solid fa-trash-can"></i>
@@ -379,6 +392,7 @@ const TransportModule = {
     ]);
 
     this._startTripAllTrips = trips || [];
+    this._startTripVehicles = vehicles || [];
 
     // A driver/vehicle already on an "In Progress" trip must not be selectable,
     // even if their status field is somehow out of sync — one active trip at a time.
@@ -492,10 +506,15 @@ const TransportModule = {
       kmInput.classList.add('bg-slate-100', 'dark:bg-slate-700', 'cursor-not-allowed');
       if (kmHint) kmHint.textContent = `Auto-calibrated from this vehicle's last trip end KM (${lastFinalKm} KM). Locked — cannot be edited.`;
     } else {
-      kmInput.value = 0;
+      // No prior trips for this vehicle — fall back to the odometer reading
+      // recorded when the vehicle was added/edited in the Vehicles tab
+      // (newchanges2.md: not every vehicle starts at 0km).
+      const vehicle = (this._startTripVehicles || []).find(v => String(v.id) === String(vehicleId));
+      const initialKm = vehicle ? (parseFloat(vehicle.initial_km) || 0) : 0;
+      kmInput.value = initialKm;
       kmInput.readOnly = false;
       kmInput.classList.remove('bg-slate-100', 'dark:bg-slate-700', 'cursor-not-allowed');
-      if (kmHint) kmHint.textContent = `No previous trips recorded for this vehicle yet — enter the current odometer reading.`;
+      if (kmHint) kmHint.textContent = `No previous trips for this vehicle — pre-filled from its registered odometer reading (${initialKm} KM). Editable if needed.`;
     }
   },
 
@@ -1015,6 +1034,94 @@ const TransportModule = {
     `;
 
     document.body.insertAdjacentHTML('beforeend', html);
+  },
+
+  // Admin-only KM override (newchanges2.md) — lets admin correct the
+  // starting/end odometer readings on any trip, ongoing or completed. The
+  // driver-facing Start/End Trip forms stay locked/auto-calibrated; this is
+  // a separate, admin-gated path. Since a vehicle's next trip always derives
+  // its Starting KM live from this same vehicle's last trip final_km (see
+  // onStartTripVehicleChange), editing final_km here automatically
+  // recalibrates whatever trip gets started next for that vehicle.
+  async openEditKmModal(tripDbId) {
+    if (!isAdmin()) return showToast('Admin permission required to edit KM readings', 'error');
+    const trip = await DB.getTrip(tripDbId);
+    if (!trip) return;
+
+    const hasEnded = trip.final_km !== null && trip.final_km !== undefined;
+
+    const html = `
+      <div id="edit-km-modal" class="fixed inset-0 z-50 flex items-center justify-center p-4 bg-slate-900/60 backdrop-blur-sm animate-fade-in">
+        <div class="bg-white dark:bg-slate-800 rounded-2xl max-w-sm w-full p-6 shadow-xl border border-slate-200 dark:border-slate-700 space-y-4">
+          <div class="flex items-center justify-between border-b border-slate-200 dark:border-slate-700 pb-3">
+            <h3 class="text-lg font-bold text-slate-800 dark:text-white flex items-center gap-2">
+              <i class="fa-solid fa-gauge-high text-amber-600"></i> Edit KM Range (${trip.trip_id})
+            </h3>
+            <button onclick="document.getElementById('edit-km-modal').remove()" class="text-slate-400 hover:text-slate-600 text-lg">
+              <i class="fa-solid fa-xmark"></i>
+            </button>
+          </div>
+
+          <form onsubmit="TransportModule.saveEditKm(event, '${trip.id}')" class="space-y-4 text-left">
+            <div>
+              <label class="block text-xs font-bold text-slate-700 dark:text-slate-300 mb-1">Starting KM *</label>
+              <input type="number" step="0.1" id="ek-starting-km" value="${trip.starting_km}" required class="w-full px-3 py-2 text-xs bg-white dark:bg-slate-700 rounded-xl text-slate-800 dark:text-white border border-slate-300 dark:border-slate-600 font-bold" />
+              <p class="text-[10px] text-amber-600 mt-1"><i class="fa-solid fa-triangle-exclamation"></i> Editing this only re-calibrates this trip — it does not shift other trips already recorded for this vehicle.</p>
+            </div>
+            <div>
+              <label class="block text-xs font-bold text-slate-700 dark:text-slate-300 mb-1">End KM ${hasEnded ? '*' : '(trip still in progress)'}</label>
+              <input type="number" step="0.1" id="ek-final-km" value="${hasEnded ? trip.final_km : ''}" ${hasEnded ? 'required' : ''} class="w-full px-3 py-2 text-xs bg-white dark:bg-slate-700 rounded-xl text-slate-800 dark:text-white border border-slate-300 dark:border-slate-600 font-bold" />
+            </div>
+            <div class="flex items-center justify-end gap-2 pt-2 border-t border-slate-200 dark:border-slate-700">
+              <button type="button" onclick="document.getElementById('edit-km-modal').remove()" class="px-4 py-2 text-xs font-semibold text-slate-600 hover:bg-slate-100 rounded-xl">Cancel</button>
+              <button type="submit" class="px-4 py-2 text-xs font-bold bg-amber-600 hover:bg-amber-700 text-white rounded-xl shadow-sm flex items-center gap-1.5">
+                <i class="fa-solid fa-save"></i> Save
+              </button>
+            </div>
+          </form>
+        </div>
+      </div>
+    `;
+
+    document.body.insertAdjacentHTML('beforeend', html);
+  },
+
+  async saveEditKm(e, tripDbId) {
+    e.preventDefault();
+    const btn = e.target.querySelector('button[type="submit"]');
+    if (btn && btn.disabled) return;
+    if (btn) btn.disabled = true;
+
+    try {
+      const startingKm = parseFloat(document.getElementById('ek-starting-km').value);
+      const finalKmInput = document.getElementById('ek-final-km');
+      const finalKmRaw = finalKmInput ? finalKmInput.value : '';
+      const hasFinalKm = finalKmRaw !== '';
+      const finalKm = hasFinalKm ? parseFloat(finalKmRaw) : null;
+
+      if (isNaN(startingKm)) { showToast('Starting KM is required', 'error'); return; }
+      if (hasFinalKm && finalKm <= startingKm) {
+        showToast(`End Km (${finalKm}) must be greater than Starting Km (${startingKm}).`, 'error');
+        return;
+      }
+
+      const update = { starting_km: startingKm };
+      if (hasFinalKm) {
+        update.final_km = finalKm;
+        update.distance_km = +(finalKm - startingKm).toFixed(2);
+      }
+
+      await DB.updateTrip(tripDbId, update);
+      await DB.logAction('Edit Trip KM', `Edited KM range for trip ${tripDbId}`, { trip_id: tripDbId, ...update }, 'Transport');
+      showToast('KM range updated.');
+      document.getElementById('edit-km-modal')?.remove();
+      await this.renderTripsList();
+    } catch (err) {
+      console.error('saveEditKm error:', err);
+      showToast('Failed to update KM range: ' + (err.message || err), 'error');
+    } finally {
+      if (btn) btn.disabled = false;
+    }
   },
 
   async deleteTrip(tripDbId) {

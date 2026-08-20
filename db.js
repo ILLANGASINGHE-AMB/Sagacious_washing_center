@@ -124,6 +124,7 @@ const DB = {
       category: data.category || 'Car',
       model: data.model || '',
       status: data.status || 'available',
+      initial_km: parseFloat(data.initial_km) || 0,
       created_at: new Date().toISOString()
     };
     try {

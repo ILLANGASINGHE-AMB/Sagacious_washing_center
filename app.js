@@ -458,12 +458,18 @@ async function renderDashboard() {
 
 // ─────────────────────────────────────────────
 // DRIVER DASHBOARD (newchanges2.md) — a driver's own landing page: their
-// trip/KM totals plus the orders currently assigned to them, with a
-// "Mark Delivered" action (markOrderDelivered lives in orders.js since
-// it's the same order_id-level action available to admin/staff from the
-// Orders tab). Wrapped in an id'd wrapper div so markOrderDelivered can
-// tell whether to refresh this view vs. the admin Orders table.
+// trip/KM totals plus every order, split into three buckets so all orders
+// are visible to all drivers:
+//   - "Assigned to Me"   — full actions (bulk-select + Mark Delivered)
+//   - "Available Orders" — unassigned, view-only (Order Details)
+//   - "Other Drivers"    — assigned to someone else, view-only (Order Details)
+// markOrderDelivered/markOrdersDeliveredBulk live in orders.js since they're
+// the same order_id-level actions available to admin/staff from the Orders
+// tab. Wrapped in an id'd wrapper div so those functions can tell whether to
+// refresh this view vs. the admin Orders table.
 // ─────────────────────────────────────────────
+let driverSelectedOrderIds = new Set();
+
 async function renderDriverDashboard() {
   document.getElementById('page-title').textContent = 'Dashboard';
   const contentEl = document.getElementById('content');
@@ -479,12 +485,15 @@ async function renderDriverDashboard() {
     return;
   }
 
-  let allTrips = [], assignedOrders = [], customers = [];
+  driverSelectedOrderIds = new Set();
+
+  let allTrips = [], allOrders = [], customers = [], drivers = [];
   try {
-    [allTrips, assignedOrders, customers] = await Promise.all([
+    [allTrips, allOrders, customers, drivers] = await Promise.all([
       DB.getTrips().catch(() => []),
-      DB.getOrdersByDriver(driverId).catch(() => []),
-      DB.getCustomers().catch(() => [])
+      DB.getOrders().catch(() => []),
+      DB.getCustomers().catch(() => []),
+      DB.getDrivers().catch(() => [])
     ]);
   } catch (e) { console.warn('Driver dashboard data fetch:', e); }
 
@@ -492,14 +501,21 @@ async function renderDriverDashboard() {
   const totalTrips = driverTrips.length;
   const totalKms = driverTrips.reduce((sum, t) => sum + (parseFloat(t.distance_km) || 0), 0);
   const custMap = Object.fromEntries((customers || []).map(c => [c.id, c]));
+  const drvMap = Object.fromEntries((drivers || []).map(d => [d.id, d]));
 
-  const rows = (assignedOrders || []).map(o => {
-    const cust = custMap[o.customer_id];
+  const myOrders = (allOrders || []).filter(o => String(o.driver_id) === String(driverId));
+  const availableOrders = (allOrders || []).filter(o => !o.driver_id);
+  const otherOrders = (allOrders || []).filter(o => o.driver_id != null && String(o.driver_id) !== String(driverId));
+
+  const custName = o => escapeHtml(custMap[o.customer_id] ? custMap[o.customer_id].hotel_name : getOrderCustomerName(o));
+
+  const myRows = myOrders.map(o => {
     const isDelivered = o.delivery_status === 'delivered';
     const statusLabel = isDelivered ? 'Delivered' : 'Out for Delivery';
     return `<tr>
+      <td style="text-align:center;">${!isDelivered ? `<input type="checkbox" class="drv-row-check" data-order-id="${o.id}" ${driverSelectedOrderIds.has(o.id)?'checked':''} onchange="toggleDriverOrderSelection(${o.id},this.checked)"/>` : ''}</td>
       <td><strong style="font-family:monospace;color:var(--primary);">${o.batch_id || '—'}</strong></td>
-      <td>${escapeHtml(cust ? cust.hotel_name : getOrderCustomerName(o))}</td>
+      <td>${custName(o)}</td>
       <td><strong>${formatCurrency(o.total_amount)}</strong></td>
       <td>${o.driver_assigned_at ? formatDate(o.driver_assigned_at) : '—'}</td>
       <td>${statusBadge(statusLabel)}</td>
@@ -509,9 +525,18 @@ async function renderDriverDashboard() {
     </tr>`;
   }).join('');
 
-  const outstandingCount = (assignedOrders || []).filter(o => o.delivery_status !== 'delivered').length;
+  const viewOnlyRows = (list, extraCol) => list.map(o => `<tr>
+      <td><strong style="font-family:monospace;color:var(--primary);">${o.batch_id || '—'}</strong></td>
+      <td>${custName(o)}</td>
+      <td><strong>${formatCurrency(o.total_amount)}</strong></td>
+      ${extraCol ? `<td>${extraCol(o)}</td>` : ''}
+      <td style="text-align:center;">
+        <button class="btn btn-secondary btn-sm" onclick="viewOrderDetails(${o.id})"><i class="fas fa-eye"></i> Order Details</button>
+      </td>
+    </tr>`).join('');
 
-  document.getElementById('page-title').textContent = 'Dashboard';
+  const outstandingCount = myOrders.filter(o => o.delivery_status !== 'delivered').length;
+
   contentEl.innerHTML = `
     <div id="driver-dashboard-page">
       <div class="section-header" style="margin-bottom:16px;">
@@ -542,23 +567,74 @@ async function renderDriverDashboard() {
             <div class="label">Assigned Orders</div>
             <div style="background:#fef9c3;color:#92400e;width:38px;height:38px;border-radius:10px;display:flex;align-items:center;justify-content:center;"><i class="fas fa-boxes-stacked"></i></div>
           </div>
-          <div class="value" style="color:#92400e;">${(assignedOrders || []).length}</div>
+          <div class="value" style="color:#92400e;">${myOrders.length}</div>
           <div class="sub">${outstandingCount} still out for delivery</div>
+        </div>
+      </div>
+
+      <div class="card" style="padding:0;margin-bottom:20px;">
+        <div class="section-header" style="padding:16px 20px 0;margin-bottom:0;">
+          <span class="section-title" style="font-size:1em;">Assigned to Me</span>
+          <button id="drv-mark-delivered-btn" class="btn btn-primary btn-sm" style="display:none;" onclick="markOrdersDeliveredBulk(Array.from(driverSelectedOrderIds))">
+            <i class="fas fa-check-double"></i> Mark Delivered (<span id="drv-selected-count">0</span>)
+          </button>
+        </div>
+        <div class="table-wrap">
+          <table>
+            <thead><tr>
+              <th style="width:36px;text-align:center;"><input type="checkbox" id="drv-select-all" onchange="toggleAllDriverOrderSelection(this)"/></th>
+              <th>Order ID</th><th>Customer Name</th><th>Order Amount</th><th>Assigned Date</th><th>Status</th><th style="text-align:center;">Action</th>
+            </tr></thead>
+            <tbody>${myRows || `<tr><td colspan="7" style="text-align:center;padding:32px;color:var(--text-muted);">No orders assigned to you yet</td></tr>`}</tbody>
+          </table>
+        </div>
+      </div>
+
+      <div class="card" style="padding:0;margin-bottom:20px;">
+        <div class="section-header" style="padding:16px 20px 0;margin-bottom:0;">
+          <span class="section-title" style="font-size:1em;">Available Orders <span style="font-weight:400;color:var(--text-muted);font-size:0.85em;">(not yet assigned to any driver)</span></span>
+        </div>
+        <div class="table-wrap">
+          <table>
+            <thead><tr><th>Order ID</th><th>Customer Name</th><th>Order Amount</th><th style="text-align:center;">Action</th></tr></thead>
+            <tbody>${viewOnlyRows(availableOrders) || `<tr><td colspan="4" style="text-align:center;padding:32px;color:var(--text-muted);">No unassigned orders</td></tr>`}</tbody>
+          </table>
         </div>
       </div>
 
       <div class="card" style="padding:0;">
         <div class="section-header" style="padding:16px 20px 0;margin-bottom:0;">
-          <span class="section-title" style="font-size:1em;">Assigned Orders</span>
+          <span class="section-title" style="font-size:1em;">Other Drivers' Orders</span>
         </div>
         <div class="table-wrap">
           <table>
-            <thead><tr><th>Order ID</th><th>Customer Name</th><th>Order Amount</th><th>Assigned Date</th><th>Status</th><th style="text-align:center;">Action</th></tr></thead>
-            <tbody>${rows || `<tr><td colspan="6" style="text-align:center;padding:32px;color:var(--text-muted);">No orders assigned to you yet</td></tr>`}</tbody>
+            <thead><tr><th>Order ID</th><th>Customer Name</th><th>Order Amount</th><th>Driver</th><th style="text-align:center;">Action</th></tr></thead>
+            <tbody>${viewOnlyRows(otherOrders, o => escapeHtml(drvMap[o.driver_id] ? drvMap[o.driver_id].name : '—')) || `<tr><td colspan="5" style="text-align:center;padding:32px;color:var(--text-muted);">No orders assigned to other drivers</td></tr>`}</tbody>
           </table>
         </div>
       </div>
     </div>`;
+}
+
+function toggleDriverOrderSelection(id, checked) {
+  if (checked) driverSelectedOrderIds.add(id); else driverSelectedOrderIds.delete(id);
+  _updateDriverMarkDeliveredBar();
+}
+
+function toggleAllDriverOrderSelection(checkbox) {
+  document.querySelectorAll('.drv-row-check').forEach(cb => {
+    cb.checked = checkbox.checked;
+    const id = parseInt(cb.dataset.orderId);
+    if (checkbox.checked) driverSelectedOrderIds.add(id); else driverSelectedOrderIds.delete(id);
+  });
+  _updateDriverMarkDeliveredBar();
+}
+
+function _updateDriverMarkDeliveredBar() {
+  const btn = document.getElementById('drv-mark-delivered-btn');
+  const countEl = document.getElementById('drv-selected-count');
+  if (countEl) countEl.textContent = driverSelectedOrderIds.size;
+  if (btn) btn.style.display = driverSelectedOrderIds.size > 0 ? 'inline-flex' : 'none';
 }
 
 function statCard(label, value, icon, color, bgColor, sub) {
@@ -3061,6 +3137,10 @@ function showAddVehicleModal() {
         <input class="form-input" id="v-model" placeholder="Prius" maxlength="50"/>
       </div>
       <div class="form-group">
+        <label class="form-label">Odometer Reading (KM) <span style="color:var(--text-muted);font-size:0.82em;">(current reading — not every vehicle starts at 0)</span></label>
+        <input type="number" class="form-input" id="v-initial-km" placeholder="0" min="0" step="0.1"/>
+      </div>
+      <div class="form-group">
         <label class="form-label">Initial Status</label>
         <select class="form-input form-select" id="v-status">
           <option value="available">Available</option>
@@ -3082,6 +3162,7 @@ async function saveNewVehicle() {
   const category  = document.getElementById('v-category')?.value || 'Car';
   const model     = (document.getElementById('v-model')?.value || '').trim();
   const status    = document.getElementById('v-status')?.value || 'available';
+  const initialKm = parseFloat(document.getElementById('v-initial-km')?.value) || 0;
 
   if (!vehicleNo) return toast('Vehicle No is required', 'error');
 
@@ -3094,8 +3175,8 @@ async function saveNewVehicle() {
   const dup = all.find(v => (v.vehicle_no || '').replace(/[\s-]/g, '').toUpperCase() === cleanPlate);
   if (dup) return toast(`Vehicle No "${vehicleNo}" is already registered`, 'error');
 
-  const newId = await DB.addVehicle({ vehicle_no: vehicleNo, category, model, status });
-  await DB.logAction('Add Vehicle', `Added vehicle "${vehicleNo}" (${category}, ${model || 'N/A'})`, { id: newId, vehicle_no: vehicleNo, category, model, status }, 'Vehicle');
+  const newId = await DB.addVehicle({ vehicle_no: vehicleNo, category, model, status, initial_km: initialKm });
+  await DB.logAction('Add Vehicle', `Added vehicle "${vehicleNo}" (${category}, ${model || 'N/A'})`, { id: newId, vehicle_no: vehicleNo, category, model, status, initial_km: initialKm }, 'Vehicle');
 
   hideModal('add-veh-modal');
   toast('Vehicle added successfully!');
@@ -3127,6 +3208,10 @@ async function showEditVehicleModal(id) {
         <input class="form-input" id="ev-model" value="${escapeHtml(v.model || '')}" maxlength="50"/>
       </div>
       <div class="form-group">
+        <label class="form-label">Odometer Reading (KM) <span style="color:var(--text-muted);font-size:0.82em;">(initial reading, used until this vehicle's first trip)</span></label>
+        <input type="number" class="form-input" id="ev-initial-km" value="${v.initial_km || 0}" min="0" step="0.1"/>
+      </div>
+      <div class="form-group">
         <label class="form-label">Status</label>
         <select class="form-input form-select" id="ev-status">
           <option value="available" ${statusVal === 'available' ? 'selected' : ''}>Available</option>
@@ -3147,6 +3232,7 @@ async function saveEditVehicle(id) {
   const category  = document.getElementById('ev-category')?.value || 'Car';
   const model     = (document.getElementById('ev-model')?.value || '').trim();
   const status    = document.getElementById('ev-status')?.value || 'available';
+  const initialKm = parseFloat(document.getElementById('ev-initial-km')?.value) || 0;
 
   if (!vehicleNo) return toast('Vehicle No is required', 'error');
   const cleanPlate = vehicleNo.replace(/[\s-]/g, '');
@@ -3156,8 +3242,8 @@ async function saveEditVehicle(id) {
   const dup = all.find(v => String(v.id) !== String(id) && (v.vehicle_no || '').replace(/[\s-]/g, '').toUpperCase() === cleanPlate);
   if (dup) return toast(`Vehicle No "${vehicleNo}" is already registered to another vehicle`, 'error');
 
-  await DB.updateVehicle(id, { vehicle_no: vehicleNo, category, model, status });
-  await DB.logAction('Edit Vehicle', `Updated vehicle "${vehicleNo}"`, { id, vehicle_no: vehicleNo, category, model, status }, 'Vehicle');
+  await DB.updateVehicle(id, { vehicle_no: vehicleNo, category, model, status, initial_km: initialKm });
+  await DB.logAction('Edit Vehicle', `Updated vehicle "${vehicleNo}"`, { id, vehicle_no: vehicleNo, category, model, status, initial_km: initialKm }, 'Vehicle');
 
   hideModal('edit-veh-modal');
   toast('Vehicle updated successfully!');
