@@ -3137,7 +3137,7 @@ function showAddVehicleModal() {
         <input class="form-input" id="v-model" placeholder="Prius" maxlength="50"/>
       </div>
       <div class="form-group">
-        <label class="form-label">Odometer Reading (KM) <span style="color:var(--text-muted);font-size:0.82em;">(current reading — not every vehicle starts at 0)</span></label>
+        <label class="form-label">Odometer Reading (KM)</label>
         <input type="number" class="form-input" id="v-initial-km" placeholder="0" min="0" step="0.1"/>
       </div>
       <div class="form-group">
