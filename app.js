@@ -142,10 +142,10 @@ function isDriver() { return currentUser && currentUser.role === 'driver'; }
 
 function getRoleAllowedPages() {
   if (isAdmin()) {
-    return ['dashboard', 'orders', 'customers', 'drivers', 'vehicles', 'transport', 'paynow', 'invoices', 'deductions', 'items', 'expenses', 'analytics', 'reports', 'recent-actions', 'settings'];
+    return ['dashboard', 'orders', 'customers', 'drivers', 'vehicles', 'transport', 'paynow', 'invoices', 'deductions', 'items', 'expenses', 'analytics', 'reports', 'pendings', 'recent-actions', 'settings'];
   }
   if (isStaffUser()) {
-    return ['dashboard', 'orders', 'customers', 'drivers', 'vehicles', 'transport', 'paynow', 'deductions', 'items', 'expenses', 'settings'];
+    return ['dashboard', 'orders', 'customers', 'drivers', 'vehicles', 'transport', 'paynow', 'deductions', 'items', 'expenses', 'pendings', 'settings'];
   }
   if (isDriver()) {
     return ['transport', 'vehicles', 'customers', 'orders', 'settings'];
@@ -287,6 +287,7 @@ function navigate(page) {
     dashboard: 'Dashboard', customers: 'Customers', drivers: 'Drivers', vehicles: 'Vehicles', transport: 'Transport & Trip Management',
     orders: 'Orders', paynow: 'Pay Now', invoices: 'Invoices', payments: 'Payments',
     items: 'Items', expenses: 'Expenses', analytics: 'Data Analytics', reports: 'Reports', settings: 'Settings', deductions: 'Deductions',
+    pendings: 'Pendings & Returns',
     'recent-actions': 'Recent Actions'
   };
   document.getElementById('page-title').textContent = titles[page] || page;
@@ -307,9 +308,16 @@ function navigate(page) {
     reports:   () => { if (!requireAdmin()) { navigate('dashboard'); } else { renderReports(); } },
     settings:  renderSettings,
     deductions: renderDeductions,
+    pendings:  renderPendingsPage,
     'recent-actions': renderRecentActions
   };
   if (pages[page]) pages[page]();
+}
+
+function renderPendingsPage() {
+  const contentDiv = document.getElementById('content');
+  contentDiv.innerHTML = `<div id="page-pendings" class="page-content"></div>`;
+  PendingsModule.init();
 }
 
 function renderExpensesPage() {
@@ -751,11 +759,12 @@ async function openCustomerDetail(customerId, tab = 'orders') {
   currentDetailCustomerId = customerId;
   currentCustDetailTab = tab;
 
-  const [c, orders, allInvoices, allPayments] = await Promise.all([
+  const [c, orders, allInvoices, allPayments, openFlags] = await Promise.all([
     DB.getCustomer(customerId),
     DB.getOrdersByCustomer(customerId),
     DB.getInvoices(),
-    DB.getPayments()
+    DB.getPayments(),
+    DB.getOpenFlagsForCustomer(customerId).catch(() => [])
   ]);
 
   if (!c) {
@@ -943,6 +952,30 @@ async function openCustomerDetail(customerId, tab = 'orders') {
         </div>
       </div>
     </div>
+
+    ${(openFlags || []).length > 0 ? `
+    <!-- Outstanding Pending/Returned Items — surfaced here so staff can't
+         forget them, per NewChange.md ("sometimes our employees forgot
+         about those pending items"). Same data as the Pendings & Returns
+         tab, just scoped to this customer. -->
+    <div class="card" style="margin-bottom:20px;border-left:4px solid #f59e0b;">
+      <div style="font-family:'Playfair Display',serif;font-size:1.05em;font-weight:700;color:var(--text);margin-bottom:12px;">
+        <i class="fas fa-triangle-exclamation" style="color:#f59e0b;"></i> Outstanding Pending / Returned Items
+      </div>
+      <div style="display:flex;flex-direction:column;gap:8px;">
+        ${openFlags.map(f => {
+          const srcOrder = (orders || []).find(o => o.id === f.order_id);
+          return `<div style="display:flex;align-items:center;justify-content:space-between;gap:10px;padding:8px 12px;background:var(--bg);border-radius:8px;border:1px solid var(--border);font-size:0.88em;">
+            <span>
+              <span style="font-weight:700;text-transform:capitalize;color:${f.flag_type === 'pending' ? '#92400e' : '#7c2d12'};">${f.flag_type}</span>:
+              ${escapeHtml(f.item_name)} × ${f.quantity}
+              <span style="color:var(--text-muted);">— from order ${escapeHtml(srcOrder?.batch_id || ('#' + f.order_id))}</span>
+            </span>
+            <span style="color:var(--text-muted);font-size:0.9em;">${formatDate(f.created_at)}</span>
+          </div>`;
+        }).join('')}
+      </div>
+    </div>` : ''}
 
     <!-- Details Part (Switchable Tabs) -->
     <div class="card" style="padding:0;overflow:hidden;">

@@ -689,6 +689,12 @@ async function showAddOrderModal() {
         <input type="number" class="form-input" id="ao-extra-payment" value="0" min="0" oninput="calcOrderTotal()"/></div>
     </div>
 
+    <!-- Outstanding Pending/Returned items for this customer -->
+    <div id="ao-open-flags-wrap" style="display:none;margin-bottom:14px;padding:12px 14px;background:#fffbeb;border:1px solid #fde68a;border-radius:10px;">
+      <div style="font-weight:700;font-size:0.85em;color:#92400e;margin-bottom:8px;"><i class="fas fa-triangle-exclamation"></i> Outstanding pending/returned items for this customer — check any this order is delivering/collecting:</div>
+      <div id="ao-open-flags-list" style="display:flex;flex-direction:column;gap:6px;"></div>
+    </div>
+
     <!-- Items -->
     <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:8px;">
       <span style="font-family:'Playfair Display',serif;font-size:1em;font-weight:700;color:var(--primary);">Order Items</span>
@@ -1055,9 +1061,10 @@ async function saveNewOrder(){
   try {
     const batchId = await DB.generateBatchId();
     const orderStatus = advance >= grandTotal ? 'Paid' : 'Unpaid';
-    
+    const flagClears = collectAoFlagClears();
+
     // Only pass columns that exist on the orders table
-    const orderId = await DB.createOrderWithItems({
+    const orderId = await DB.createOrderWithItemsAndClearFlags({
       customer_id:     custId,
       driver_id:       driverId,
       pickup_date:     pickup,
@@ -1070,7 +1077,7 @@ async function saveNewOrder(){
       discount_amount: discAmt,
       total_amount:    grandTotal,
       batch_id:        batchId
-    }, orderItems);
+    }, orderItems, flagClears);
 
     if (orderStatus === 'Paid') {
       const invNum = await DB.generateInvoiceNumber();
@@ -1120,13 +1127,14 @@ async function saveNewOrder(){
 let _editOrderCatalog=[];
 async function showEditOrderModal(id){
   if (!canEditOrders()) return toast('Staff or Admin permission required to edit orders', 'error');
-  const [order,customers,drivers,existingItems,allCatalog,invoice]=await Promise.all([
+  const [order,customers,drivers,existingItems,allCatalog,invoice,itemFlags]=await Promise.all([
     DB.getOrder(id),
     DB.getCustomers(),
     DB.getDrivers(),
     DB.getOrderItems(id),
     DB.getItems(),
-    DB.getInvoiceByOrder(id)
+    DB.getInvoiceByOrder(id),
+    DB.getFlagsBySourceOrder(id).catch(()=>[])
   ]);
   if(!order)return;
   window._aoCustomersList = customers;
@@ -1137,22 +1145,27 @@ async function showEditOrderModal(id){
   const itemRows=existingItems.map(item=>{
     const cat=allCatalog.find(c=>c.id===item.catalog_item_id);
     const label=escapeHtml(cat?`${cat.item_id} — ${cat.item_name}`:item.item_name);
+    const pendingQty=(itemFlags||[]).filter(f=>f.flag_type==='pending'&&f.status==='pending'&&String(f.order_item_id)===String(item.id)).reduce((s,f)=>s+parseFloat(f.quantity||0),0);
     const dryCleanP  = cat ? (cat.dry_clean_price||0)   : 0;
     const washPressP = cat ? (cat.wash_press_price||0)  : 0;
     const washDryP   = cat ? (cat.wash_dry_price||0)    : 0;
     const curSvcItem = item.service_type || 'Wash & Press';
     const curPrice   = item.price || 0;
     const svcOpts = ['Dry Clean','Wash & Press','Wash & Dry'].map(s=>`<option value="${s}" ${s===curSvcItem?'selected':''}>${s}</option>`).join('');
-    return `<div class="eo-item-row" style="display:grid;grid-template-columns:2.5fr 1.6fr 0.8fr 1.2fr auto;gap:8px;margin-bottom:6px;align-items:center;">
+    return `<div class="eo-item-row" style="display:grid;grid-template-columns:2.2fr 1.4fr 0.7fr 1.1fr auto auto;gap:8px;margin-bottom:6px;align-items:center;">
       <div class="item-picker-wrap" style="position:relative;" data-selected-id="${item.catalog_item_id||''}" data-dry-clean="${dryCleanP}" data-wash-press="${washPressP}" data-wash-dry="${washDryP}">
         <input class="form-input item-picker-input" value="${label}" autocomplete="off" placeholder="Type to search item..."
           oninput="filterEditItemDropdown(this)" onfocus="showEditItemDropdown(this)" onblur="setTimeout(()=>hideEditItemDropdown(this),200)" style="width:100%;"/>
         <div class="item-picker-dropdown" style="display:none;position:absolute;top:100%;left:0;right:0;z-index:999;background:var(--card-bg);border:1px solid var(--border);border-radius:8px;box-shadow:0 8px 24px rgba(0,0,0,0.12);max-height:200px;overflow-y:auto;margin-top:2px;"></div>
+        ${pendingQty > 0 ? `<div style="margin-top:3px;font-size:0.72em;font-weight:700;color:#92400e;"><span style="background:#facc15;padding:1px 6px;border-radius:4px;">P</span> ${pendingQty} kept pending</div>` : ''}
       </div>
       <select class="form-input form-select eo-svc" onchange="onEoSvcChange(this)" style="font-size:0.82em;padding:6px 8px;">${svcOpts}</select>
       <input type="number" class="form-input eo-qty" value="${item.quantity}" min="1" oninput="calcEditOrderTotal()"/>
       <input type="number" class="form-input eo-price" value="${curPrice}" min="0" oninput="calcEditOrderTotal()" placeholder="Price"/>
-      <button class="btn btn-danger btn-icon btn-sm" onclick="this.parentElement.remove();calcEditOrderTotal()"><i class="fas fa-trash"></i></button>
+      <button class="btn btn-secondary btn-icon btn-sm" title="Keep some of this item as pending"
+        data-order-id="${order.id}" data-customer-id="${order.customer_id||''}" data-order-item-id="${item.id}" data-item-name="${label}" data-max-qty="${item.quantity}"
+        onclick="openFlagPendingModal(this)" style="color:#92400e;"><i class="fas fa-hourglass-half"></i></button>
+      <button class="btn btn-danger btn-icon btn-sm" onclick="this.closest('.eo-item-row').remove();calcEditOrderTotal()"><i class="fas fa-trash"></i></button>
     </div>`;
   }).join('');
   const wasPickupOnly=order.is_pickup_only&&order.status==='Pickup Requested';
@@ -1185,11 +1198,12 @@ async function showEditOrderModal(id){
         <button class="btn btn-secondary btn-sm" onclick="addEditOrderItemRow()"><i class="fas fa-plus"></i> Add Row</button>
       </div>
     </div>
-    <div style="display:grid;grid-template-columns:2.5fr 1.6fr 0.8fr 1.2fr auto;gap:8px;margin-bottom:4px;padding:0 2px;">
+    <div style="display:grid;grid-template-columns:2.2fr 1.4fr 0.7fr 1.1fr auto auto;gap:8px;margin-bottom:4px;padding:0 2px;">
       <span class="form-label">Item</span>
       <span class="form-label">Service Type</span>
       <span class="form-label">Qty</span>
       <span class="form-label">Price (LKR)</span>
+      <span></span>
       <span></span>
     </div>
     <div id="eo-items-container">${itemRows}</div>
@@ -1217,6 +1231,57 @@ async function showEditOrderModal(id){
   }
 }
 
+// ─────────────────────────────────────────────
+// PENDING ITEMS — "Keep as Pending" (order_item_flags ledger)
+// Fires immediately (its own DB.flagOrderItems call), independent of the
+// edit-order modal's Save button — editing an order deletes and
+// re-inserts all its order_items (see saveEditOrder/updateOrderWithItems
+// above), so a flag needs to be created against the item's REAL current
+// id at the moment staff click it, not queued up as part of a later save.
+// ─────────────────────────────────────────────
+function openFlagPendingModal(btn){
+  const orderId=parseInt(btn.dataset.orderId);
+  const customerId=parseInt(btn.dataset.customerId)||null;
+  const orderItemId=parseInt(btn.dataset.orderItemId);
+  const itemName=btn.dataset.itemName;
+  const maxQty=parseFloat(btn.dataset.maxQty)||1;
+  createModal('flag-pending-modal','Keep as Pending',`
+    <div style="margin-bottom:14px;font-size:0.92em;color:var(--text-muted);">
+      How many of <strong style="color:var(--text);">${escapeHtml(itemName)}</strong> should be kept back as pending (not delivered on this trip)?
+    </div>
+    <div class="form-group">
+      <label class="form-label">Quantity (max ${maxQty})</label>
+      <input type="number" class="form-input" id="fp-qty" value="1" min="1" max="${maxQty}"/>
+    </div>
+    <div style="display:flex;gap:10px;justify-content:flex-end;margin-top:16px;">
+      <button class="btn btn-secondary" onclick="hideModal('flag-pending-modal')">Cancel</button>
+      <button class="btn btn-primary" id="fp-submit-btn"><i class="fas fa-hourglass-half"></i> Mark Pending</button>
+    </div>`);
+  showModal('flag-pending-modal');
+  document.getElementById('fp-submit-btn').onclick=()=>submitFlagPending(orderId,customerId,orderItemId,itemName,maxQty);
+  setTimeout(()=>document.getElementById('fp-qty')?.focus(),80);
+}
+
+async function submitFlagPending(orderId,customerId,orderItemId,itemName,maxQty){
+  const qty=parseFloat(document.getElementById('fp-qty')?.value)||0;
+  if(qty<=0||qty>maxQty) return toast(`Enter a quantity between 1 and ${maxQty}`,'error');
+  const btn=document.getElementById('fp-submit-btn');
+  if(btn) btn.disabled=true;
+  try {
+    await DB.flagOrderItems(orderId,customerId,[{order_item_id:orderItemId,item_name:itemName,quantity:qty,flag_type:'pending'}]);
+    await DB.logAction('Mark Pending',`Kept ${qty} × "${itemName}" as pending on order`,{order_id:orderId,order_item_id:orderItemId,item_name:itemName,quantity:qty},'Order');
+    hideModal('flag-pending-modal');
+    toast(`${qty} × ${itemName} marked pending`);
+    if(document.getElementById('edit-order-modal')) showEditOrderModal(orderId);
+    refreshCustomerDetailIfOpen(customerId);
+  } catch(err){
+    console.error('flag pending error:',err);
+    toast('Failed to mark item pending: '+(err.message||err),'error');
+  } finally {
+    if(btn) btn.disabled=false;
+  }
+}
+
 function showEditItemDropdown(input){const wrap=input.closest('.item-picker-wrap');_renderItemList(wrap.querySelector('.item-picker-dropdown'),_editOrderCatalog);wrap.querySelector('.item-picker-dropdown').style.display='block';}
 function hideEditItemDropdown(input){const wrap=input.closest('.item-picker-wrap');if(wrap)wrap.querySelector('.item-picker-dropdown').style.display='none';}
 function filterEditItemDropdown(input){
@@ -1228,7 +1293,7 @@ function filterEditItemDropdown(input){
 async function addEditOrderItemRow(){
   const container=document.getElementById('eo-items-container');
   const row=document.createElement('div'); row.className='eo-item-row';
-  row.style.cssText='display:grid;grid-template-columns:2.5fr 1.6fr 0.8fr 1.2fr auto;gap:8px;margin-bottom:6px;align-items:center;';
+  row.style.cssText='display:grid;grid-template-columns:2.2fr 1.4fr 0.7fr 1.1fr auto auto;gap:8px;margin-bottom:6px;align-items:center;';
   row.innerHTML=`<div class="item-picker-wrap" style="position:relative;" data-selected-id="" data-dry-clean="0" data-wash-press="0" data-wash-dry="0">
     <input class="form-input item-picker-input" value="" autocomplete="off" placeholder="Type to search item..."
       oninput="filterEditItemDropdown(this)" onfocus="showEditItemDropdown(this)" onblur="setTimeout(()=>hideEditItemDropdown(this),200)" style="width:100%;"/>
@@ -1241,7 +1306,8 @@ async function addEditOrderItemRow(){
   </select>
   <input type="number" class="form-input eo-qty" value="1" min="1" oninput="calcEditOrderTotal()"/>
   <input type="number" class="form-input eo-price" value="0" min="0" oninput="calcEditOrderTotal()" placeholder="Price"/>
-  <button class="btn btn-danger btn-icon btn-sm" onclick="this.parentElement.remove();calcEditOrderTotal()"><i class="fas fa-trash"></i></button>`;
+  <span title="Save this order first to be able to keep a new item as pending"></span>
+  <button class="btn btn-danger btn-icon btn-sm" onclick="this.closest('.eo-item-row').remove();calcEditOrderTotal()"><i class="fas fa-trash"></i></button>`;
   container.appendChild(row);
 }
 
@@ -1442,6 +1508,7 @@ function getItemPricesForCurrentCustomer(item) {
 window.onCustomerPickerChange = function(pickerId, customerId) {
   if (pickerId === 'ao-cust') {
     reapplyPricesForOrderRows('.ao-item-row', customerId, calcOrderTotal);
+    loadOpenFlagsForAddOrder(customerId);
   } else if (pickerId === 'eo-cust') {
     reapplyPricesForOrderRows('.eo-item-row', customerId, calcEditOrderTotal);
   } else if (pickerId === 'cb-cust') {
@@ -1491,6 +1558,63 @@ async function reapplyPricesForOrderRows(rowSelector, customerId, totalCallback)
   });
 
   if (totalCallback) totalCallback();
+}
+
+// ─────────────────────────────────────────────
+// OUTSTANDING PENDING/RETURNED ITEMS — shown in the Add Order modal once a
+// customer is picked, so staff don't forget items owed from an earlier
+// order (NewChange.md: "sometimes our employees forgot about those
+// pending items"). Checked flags are passed to
+// create_order_with_items_and_clear_flags as p_clears so the new order and
+// the flag-clearing happen atomically. Quantity is editable and capped at
+// the flag's outstanding amount — clearing less than that splits the flag
+// (see clear_order_item_flags in supabase_order_item_flags_migration.sql),
+// leaving the remainder open for a future order.
+// ─────────────────────────────────────────────
+async function loadOpenFlagsForAddOrder(customerId) {
+  const wrap = document.getElementById('ao-open-flags-wrap');
+  const list = document.getElementById('ao-open-flags-list');
+  if (!wrap || !list) return;
+  if (!customerId) { wrap.style.display = 'none'; list.innerHTML = ''; return; }
+
+  let flags = [];
+  try { flags = await DB.getOpenFlagsForCustomer(customerId); } catch (e) { flags = []; }
+  if (!flags.length) { wrap.style.display = 'none'; list.innerHTML = ''; return; }
+
+  const orderIds = [...new Set(flags.map(f => f.order_id))];
+  const sourceOrders = await Promise.all(orderIds.map(oid => DB.getOrder(oid).catch(() => null)));
+  const batchMap = {};
+  sourceOrders.forEach(o => { if (o) batchMap[o.id] = o.batch_id; });
+
+  wrap.style.display = 'block';
+  list.innerHTML = flags.map(f => `
+    <label style="display:flex;align-items:center;gap:8px;font-size:0.85em;background:#fff;padding:6px 10px;border-radius:8px;border:1px solid #fde68a;">
+      <input type="checkbox" class="ao-flag-check" data-flag-id="${f.id}" data-max-qty="${f.quantity}" onchange="toggleAoFlagQtyInput(this)"/>
+      <span style="flex:1;">
+        <span style="font-weight:700;color:${f.flag_type === 'pending' ? '#92400e' : '#7c2d12'};text-transform:capitalize;">${f.flag_type}</span>:
+        ${escapeHtml(f.item_name)} × ${f.quantity} <span style="color:var(--text-muted);">(order ${escapeHtml(batchMap[f.order_id] || ('#' + f.order_id))})</span>
+      </span>
+      <input type="number" class="ao-flag-qty" data-flag-id="${f.id}" value="${f.quantity}" min="1" max="${f.quantity}" disabled style="width:64px;padding:4px 6px;border-radius:6px;border:1px solid var(--border);"/>
+    </label>`).join('');
+}
+
+function toggleAoFlagQtyInput(checkbox) {
+  const qtyInput = document.querySelector(`.ao-flag-qty[data-flag-id="${checkbox.dataset.flagId}"]`);
+  if (qtyInput) qtyInput.disabled = !checkbox.checked;
+}
+
+function collectAoFlagClears() {
+  const clears = [];
+  document.querySelectorAll('.ao-flag-check:checked').forEach(cb => {
+    const flagId = parseInt(cb.dataset.flagId);
+    const maxQty = parseFloat(cb.dataset.maxQty) || 0;
+    const qtyInput = document.querySelector(`.ao-flag-qty[data-flag-id="${flagId}"]`);
+    let qty = parseFloat(qtyInput?.value) || maxQty;
+    if (qty <= 0) qty = maxQty;
+    if (qty > maxQty) qty = maxQty;
+    clears.push({ flag_id: flagId, quantity: qty });
+  });
+  return clears;
 }
 
 async function printInvoiceByOrder(orderId) {

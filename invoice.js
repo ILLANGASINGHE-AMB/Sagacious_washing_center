@@ -14,6 +14,75 @@ let invoiceActionsVisible = false;
 // Cache object to store processed list for filters and export
 let _invCache = { invoices: [], oMap: {}, cMap: {}, filteredInvoices: [], invoicePaymentsMap: {} };
 
+// ── Pending / Returned ledger — shared bill-rendering helpers ──────────
+// order_item_flags rows are the permanent memory of "kept back" / "handed
+// back" items (see supabase_order_item_flags_migration.sql). These two
+// helpers turn that ledger into the "P" badge and the three optional
+// summary sentences NewChange.md asks for. viewInvoice, printInvoice and
+// previewInvoiceByOrder all call the same helpers so the three bill views
+// can't drift out of sync with each other.
+//
+// Row 1 (this order's own items just flagged pending) and the "P" badge
+// are scoped to flags still in status 'pending' — once a later order
+// actually delivers the item and clears the flag, the badge/sentence
+// stops appearing on reprint instead of permanently (and misleadingly)
+// claiming it's still owed. Row 2/Row 3 (this order clearing an OLDER
+// order's flags) are permanent history — cleared_in_order_id never
+// changes once set, so those two rows print identically every time this
+// bill is reopened, satisfying NewChange.md's "these bills should be
+// saved so I can refer them easily."
+async function _getPendingItemIdsForOrder(orderId) {
+  let flags = [];
+  try { flags = await DB.getFlagsBySourceOrder(orderId); } catch (e) { return new Set(); }
+  return new Set(
+    flags.filter(f => f.flag_type === 'pending' && f.status === 'pending' && f.order_item_id != null)
+         .map(f => String(f.order_item_id))
+  );
+}
+
+async function _buildPendingReturnSummaryHtml(order) {
+  if (!order) return '';
+  let ownFlags = [], clearedFlags = [];
+  try {
+    [ownFlags, clearedFlags] = await Promise.all([
+      DB.getFlagsBySourceOrder(order.id),
+      DB.getFlagsClearedByOrder(order.id)
+    ]);
+  } catch (e) { return ''; }
+
+  const rows = [];
+
+  // Row 1 — this order's own items currently kept pending.
+  const row1Items = ownFlags.filter(f => f.flag_type === 'pending' && f.status === 'pending');
+  if (row1Items.length) {
+    const parts = row1Items.map(f => `${escapeHtml(f.item_name)} - ${f.quantity}`).join(', ');
+    rows.push(`Related to this bill, ${parts} were kept as pending from order no ${escapeHtml(order.batch_id || '')}`);
+  }
+
+  // Rows 2/3 — older orders' flags this bill is resolving, grouped by source order.
+  const buildClearedRows = async (flagType, label, verb) => {
+    const matches = clearedFlags.filter(f => f.flag_type === flagType);
+    if (!matches.length) return [];
+    const bySource = {};
+    matches.forEach(f => { (bySource[f.order_id] = bySource[f.order_id] || []).push(f); });
+    const out = [];
+    for (const sourceOrderId of Object.keys(bySource)) {
+      const srcOrder = await DB.getOrder(parseInt(sourceOrderId)).catch(() => null);
+      const parts = bySource[sourceOrderId].map(f => `${escapeHtml(f.item_name)} - ${f.quantity}`).join(', ');
+      out.push(`${label} ${parts} ${verb} ${escapeHtml(srcOrder?.batch_id || ('#' + sourceOrderId))}`);
+    }
+    return out;
+  };
+
+  rows.push(...await buildClearedRows('pending', 'Delivering Pending', 'collected by orderID'));
+  rows.push(...await buildClearedRows('returned', 'Delivering returned', 'collected from orderID'));
+
+  if (!rows.length) return '';
+  return `<div style="margin-top:18px;padding-top:14px;border-top:1px dashed #cbd5e1;font-size:0.82em;color:#475569;line-height:1.7;">
+    ${rows.map(r => `<div>${r}</div>`).join('')}
+  </div>`;
+}
+
 async function renderInvoices() {
   document.getElementById('page-title').textContent = 'Invoice Management';
   showLoading('content', 'Loading Invoices...');
@@ -459,11 +528,14 @@ async function viewInvoice(id) {
   const finalTotal = fin.netPayableTotal;
 
   const _svcColor = { 'Dry Clean': '#7c3aed', 'Wash & Press': '#0369a1', 'Wash & Dry': '#16a34a' };
-  
+  const pendingItemIds = order ? await _getPendingItemIdsForOrder(order.id) : new Set();
+  const pendingReturnSummaryHtml = order ? await _buildPendingReturnSummaryHtml(order) : '';
+
   const itemsHTML = items.map(i => `
     <tr>
       <td style="padding:8px 12px;border-bottom:1px solid #e5e7eb;">${escapeHtml(i.item_name)}</td>
       <td style="padding:8px 12px;border-bottom:1px solid #e5e7eb;text-align:center;">${i.quantity}</td>
+      <td style="padding:8px 12px;border-bottom:1px solid #e5e7eb;text-align:center;">${pendingItemIds.has(String(i.id)) ? '<span style="display:inline-block;background:#facc15;color:#78350f;font-weight:800;font-size:0.85em;width:20px;height:20px;line-height:20px;border-radius:5px;">P</span>' : ''}</td>
       <td style="padding:8px 12px;border-bottom:1px solid #e5e7eb;">
         <span style="font-size:0.82em;font-weight:600;padding:3px 8px;border-radius:5px;background:${_svcColor[i.service_type] || '#64748b'}18;color:${_svcColor[i.service_type] || '#64748b'};">${i.service_type || '—'}</span>
       </td>
@@ -547,6 +619,7 @@ async function viewInvoice(id) {
           <tr style="border-bottom:2px solid #1a4d8f;">
             <th style="padding:10px 0;text-align:left;font-size:0.75em;font-weight:700;text-transform:uppercase;letter-spacing:0.8px;color:#94a3b8;">Item</th>
             <th style="padding:10px 8px;text-align:center;font-size:0.75em;font-weight:700;text-transform:uppercase;letter-spacing:0.8px;color:#94a3b8;">Qty</th>
+            <th style="padding:10px 8px;text-align:center;font-size:0.75em;font-weight:700;text-transform:uppercase;letter-spacing:0.8px;color:#94a3b8;">Status</th>
             <th style="padding:10px 8px;text-align:left;font-size:0.75em;font-weight:700;text-transform:uppercase;letter-spacing:0.8px;color:#94a3b8;">Service</th>
             <th style="padding:10px 8px;text-align:right;font-size:0.75em;font-weight:700;text-transform:uppercase;letter-spacing:0.8px;color:#94a3b8;">Unit Price</th>
             <th style="padding:10px 0;text-align:right;font-size:0.75em;font-weight:700;text-transform:uppercase;letter-spacing:0.8px;color:#94a3b8;">Subtotal</th>
@@ -557,6 +630,7 @@ async function viewInvoice(id) {
             <tr style="border-bottom:1px solid #f1f5f9;${idx % 2 === 1 ? 'background:#fafafa;' : ''}">
               <td style="padding:12px 0;font-size:0.92em;">${escapeHtml(i.item_name)}</td>
               <td style="padding:12px 8px;text-align:center;font-size:0.92em;">${i.quantity}</td>
+              <td style="padding:12px 8px;text-align:center;">${pendingItemIds.has(String(i.id)) ? '<span style="display:inline-block;background:#facc15;color:#78350f;font-weight:800;font-size:0.85em;width:20px;height:20px;line-height:20px;border-radius:5px;">P</span>' : ''}</td>
               <td style="padding:12px 8px;font-size:0.88em;">
                 <span style="font-weight:600;padding:3px 8px;border-radius:5px;background:${_svcColor[i.service_type] || '#64748b'}18;color:${_svcColor[i.service_type] || '#64748b'};">${i.service_type || '—'}</span>
               </td>
@@ -611,12 +685,10 @@ async function viewInvoice(id) {
               <span style="color:#16a34a;">Payment (${p.method})</span>
               <span style="color:#16a34a;">− ${formatCurrency(p.amount)}</span>
             </div>`).join('')}
-          <div style="display:flex;justify-content:space-between;padding:12px 0 4px;font-size:0.95em;">
-            <span style="color:#94a3b8;">Balance Due</span>
-            <span style="font-weight:700;color:${balance > 0 ? '#e11d48' : '#16a34a'};">${formatCurrency(Math.max(0, balance))}</span>
-          </div>
         </div>
       </div>
+
+      ${pendingReturnSummaryHtml}
 
       ${payments.length > 0 ? `
         <div style="margin-top:28px;padding-top:18px;border-top:1px solid #f1f5f9;">
@@ -717,7 +789,22 @@ async function printInvoice(id) {
     : `<div style="height:64px;width:64px;border-radius:12px;background:linear-gradient(135deg,#00b4d8,#1a4d8f);display:flex;align-items:center;justify-content:center;color:#fff;font-size:2em;">SW</div>`;
 
   const _svcColorPrint = { 'Dry Clean': '#7c3aed', 'Wash & Press': '#0369a1', 'Wash & Dry': '#16a34a' };
-  
+
+  // Pending/Returned ledger — P badge + summary sentences. For a
+  // consolidated batch invoice, items come from several orders at once
+  // (each item already carries its own order_id from order_items), so the
+  // badge is computed per-item's own order; the three summary sentences
+  // are skipped there since "this bill" doesn't map to one single order.
+  let pendingItemIds = new Set();
+  if (inv.batch_order_ids) {
+    const uniqueOrderIds = [...new Set(items.map(i => i.order_id).filter(Boolean))];
+    const sets = await Promise.all(uniqueOrderIds.map(oid => _getPendingItemIdsForOrder(oid)));
+    sets.forEach(s => s.forEach(v => pendingItemIds.add(v)));
+  } else if (order) {
+    pendingItemIds = await _getPendingItemIdsForOrder(order.id);
+  }
+  const pendingReturnSummaryHtml = (!inv.batch_order_ids && order) ? await _buildPendingReturnSummaryHtml(order) : '';
+
   const itemsHTML = items.map((i, idx) => `
     <tr style="${idx % 2 === 1 ? 'background:#fafafa;' : ''}">
       <td style="padding:10px 12px;border-bottom:1px solid #f1f5f9;">
@@ -725,6 +812,7 @@ async function printInvoice(id) {
         ${i.order_batch_id ? `<span style="display:block;font-size:0.75em;color:#64748b;margin-top:2px;">Order: ${escapeHtml(i.order_batch_id)}</span>` : ''}
       </td>
       <td style="padding:10px 12px;border-bottom:1px solid #f1f5f9;text-align:center;">${i.quantity}</td>
+      <td style="padding:10px 12px;border-bottom:1px solid #f1f5f9;text-align:center;">${pendingItemIds.has(String(i.id)) ? '<span style="display:inline-block;background:#facc15;color:#78350f;font-weight:800;font-size:0.85em;width:20px;height:20px;line-height:20px;border-radius:5px;">P</span>' : ''}</td>
       <td style="padding:10px 12px;border-bottom:1px solid #f1f5f9;">
         <span style="font-size:0.8em;font-weight:600;padding:3px 8px;border-radius:5px;background:${_svcColorPrint[i.service_type] || '#64748b'}18;color:${_svcColorPrint[i.service_type] || '#64748b'};">${i.service_type || '—'}</span>
       </td>
@@ -782,10 +870,7 @@ async function printInvoice(id) {
     ${payments.map(p => `
       <div style="display:flex;justify-content:space-between;padding:8px 12px;border-bottom:1px solid #e5e7eb;color:#16a34a;">
         <span>Payment (${p.method})</span><span>- ${formatCurrency(p.amount)}</span>
-      </div>`).join('')}
-    <div style="display:flex;justify-content:space-between;padding:12px;background:#1a4d8f;color:#fff;border-radius:0 0 10px 10px;font-weight:700;font-size:1.05em;">
-      <span>Balance Due</span><span>${formatCurrency(Math.max(0, balance))}</span>
-    </div>`;
+      </div>`).join('')}`;
 
   const printHTML = `<!DOCTYPE html><html><head><meta charset="UTF-8"/><title>Invoice ${inv.invoice_number}</title>
     <link href="https://fonts.googleapis.com/css2?family=DM+Sans:wght@400;600;700&family=Playfair+Display:wght@600;700;800&display=swap" rel="stylesheet"/>
@@ -873,6 +958,7 @@ async function printInvoice(id) {
                 <tr style="background:#1a4d8f;color:#fff;">
                   <th style="padding:10px 12px;text-align:left;font-size:0.82em;text-transform:uppercase;">Item</th>
                   <th style="padding:10px 12px;text-align:center;font-size:0.82em;text-transform:uppercase;">Qty</th>
+                  <th style="padding:10px 12px;text-align:center;font-size:0.82em;text-transform:uppercase;">Status</th>
                   <th style="padding:10px 12px;text-align:left;font-size:0.82em;text-transform:uppercase;">Service</th>
                   <th style="padding:10px 12px;text-align:right;font-size:0.82em;text-transform:uppercase;">Unit Price</th>
                   <th style="padding:10px 12px;text-align:right;font-size:0.82em;text-transform:uppercase;">Subtotal</th>
@@ -890,6 +976,8 @@ async function printInvoice(id) {
           ${summaryHTML}
         </div>
       </div>
+
+      ${pendingReturnSummaryHtml}
 
       ${settings.footer_message ? `<div style="text-align:center;padding:16px;background:#f8fafc;border-radius:10px;font-size:0.9em;color:#64748b;font-style:italic;">${escapeHtml(settings.footer_message)}</div>` : ''}
     </div>`;
@@ -964,11 +1052,14 @@ async function previewInvoiceByOrder(orderId) {
       : `<div style="height:64px;width:64px;border-radius:12px;background:linear-gradient(135deg,#00b4d8,#1a4d8f);display:flex;align-items:center;justify-content:center;color:#fff;font-size:2em;">SW</div>`;
 
     const _svcColorPrint = { 'Dry Clean': '#7c3aed', 'Wash & Press': '#0369a1', 'Wash & Dry': '#16a34a' };
+    const pendingItemIds = await _getPendingItemIdsForOrder(order.id);
+    const pendingReturnSummaryHtml = await _buildPendingReturnSummaryHtml(order);
 
     const itemsHTML = items.map((i, idx) => `
       <tr style="${idx % 2 === 1 ? 'background:#fafafa;' : ''}">
         <td style="padding:10px 12px;border-bottom:1px solid #f1f5f9;">${escapeHtml(i.item_name)}</td>
         <td style="padding:10px 12px;border-bottom:1px solid #f1f5f9;text-align:center;">${i.quantity}</td>
+        <td style="padding:10px 12px;border-bottom:1px solid #f1f5f9;text-align:center;">${pendingItemIds.has(String(i.id)) ? '<span style="display:inline-block;background:#facc15;color:#78350f;font-weight:800;font-size:0.85em;width:20px;height:20px;line-height:20px;border-radius:5px;">P</span>' : ''}</td>
         <td style="padding:10px 12px;border-bottom:1px solid #f1f5f9;">
           <span style="font-size:0.8em;font-weight:600;padding:3px 8px;border-radius:5px;background:${(_svcColorPrint[i.service_type] || '#64748b')}18;color:${_svcColorPrint[i.service_type] || '#64748b'};">${i.service_type || '—'}</span>
         </td>
@@ -1005,10 +1096,7 @@ async function previewInvoiceByOrder(orderId) {
       ${payments.map(p => `
         <div style="display:flex;justify-content:space-between;padding:8px 12px;border-bottom:1px solid #e5e7eb;color:#16a34a;">
           <span>Payment (${p.method})</span><span>- ${formatCurrency(p.amount)}</span>
-        </div>`).join('')}
-      <div style="display:flex;justify-content:space-between;padding:12px;background:#1a4d8f;color:#fff;border-radius:0 0 10px 10px;font-weight:700;font-size:1.05em;">
-        <span>Balance Due</span><span>${formatCurrency(Math.max(0, balance))}</span>
-      </div>`;
+        </div>`).join('')}`;
 
     const paidStamp = balance <= 0 ? `
       <div style="position:absolute;left:0;bottom:20px;pointer-events:none;z-index:10;">
@@ -1068,12 +1156,13 @@ async function previewInvoiceByOrder(orderId) {
               <tr style="background:#1a4d8f;color:#fff;">
                 <th style="padding:10px 12px;text-align:left;font-size:0.82em;text-transform:uppercase;">Item</th>
                 <th style="padding:10px 12px;text-align:center;font-size:0.82em;text-transform:uppercase;">Qty</th>
+                <th style="padding:10px 12px;text-align:center;font-size:0.82em;text-transform:uppercase;">Status</th>
                 <th style="padding:10px 12px;text-align:left;font-size:0.82em;text-transform:uppercase;">Service</th>
                 <th style="padding:10px 12px;text-align:right;font-size:0.82em;text-transform:uppercase;">Unit Price</th>
                 <th style="padding:10px 12px;text-align:right;font-size:0.82em;text-transform:uppercase;">Subtotal</th>
               </tr>
             </thead>
-            <tbody>${itemsHTML || `<tr><td colspan="5" style="padding:20px;text-align:center;color:#64748b;">No items on this order</td></tr>`}</tbody>
+            <tbody>${itemsHTML || `<tr><td colspan="6" style="padding:20px;text-align:center;color:#64748b;">No items on this order</td></tr>`}</tbody>
           </table>
 
           <!-- Summary -->
@@ -1083,6 +1172,8 @@ async function previewInvoiceByOrder(orderId) {
               ${summaryHTML}
             </div>
           </div>
+
+          ${pendingReturnSummaryHtml}
 
           ${settings.footer_message ? `<div style="text-align:center;padding:16px;background:#f8fafc;border-radius:10px;font-size:0.9em;color:#64748b;font-style:italic;">${escapeHtml(settings.footer_message)}</div>` : ''}
         </div>

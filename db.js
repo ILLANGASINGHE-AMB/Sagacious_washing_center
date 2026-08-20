@@ -248,6 +248,39 @@ const DB = {
   async deleteOrderItem(id) { await _q(_sb.from('order_items').delete().eq('id', id)); },
   async deleteOrderItems(orderId) { await _q(_sb.from('order_items').delete().eq('order_id', orderId)); },
 
+  // ── Order Item Flags (Pending / Returned ledger) ──
+  // See supabase_order_item_flags_migration.sql. Flags are created via the
+  // flag_order_items RPC (atomic multi-row insert), never via a plain
+  // .insert() — keeps the "who cleared what" bookkeeping server-side and
+  // consistent with the create_order_with_items RPC convention used
+  // everywhere else in this file.
+  async flagOrderItems(orderId, customerId, flags) {
+    const { error } = await _sb.rpc('flag_order_items', { p_order_id: orderId, p_customer_id: customerId, p_flags: flags || [] });
+    if (error) { console.error('flag_order_items failed:', error); throw error; }
+  },
+  async createOrderWithItemsAndClearFlags(orderData, items, clears) {
+    const { data, error } = await _sb.rpc('create_order_with_items_and_clear_flags', { p_order: orderData, p_items: items || [], p_clears: clears || [] });
+    if (error) { console.error('create_order_with_items_and_clear_flags failed:', error); throw error; }
+    return data;
+  },
+  async getOpenFlagsForCustomer(customerId) {
+    return _q(_sb.from('order_item_flags').select('*').eq('customer_id', customerId).in('status', ['pending', 'returned']).order('created_at', { ascending: true }));
+  },
+  async getFlagsBySourceOrder(orderId) {
+    return _q(_sb.from('order_item_flags').select('*').eq('order_id', orderId).order('created_at', { ascending: true }));
+  },
+  async getFlagsClearedByOrder(orderId) {
+    return _q(_sb.from('order_item_flags').select('*').eq('cleared_in_order_id', orderId).order('created_at', { ascending: true }));
+  },
+  async getAllFlags() {
+    return _qAll(() => _sb.from('order_item_flags').select('*').order('created_at', { ascending: false }));
+  },
+  async updateFlagStatus(id, status) {
+    const data = { status };
+    if (status === 'cleared') data.cleared_at = new Date().toISOString();
+    await _q(_sb.from('order_item_flags').update(data).eq('id', id));
+  },
+
   // ── Invoices ──────────────────────────────
   async getInvoices() { return _qAll(() => _sb.from('invoices').select('*').order('id', { ascending: false })); },
   async addInvoice(data) {
