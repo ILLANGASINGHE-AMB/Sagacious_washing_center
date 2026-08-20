@@ -213,10 +213,10 @@ async function _refreshOrdersTable() {
               <button class="btn btn-secondary btn-sm" onclick="viewOrderDetails(${o.id})" title="View Order"><i class="fas fa-eye"></i> View</button>
               <span class="order-extra-actions" style="${extraStyle}">
                 ${canEditOrders() ? `<button class="btn btn-primary btn-sm" onclick="showEditOrderModal(${o.id})"><i class="fas fa-edit"></i> Edit</button>` : ''}
+                <button class="btn btn-success btn-sm" onclick="printInvoiceByOrder(${o.id})" style="background:#10b981;border-color:#10b981;color:#fff;"><i class="fas fa-print"></i> Print</button>
                 ${canEditOrders() ? `<button class="btn btn-secondary btn-sm" onclick="showMarkFlagModal(${o.id},'pending')" style="color:#92400e;" title="Tick item(s) to keep as pending"><i class="fas fa-hourglass-half"></i> Pending</button>` : ''}
                 ${canMarkReturned() ? `<button class="btn btn-secondary btn-sm" onclick="showMarkFlagModal(${o.id},'returned')" style="color:#7c2d12;" title="Record item(s) the customer handed back"><i class="fas fa-rotate-left"></i> Returned</button>` : ''}
                 ${(canBulkAssign && o.delivery_status === 'out_for_delivery') ? `<button class="btn btn-secondary btn-sm" onclick="markOrderDelivered(${o.id})" style="color:#166534;" title="Mark this order delivered"><i class="fas fa-truck-ramp-box"></i> Delivered</button>` : ''}
-                <button class="btn btn-success btn-sm" onclick="printInvoiceByOrder(${o.id})" style="background:#10b981;border-color:#10b981;color:#fff;"><i class="fas fa-print"></i> Print</button>
                 ${isAdmin() ? `<button class="btn btn-danger btn-sm" onclick="deleteOrderConfirm(${o.id})"><i class="fas fa-trash"></i> Delete</button>` : ''}
               </span>
             </div>

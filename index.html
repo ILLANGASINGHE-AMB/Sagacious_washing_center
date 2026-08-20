@@ -51,6 +51,7 @@
       min-height: 100vh;
       font-size: 15px;
       transition: background 0.3s, color 0.3s;
+      overflow-x: hidden; /* safety net — wide content should scroll inside .table-wrap, never the page */
     }
     body.text-sm-ui { font-size: 13px; }
     body.text-md-ui { font-size: 15px; }
@@ -125,7 +126,12 @@
     .sidebar-footer button:hover { background: rgba(255,255,255,0.14); color:#fff; }
 
     /* Main content */
-    #main { margin-left: 240px; flex: 1; display: flex; flex-direction: column; min-height: 100vh; transition: margin-left 0.3s; }
+    /* min-width:0 overrides the flex default (min-width:auto), which sizes
+       a flex item to its content's min-content width. Without it, a wide
+       table row (e.g. Orders' action buttons) stretches #main — and the
+       whole page — sideways instead of letting .table-wrap's own
+       overflow-x:auto scroll just the table. */
+    #main { margin-left: 240px; flex: 1; min-width: 0; display: flex; flex-direction: column; min-height: 100vh; transition: margin-left 0.3s; }
     #main.collapsed { margin-left: 64px; }
 
     /* Top bar */
@@ -154,7 +160,7 @@
     }
 
     /* Content */
-    #content { flex: 1; padding: 28px; }
+    #content { flex: 1; min-width: 0; padding: 28px; }
 
     /* Cards */
     .card {
