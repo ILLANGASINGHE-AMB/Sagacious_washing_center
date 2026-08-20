@@ -4,6 +4,10 @@ let ordersPage=1, ordersSearch='', ordersStatusFilter='', ordersDriverFilter='',
 let ordersActionsVisible = true;
 let sigPad=null;
 let _ordersCustomers=[], _ordersDrivers=[];
+// Bulk "Assign Driver" selection (Orders tab, admin/staff only) — reset on
+// each fresh render of the Orders page, persists across search/filter/page
+// changes within one visit so ticks don't get lost while narrowing down.
+let ordersSelectedIds = new Set();
 
 async function renderOrders() {
   document.getElementById('page-title').textContent = 'Orders';
@@ -16,17 +20,23 @@ async function renderOrders() {
 
   // ── First load: build the full shell ──────────────────────────────────
   showLoading('content', 'Loading Orders...');
+  ordersSelectedIds = new Set();
   const [allOrders, customers, drivers] = await Promise.all([DB.getOrders(), DB.getCustomers(), DB.getDrivers()]);
   _ordersCustomers=customers; _ordersDrivers=drivers;
   const hasFilter = ordersStatusFilter||ordersDriverFilter||ordersCustFilter||ordersDateFrom||ordersDateTo;
   const statusOpts = ORDER_STATUSES.map(s=>`<option value="${s}" ${s===ordersStatusFilter?'selected':''}>${s}</option>`).join('');
   const driverOpts = drivers.map(d=>`<option value="${d.id}" ${String(d.id)===ordersDriverFilter?'selected':''}>${escapeHtml(d.name)}</option>`).join('');
   const custOpts   = customers.map(c=>`<option value="${c.id}" ${String(c.id)===ordersCustFilter?'selected':''}>${escapeHtml(c.hotel_name)}</option>`).join('');
+  // Bulk driver assignment is admin/staff only — it does not matter who
+  // originally collected the order (newchanges2.md), so drivers themselves
+  // don't get this reassignment tool.
+  const canBulkAssign = isAdmin() || isStaffUser();
 
   document.getElementById('content').innerHTML = `
     <div class="section-header">
       <span class="section-title">Orders</span>
       <div style="display:flex;gap:8px;flex-wrap:wrap;">
+        ${canBulkAssign ? `<button id="orders-assign-driver-btn" class="btn btn-primary" style="display:none;" onclick="showBulkAssignDriverModal()"><i class="fas fa-user-tie"></i> Assign Driver (<span id="orders-selected-count">0</span>)</button>` : ''}
         ${canAddOrders() ? `<button class="btn btn-primary" onclick="showAddOrderModal()"><i class="fas fa-plus"></i> New Order</button>` : ''}
       </div>
     </div>
@@ -92,6 +102,7 @@ async function renderOrders() {
       <div class="table-wrap">
         <table>
           <thead><tr>
+            ${canBulkAssign ? `<th style="width:36px;text-align:center;"><input type="checkbox" id="orders-select-all" onchange="toggleAllOrdersSelection(this)"/></th>` : ''}
             <th>Order ID</th><th>Customer</th><th>Pickup Date</th><th>Status</th>
             <th>Paid Date</th><th>Total</th><th>Driver</th>
             <th style="text-align:center;white-space:nowrap;">
@@ -172,23 +183,30 @@ async function _refreshOrdersTable() {
   }
   _syncOrdersDateBtns();
 
+  const canBulkAssign = isAdmin() || isStaffUser();
+  const colCount = canBulkAssign ? 9 : 8;
+
   // Update tbody only
   tbody.innerHTML = items.length===0
-    ? `<tr><td colspan="8" style="text-align:center;padding:32px;color:var(--text-muted);">No orders found</td></tr>`
+    ? `<tr><td colspan="${colCount}" style="text-align:center;padding:32px;color:var(--text-muted);">No orders found</td></tr>`
     : items.map(o => {
         const custName = getOrderCustomerName(o, cMap);
         const drv=dMap[o.driver_id];
         const inv=invMap[o.id];
         const drvName = drv ? escapeHtml(drv.name) : '<span style="color:var(--text-muted);font-style:italic;">—</span>';
+        const deliveryBadge = o.delivery_status === 'delivered'
+          ? `<div style="margin-top:2px;">${statusBadge('Delivered')}</div>`
+          : (o.delivery_status === 'out_for_delivery' ? `<div style="margin-top:2px;">${statusBadge('Out for Delivery')}</div>` : '');
         const extraStyle = ordersActionsVisible ? 'display:inline-flex;gap:4px;' : 'display:none;';
         return `<tr>
+          ${canBulkAssign ? `<td style="text-align:center;"><input type="checkbox" class="orders-row-check" data-order-id="${o.id}" ${ordersSelectedIds.has(o.id)?'checked':''} onchange="toggleOrderSelection(${o.id},this.checked)"/></td>` : ''}
           <td><strong style="font-family:monospace;color:var(--primary);">${o.batch_id||'—'}</strong></td>
           <td>${escapeHtml(custName)}</td>
           <td>${formatDate(o.pickup_date)}</td>
           <td>${statusBadge(o.status)}</td>
           <td>${o.status === 'Paid' ? (o.payment_date ? formatDate(o.payment_date) : '—') : '—'}</td>
           <td><strong>${formatCurrency(o.total_amount)}</strong></td>
-          <td>${drvName}</td>
+          <td>${drvName}${deliveryBadge}</td>
           <td style="text-align:center;">
             <div style="display:inline-flex;align-items:center;gap:4px;flex-wrap:nowrap;">
               <button class="btn btn-secondary btn-sm" onclick="viewOrderDetails(${o.id})" title="View Order"><i class="fas fa-eye"></i> View</button>
@@ -196,6 +214,7 @@ async function _refreshOrdersTable() {
                 ${canEditOrders() ? `<button class="btn btn-primary btn-sm" onclick="showEditOrderModal(${o.id})"><i class="fas fa-edit"></i> Edit</button>` : ''}
                 ${canEditOrders() ? `<button class="btn btn-secondary btn-sm" onclick="showMarkFlagModal(${o.id},'pending')" style="color:#92400e;" title="Tick item(s) to keep as pending"><i class="fas fa-hourglass-half"></i> Pending</button>` : ''}
                 ${canMarkReturned() ? `<button class="btn btn-secondary btn-sm" onclick="showMarkFlagModal(${o.id},'returned')" style="color:#7c2d12;" title="Record item(s) the customer handed back"><i class="fas fa-rotate-left"></i> Returned</button>` : ''}
+                ${(canBulkAssign && o.delivery_status === 'out_for_delivery') ? `<button class="btn btn-secondary btn-sm" onclick="markOrderDelivered(${o.id})" style="color:#166534;" title="Mark this order delivered"><i class="fas fa-truck-ramp-box"></i> Delivered</button>` : ''}
                 <button class="btn btn-success btn-sm" onclick="printInvoiceByOrder(${o.id})" style="background:#10b981;border-color:#10b981;color:#fff;"><i class="fas fa-print"></i> Print</button>
                 ${isAdmin() ? `<button class="btn btn-danger btn-sm" onclick="deleteOrderConfirm(${o.id})"><i class="fas fa-trash"></i> Delete</button>` : ''}
               </span>
@@ -207,6 +226,103 @@ async function _refreshOrdersTable() {
   // Sync the header toggle icon
   const toggleBtn = document.getElementById('orders-actions-toggle');
   if (toggleBtn) toggleBtn.innerHTML = ordersActionsVisible ? '<i class="fas fa-eye"></i>' : '<i class="fas fa-eye-slash"></i>';
+
+  _updateOrdersAssignBar();
+}
+
+// ─────────────────────────────────────────────
+// BULK "ASSIGN DRIVER" (admin/staff only) — it does not matter who
+// originally collected an order (newchanges2.md); any order can be
+// assigned to any driver for delivery. Sets delivery_status to
+// 'out_for_delivery' so it immediately shows up on that driver's own
+// Dashboard.
+// ─────────────────────────────────────────────
+function toggleOrderSelection(id, checked) {
+  if (checked) ordersSelectedIds.add(id); else ordersSelectedIds.delete(id);
+  _updateOrdersAssignBar();
+}
+
+function toggleAllOrdersSelection(checkbox) {
+  document.querySelectorAll('.orders-row-check').forEach(cb => {
+    cb.checked = checkbox.checked;
+    const id = parseInt(cb.dataset.orderId);
+    if (checkbox.checked) ordersSelectedIds.add(id); else ordersSelectedIds.delete(id);
+  });
+  _updateOrdersAssignBar();
+}
+
+// "Select all" only ever reflects the currently-rendered page/filter, so
+// re-derive it (rather than trust its last checked state) every refresh.
+function _updateOrdersAssignBar() {
+  const btn = document.getElementById('orders-assign-driver-btn');
+  const countEl = document.getElementById('orders-selected-count');
+  if (countEl) countEl.textContent = ordersSelectedIds.size;
+  if (btn) btn.style.display = ordersSelectedIds.size > 0 ? 'inline-flex' : 'none';
+
+  const rowChecks = document.querySelectorAll('.orders-row-check');
+  const selectAll = document.getElementById('orders-select-all');
+  if (selectAll) {
+    selectAll.checked = rowChecks.length > 0 && Array.from(rowChecks).every(cb => cb.checked);
+  }
+}
+
+async function showBulkAssignDriverModal() {
+  if (!(isAdmin() || isStaffUser())) return toast('Permission required', 'error');
+  if (ordersSelectedIds.size === 0) return toast('Select at least one order', 'error');
+  const drivers = await DB.getDrivers();
+  createModal('bulk-assign-driver-modal', `Assign Driver to ${ordersSelectedIds.size} Order(s)`, `
+    <div class="form-group">
+      <label class="form-label">Driver *</label>
+      <select class="form-input form-select" id="bad-driver-sel">
+        <option value="">Select driver...</option>
+        ${drivers.map(d => `<option value="${d.id}">${escapeHtml(d.name)}</option>`).join('')}
+      </select>
+    </div>
+    <div style="display:flex;gap:10px;justify-content:flex-end;margin-top:16px;">
+      <button class="btn btn-secondary" onclick="hideModal('bulk-assign-driver-modal')">Cancel</button>
+      <button class="btn btn-primary" id="bad-submit-btn"><i class="fas fa-user-tie"></i> Assign</button>
+    </div>`);
+  showModal('bulk-assign-driver-modal');
+  document.getElementById('bad-submit-btn').onclick = submitBulkAssignDriver;
+}
+
+async function submitBulkAssignDriver() {
+  const driverId = parseInt(document.getElementById('bad-driver-sel')?.value);
+  if (!driverId) return toast('Select a driver', 'error');
+  const btn = document.getElementById('bad-submit-btn');
+  if (btn) btn.disabled = true;
+  try {
+    const ids = [...ordersSelectedIds];
+    await DB.assignDriverToOrders(ids, driverId);
+    const drv = await DB.getDriver(driverId);
+    await DB.logAction('Assign Driver', `Assigned ${ids.length} order(s) to driver "${drv?.name || driverId}"`, { order_ids: ids, driver_id: driverId }, 'Order');
+    hideModal('bulk-assign-driver-modal');
+    toast(`${ids.length} order(s) assigned to ${drv?.name || 'driver'}`);
+    ordersSelectedIds.clear();
+    await _refreshOrdersTable();
+  } catch (err) {
+    console.error('bulk assign driver error:', err);
+    toast('Failed to assign driver: ' + (err.message || err), 'error');
+  } finally {
+    if (btn) btn.disabled = false;
+  }
+}
+
+// Available to admin/staff from the Orders tab, and to the driver
+// themselves from their own Dashboard (see renderDriverDashboard in app.js).
+async function markOrderDelivered(orderId) {
+  confirmDialog('Mark this order as delivered?', async () => {
+    try {
+      await DB.markOrderDelivered(orderId);
+      await DB.logAction('Mark Delivered', `Marked order #${orderId} as delivered`, { order_id: orderId }, 'Order');
+      toast('Order marked delivered');
+      if (document.getElementById('orders-table-body')) await _refreshOrdersTable();
+      if (typeof renderDriverDashboard === 'function' && document.getElementById('driver-dashboard-page')) await renderDriverDashboard();
+    } catch (err) {
+      console.error('markOrderDelivered error:', err);
+      toast('Failed to mark delivered: ' + (err.message || err), 'error');
+    }
+  }, 'Mark Delivered', false);
 }
 
 function changeOrdersPage(p){ordersPage=p;renderOrders();}

@@ -14,6 +14,20 @@ const TransportModule = {
     await this.renderTripsList();
   },
 
+  // newchanges2.md: when the logged-in user IS a driver, the customer
+  // list shown when selecting/ending a trip's stops should only include
+  // customers who actually have an order assigned to that driver — not
+  // every customer in the system. Admin/staff (managing trips on behalf
+  // of a driver) still see everyone. Search bar behavior is unaffected
+  // since this only narrows the base list filterCustomerButtons searches.
+  async _scopeCustomersToDriver(allCustomers) {
+    if (!(typeof isDriver === 'function' && isDriver()) || !currentUser?.driver_id) return allCustomers;
+    let orders = [];
+    try { orders = await DB.getOrdersByDriver(currentUser.driver_id); } catch (e) { orders = []; }
+    const custIds = new Set(orders.map(o => String(o.customer_id)));
+    return (allCustomers || []).filter(c => custIds.has(String(c.id)));
+  },
+
   renderLayout() {
     const container = document.getElementById('page-transport');
     if (!container) return;
@@ -565,7 +579,7 @@ const TransportModule = {
 
     if (!trip) return;
 
-    this.allCustomersCache = customers || [];
+    this.allCustomersCache = await this._scopeCustomersToDriver(customers || []);
     // Load existing selection or reset
     this.selectedCustomerSeq = trip.selected_customers ? [...trip.selected_customers] : [];
 
@@ -750,7 +764,7 @@ const TransportModule = {
 
     if (!trip) return;
 
-    this.allCustomersCache = customers || [];
+    this.allCustomersCache = await this._scopeCustomersToDriver(customers || []);
     this.selectedCustomerSeq = trip.selected_customers ? [...trip.selected_customers] : [];
 
     const todayDate = new Date().toISOString().split('T')[0];

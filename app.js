@@ -148,7 +148,7 @@ function getRoleAllowedPages() {
     return ['dashboard', 'orders', 'customers', 'drivers', 'vehicles', 'transport', 'paynow', 'deductions', 'items', 'expenses', 'pendings', 'settings'];
   }
   if (isDriver()) {
-    return ['transport', 'vehicles', 'customers', 'orders', 'settings'];
+    return ['dashboard', 'transport', 'vehicles', 'customers', 'orders', 'settings'];
   }
   return ['dashboard', 'settings'];
 }
@@ -183,8 +183,7 @@ function applyRoleSidebarRestrictions() {
   });
 
   if (!allowed.includes(currentPage)) {
-    const defaultPage = isDriver() ? 'transport' : 'dashboard';
-    navigate(defaultPage);
+    navigate('dashboard');
   }
 }
 
@@ -212,11 +211,7 @@ async function initApp() {
   // doesn't clobber a page the user already clicked into during the async gap before initApp()
   // ran (see _hasNavigatedOnce).
   if (!_hasNavigatedOnce) {
-    if (isDriver()) {
-      navigate('transport');
-    } else {
-      navigate('dashboard');
-    }
+    navigate('dashboard');
   }
   // Run these in background so they never delay the first page render
   DB.seedDemoData().catch(e => console.warn('seedDemoData:', e));
@@ -278,7 +273,7 @@ async function applySettings() {
 function navigate(page) {
   const allowed = getRoleAllowedPages();
   if (!allowed.includes(page)) {
-    page = isDriver() ? 'transport' : 'dashboard';
+    page = 'dashboard';
   }
   currentPage = page;
   _hasNavigatedOnce = true;
@@ -349,6 +344,8 @@ function toggleDark() {
 // DASHBOARD
 // ─────────────────────────────────────────────
 async function renderDashboard() {
+  if (isDriver()) return renderDriverDashboard();
+
   document.getElementById('page-title').textContent = 'Dashboard';
   const contentEl = document.getElementById('content');
   if (!contentEl) return;
@@ -449,6 +446,111 @@ async function renderDashboard() {
   try { await renderDashCharts(orders, payments, expenseCategories, expenseTypes, expenseAmounts, expenseEntries); } catch(e) { console.warn('charts:', e); }
   try { await renderRecentOrders(orders); } catch(e) { console.warn('recent orders:', e); }
   try { await renderUnpaidInvoices(invoices, orders); } catch(e) { console.warn('unpaid invoices:', e); }
+}
+
+// ─────────────────────────────────────────────
+// DRIVER DASHBOARD (newchanges2.md) — a driver's own landing page: their
+// trip/KM totals plus the orders currently assigned to them, with a
+// "Mark Delivered" action (markOrderDelivered lives in orders.js since
+// it's the same order_id-level action available to admin/staff from the
+// Orders tab). Wrapped in an id'd wrapper div so markOrderDelivered can
+// tell whether to refresh this view vs. the admin Orders table.
+// ─────────────────────────────────────────────
+async function renderDriverDashboard() {
+  document.getElementById('page-title').textContent = 'Dashboard';
+  const contentEl = document.getElementById('content');
+  if (!contentEl) return;
+  showLoading('content', 'Loading Dashboard...');
+
+  const driverId = currentUser && currentUser.driver_id;
+  if (!driverId) {
+    contentEl.innerHTML = `<div id="driver-dashboard-page" class="card" style="text-align:center;padding:48px;color:var(--text-muted);">
+      <i class="fas fa-user-slash" style="font-size:2em;margin-bottom:12px;display:block;"></i>
+      Your login isn't linked to a driver profile yet — ask an admin to link it from Drivers &gt; Manage Login.
+    </div>`;
+    return;
+  }
+
+  let allTrips = [], assignedOrders = [], customers = [];
+  try {
+    [allTrips, assignedOrders, customers] = await Promise.all([
+      DB.getTrips().catch(() => []),
+      DB.getOrdersByDriver(driverId).catch(() => []),
+      DB.getCustomers().catch(() => [])
+    ]);
+  } catch (e) { console.warn('Driver dashboard data fetch:', e); }
+
+  const driverTrips = (allTrips || []).filter(t => t.driver_id != null && String(t.driver_id) === String(driverId));
+  const totalTrips = driverTrips.length;
+  const totalKms = driverTrips.reduce((sum, t) => sum + (parseFloat(t.distance_km) || 0), 0);
+  const custMap = Object.fromEntries((customers || []).map(c => [c.id, c]));
+
+  const rows = (assignedOrders || []).map(o => {
+    const cust = custMap[o.customer_id];
+    const isDelivered = o.delivery_status === 'delivered';
+    const statusLabel = isDelivered ? 'Delivered' : 'Out for Delivery';
+    return `<tr>
+      <td><strong style="font-family:monospace;color:var(--primary);">${o.batch_id || '—'}</strong></td>
+      <td>${escapeHtml(cust ? cust.hotel_name : getOrderCustomerName(o))}</td>
+      <td><strong>${formatCurrency(o.total_amount)}</strong></td>
+      <td>${o.driver_assigned_at ? formatDate(o.driver_assigned_at) : '—'}</td>
+      <td>${statusBadge(statusLabel)}</td>
+      <td style="text-align:center;">
+        ${!isDelivered ? `<button class="btn btn-secondary btn-sm" onclick="markOrderDelivered(${o.id})"><i class="fas fa-check"></i> Mark Delivered</button>` : '—'}
+      </td>
+    </tr>`;
+  }).join('');
+
+  const outstandingCount = (assignedOrders || []).filter(o => o.delivery_status !== 'delivered').length;
+
+  document.getElementById('page-title').textContent = 'Dashboard';
+  contentEl.innerHTML = `
+    <div id="driver-dashboard-page">
+      <div class="section-header" style="margin-bottom:16px;">
+        <span class="section-title">Welcome, ${escapeHtml(currentUser.display_name || currentUser.username)}</span>
+      </div>
+
+      <div style="display:grid;grid-template-columns:repeat(auto-fit,minmax(200px,1fr));gap:16px;margin-bottom:20px;">
+        <div class="stat-card">
+          <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:8px;">
+            <div class="label">Total Trips</div>
+            <div style="background:#dcfce7;color:#16a34a;width:38px;height:38px;border-radius:10px;display:flex;align-items:center;justify-content:center;"><i class="fas fa-truck-fast"></i></div>
+          </div>
+          <div class="value" style="color:#16a34a;">${totalTrips}</div>
+          <div class="sub">${driverTrips.filter(t => t.status === 'Completed').length} completed</div>
+        </div>
+
+        <div class="stat-card">
+          <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:8px;">
+            <div class="label">Total KMs Driven</div>
+            <div style="background:#dbeafe;color:#2563eb;width:38px;height:38px;border-radius:10px;display:flex;align-items:center;justify-content:center;"><i class="fas fa-route"></i></div>
+          </div>
+          <div class="value" style="color:#2563eb;">${totalKms.toLocaleString('en-LK', { maximumFractionDigits: 1 })} <span style="font-size:0.6em;font-weight:600;">KM</span></div>
+          <div class="sub">Across all recorded trips</div>
+        </div>
+
+        <div class="stat-card">
+          <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:8px;">
+            <div class="label">Assigned Orders</div>
+            <div style="background:#fef9c3;color:#92400e;width:38px;height:38px;border-radius:10px;display:flex;align-items:center;justify-content:center;"><i class="fas fa-boxes-stacked"></i></div>
+          </div>
+          <div class="value" style="color:#92400e;">${(assignedOrders || []).length}</div>
+          <div class="sub">${outstandingCount} still out for delivery</div>
+        </div>
+      </div>
+
+      <div class="card" style="padding:0;">
+        <div class="section-header" style="padding:16px 20px 0;margin-bottom:0;">
+          <span class="section-title" style="font-size:1em;">Assigned Orders</span>
+        </div>
+        <div class="table-wrap">
+          <table>
+            <thead><tr><th>Order ID</th><th>Customer Name</th><th>Order Amount</th><th>Assigned Date</th><th>Status</th><th style="text-align:center;">Action</th></tr></thead>
+            <tbody>${rows || `<tr><td colspan="6" style="text-align:center;padding:32px;color:var(--text-muted);">No orders assigned to you yet</td></tr>`}</tbody>
+          </table>
+        </div>
+      </div>
+    </div>`;
 }
 
 function statCard(label, value, icon, color, bgColor, sub) {
@@ -1087,8 +1189,27 @@ function filterCustOrders(filter) {
   // Update the count in the heading
   const countEl = document.getElementById('cust-order-count');
   if (countEl) countEl.textContent = visibleCount;
+
+  updateCustOrdersSelectedTotal();
 }
 
+// Ticking 2+ orders in a customer's Order History shows a running total —
+// only counts boxes on currently-visible rows, so switching the Paid/
+// Unpaid/All filter can't silently include a now-hidden row's amount.
+function updateCustOrdersSelectedTotal() {
+  const el = document.getElementById('cust-orders-selected-total');
+  if (!el) return;
+  const checks = Array.from(document.querySelectorAll('.cust-order-check:checked'))
+    .filter(cb => cb.closest('tr')?.style.display !== 'none');
+  if (checks.length >= 2) {
+    const total = checks.reduce((s, cb) => s + (parseFloat(cb.dataset.amount) || 0), 0);
+    el.style.display = 'block';
+    el.textContent = `Total Amount (${checks.length} orders): ${formatCurrency(total)}`;
+  } else {
+    el.style.display = 'none';
+    el.textContent = '';
+  }
+}
 
 async function renderCustomerDetailTabBody(c, orders, tab) {
   const container = document.getElementById('cust-detail-tab-body');
@@ -1102,13 +1223,15 @@ async function renderCustomerDetailTabBody(c, orders, tab) {
   if (tab === 'orders') {
     const sortedOrders = [...(orders || [])].sort((a,b) => new Date(b.created_at || b.pickup_date || 0) - new Date(a.created_at || a.pickup_date || 0));
     container.innerHTML = `
-      <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:14px;">
+      <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:14px;flex-wrap:wrap;gap:10px;">
         <div style="font-weight:700;font-family:'Playfair Display',serif;font-size:1.15em;">Order History (<span id="cust-order-count">${sortedOrders.length}</span>)</div>
+        <div id="cust-orders-selected-total" style="display:none;font-weight:700;color:var(--primary);font-size:0.92em;background:var(--bg);border:1px solid var(--border);padding:6px 12px;border-radius:8px;"></div>
       </div>
       <div class="table-wrap">
         <table>
           <thead>
             <tr>
+              <th style="width:32px;"></th>
               <th>Order ID</th>
               <th>Status</th>
               <th>Total</th>
@@ -1119,6 +1242,7 @@ async function renderCustomerDetailTabBody(c, orders, tab) {
           <tbody id="cust-orders-tbody">
             ${sortedOrders.map(o => `
               <tr data-pay-status="${o._payStatus || 'unpaid'}" data-order-id="${o.id}">
+                <td style="text-align:center;"><input type="checkbox" class="cust-order-check" data-amount="${o.total_amount || 0}" onchange="updateCustOrdersSelectedTotal()"/></td>
                 <td><strong>${escapeHtml(o.batch_id || '#' + o.id)}</strong></td>
                 <td>${statusBadge(o.status)}</td>
                 <td style="font-weight:700;">${formatCurrency(o.total_amount)}</td>
@@ -1129,7 +1253,7 @@ async function renderCustomerDetailTabBody(c, orders, tab) {
                   </button>
                 </td>
               </tr>
-            `).join('') || `<tr><td colspan="5" style="text-align:center;padding:32px;color:var(--text-muted);">No order history found for this customer</td></tr>`}
+            `).join('') || `<tr><td colspan="6" style="text-align:center;padding:32px;color:var(--text-muted);">No order history found for this customer</td></tr>`}
           </tbody>
         </table>
       </div>

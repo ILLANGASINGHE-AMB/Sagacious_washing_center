@@ -236,6 +236,25 @@ const DB = {
     const rows = await _q(_sb.from('orders').select('*').eq('customer_id', cid).order('created_at', { ascending: false }));
     return (rows || []).map(r => { r.status = normalizeOrderStatus(r.status); return r; });
   },
+  async getOrdersByDriver(driverId) {
+    const rows = await _q(_sb.from('orders').select('*').eq('driver_id', driverId).order('driver_assigned_at', { ascending: false }));
+    return (rows || []).map(r => { r.status = normalizeOrderStatus(r.status); return r; });
+  },
+  // Bulk driver assignment (Orders tab "Assign Driver" action) — sets
+  // delivery_status to 'out_for_delivery' so the driver's Dashboard picks
+  // it up immediately. See supabase_order_delivery_assignment_migration.sql;
+  // delivery_status is a separate column from the payment `status` field on
+  // purpose, since normalizeOrderStatus() would otherwise silently collapse it.
+  async assignDriverToOrders(orderIds, driverId) {
+    await _q(_sb.from('orders').update({
+      driver_id: driverId,
+      delivery_status: 'out_for_delivery',
+      driver_assigned_at: new Date().toISOString()
+    }).in('id', orderIds));
+  },
+  async markOrderDelivered(orderId) {
+    await _q(_sb.from('orders').update({ delivery_status: 'delivered' }).eq('id', orderId));
+  },
 
   // ── Order Items ───────────────────────────
   async getOrderItems(orderId) { return _q(_sb.from('order_items').select('*').eq('order_id', orderId).order('id', { ascending: true })); },
@@ -362,7 +381,8 @@ const DB = {
       email: u.email,
       username: meta.username || u.email,
       role: meta.role || 'user',
-      display_name: meta.display_name || meta.username || u.email
+      display_name: meta.display_name || meta.username || u.email,
+      driver_id: meta.driver_id || null
     };
   },
 
