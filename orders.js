@@ -299,11 +299,18 @@ async function submitBulkAssignDriver() {
   if (btn) btn.disabled = true;
   try {
     const ids = [...ordersSelectedIds];
+    // Snapshot each order's driver/delivery state BEFORE reassigning, so
+    // Undo can put it back exactly where it was (rather than just blanking
+    // it — this could be a reassignment, not a first assignment).
+    const beforeOrders = await DB.getOrders();
+    const previous = ids.map(id => {
+      const o = beforeOrders.find(o => o.id === id);
+      return { order_id: id, driver_id: o?.driver_id ?? null, delivery_status: o?.delivery_status ?? null, driver_assigned_at: o?.driver_assigned_at ?? null };
+    });
     await DB.assignDriverToOrders(ids, driverId);
     const drv = await DB.getDriver(driverId);
-    const allOrders = await DB.getOrders();
-    const batchIds = ids.map(id => allOrders.find(o => o.id === id)?.batch_id || `#${id}`);
-    await DB.logAction('Assign Driver', `Assigned ${ids.length} order(s) [${batchIds.join(', ')}] to driver "${drv?.name || driverId}"`, { order_ids: ids, batch_ids: batchIds, driver_id: driverId }, 'Order');
+    const batchIds = ids.map(id => beforeOrders.find(o => o.id === id)?.batch_id || `#${id}`);
+    await DB.logAction('Assign Driver', `Assigned ${ids.length} order(s) [${batchIds.join(', ')}] to driver "${drv?.name || driverId}"`, { order_ids: ids, batch_ids: batchIds, driver_id: driverId, undo: { type: 'revert_order_fields', orders: previous } }, 'Order');
     hideModal('bulk-assign-driver-modal');
     toast(`${ids.length} order(s) assigned to ${drv?.name || 'driver'}`);
     ordersSelectedIds.clear();
@@ -325,10 +332,11 @@ function driverAssignOrderToSelf(orderId) {
   if (!isDriver() || !currentUser?.driver_id) return toast('Driver login required', 'error');
   confirmDialog('Assign this order to yourself for delivery?', async () => {
     try {
+      const before = await DB.getOrder(orderId);
       await DB.assignDriverToOrders([orderId], currentUser.driver_id);
-      const order = await DB.getOrder(orderId);
-      const batchId = order ? order.batch_id : '#' + orderId;
-      await DB.logAction('Assign Driver', `Driver "${currentUser.display_name}" self-assigned order #${batchId}`, { order_id: orderId, batch_id: batchId, driver_id: currentUser.driver_id }, 'Order');
+      const batchId = before ? before.batch_id : '#' + orderId;
+      const previous = [{ order_id: orderId, driver_id: before?.driver_id ?? null, delivery_status: before?.delivery_status ?? null, driver_assigned_at: before?.driver_assigned_at ?? null }];
+      await DB.logAction('Assign Driver', `Driver "${currentUser.display_name}" self-assigned order #${batchId}`, { order_id: orderId, batch_id: batchId, driver_id: currentUser.driver_id, undo: { type: 'revert_order_fields', orders: previous } }, 'Order');
       toast(`Order #${batchId} assigned to you`);
       if (typeof renderDriverDashboard === 'function' && document.getElementById('driver-dashboard-page')) await renderDriverDashboard();
     } catch (err) {
@@ -345,8 +353,9 @@ async function markOrderDelivered(orderId) {
     try {
       const order = await DB.getOrder(orderId);
       const batchId = order ? order.batch_id : '#' + orderId;
+      const previous = [{ order_id: orderId, driver_id: order?.driver_id ?? null, delivery_status: order?.delivery_status ?? null, driver_assigned_at: order?.driver_assigned_at ?? null }];
       await DB.markOrderDelivered(orderId);
-      await DB.logAction('Mark Delivered', `Marked order #${batchId} as delivered`, { order_id: orderId, batch_id: batchId }, 'Order');
+      await DB.logAction('Mark Delivered', `Marked order #${batchId} as delivered`, { order_id: orderId, batch_id: batchId, undo: { type: 'revert_order_fields', orders: previous } }, 'Order');
       toast('Order marked delivered');
       if (document.getElementById('orders-table-body')) await _refreshOrdersTable();
       if (typeof renderDriverDashboard === 'function' && document.getElementById('driver-dashboard-page')) await renderDriverDashboard();
@@ -364,12 +373,16 @@ function markOrdersDeliveredBulk(orderIds) {
   if (!orderIds || !orderIds.length) return;
   confirmDialog(`Mark ${orderIds.length} order(s) as delivered?`, async () => {
     try {
+      const beforeOrders = await DB.getOrders();
+      const previous = orderIds.map(id => {
+        const o = beforeOrders.find(o => o.id === id);
+        return { order_id: id, driver_id: o?.driver_id ?? null, delivery_status: o?.delivery_status ?? null, driver_assigned_at: o?.driver_assigned_at ?? null };
+      });
       for (const id of orderIds) {
         await DB.markOrderDelivered(id);
       }
-      const allOrders = await DB.getOrders();
-      const batchIds = orderIds.map(id => allOrders.find(o => o.id === id)?.batch_id || `#${id}`);
-      await DB.logAction('Mark Delivered', `Marked ${orderIds.length} order(s) [${batchIds.join(', ')}] as delivered`, { order_ids: orderIds, batch_ids: batchIds }, 'Order');
+      const batchIds = orderIds.map(id => beforeOrders.find(o => o.id === id)?.batch_id || `#${id}`);
+      await DB.logAction('Mark Delivered', `Marked ${orderIds.length} order(s) [${batchIds.join(', ')}] as delivered`, { order_ids: orderIds, batch_ids: batchIds, undo: { type: 'revert_order_fields', orders: previous } }, 'Order');
       toast(`${orderIds.length} order(s) marked delivered`);
       if (typeof driverSelectedOrderIds !== 'undefined') driverSelectedOrderIds.clear();
       ordersSelectedIds.clear();
@@ -490,11 +503,13 @@ async function deleteOrderConfirm(id) {
     if (c) custName = c.hotel_name;
   }
   confirmDialog('Delete this order and all its items?', async () => {
+    const snapshot = await DB.getOrderFullSnapshot(id);
+    const trashId = snapshot ? await DB.addTrash({ entity_type: 'Order', entity_label: batchId, payload: snapshot, deleted_by: currentUser?.display_name }) : null;
     await DB.deleteOrder(id);
     await DB.logAction(
       'Delete Order',
       `Deleted order #${batchId} (Customer: "${custName}")`,
-      { order_id: id, batch_id: batchId, customer: custName },
+      { order_id: id, batch_id: batchId, customer: custName, undo: trashId ? { type: 'restore_trash', trash_id: trashId } : undefined },
       'Order'
     );
     toast('Order deleted');
@@ -1280,7 +1295,7 @@ async function saveNewOrder(){
     await DB.logAction(
       'New Order Add',
       `Created new order #${batchId} for customer "${custName}" (Total: LKR ${grandTotal.toLocaleString()})`,
-      { order_id: orderId, batch_id: batchId, customer: custName, total_amount: grandTotal, status: orderStatus },
+      { order_id: orderId, batch_id: batchId, customer: custName, total_amount: grandTotal, status: orderStatus, undo: { type: 'delete_record', entity_type: 'Order', id: orderId } },
       'Order'
     );
 
@@ -1470,7 +1485,16 @@ async function submitMarkFlag(orderId,customerId,flagType){
     const order = await DB.getOrder(orderId);
     const batchId = order ? order.batch_id : '#' + orderId;
     const label = flagType==='pending' ? 'Mark Pending' : 'Mark Returned';
-    await DB.logAction(label,`Marked ${flags.length} item type(s) as ${flagType} on order #${batchId}`,{order_id:orderId,batch_id:batchId,flags},'Order');
+    // flagOrderItems (an RPC) doesn't hand back the ids it just inserted, so
+    // pick them up with a follow-up read: newest row per order_item_id with
+    // this flag_type/status is what we just created.
+    const sourceFlags = await DB.getFlagsBySourceOrder(orderId);
+    const newFlagIds = flags.map(f => {
+      const matches = sourceFlags.filter(sf => String(sf.order_item_id) === String(f.order_item_id) && sf.flag_type === flagType && sf.status === flagType);
+      matches.sort((a,b) => new Date(b.created_at) - new Date(a.created_at));
+      return matches[0]?.id;
+    }).filter(Boolean);
+    await DB.logAction(label,`Marked ${flags.length} item type(s) as ${flagType} on order #${batchId}`,{order_id:orderId,batch_id:batchId,flags,undo: newFlagIds.length ? { type: 'delete_flags', flag_ids: newFlagIds } : undefined},'Order');
     hideModal('mark-flag-modal');
     toast(`Item(s) marked ${flagType}`);
     if(document.getElementById('orders-table-body')) _refreshOrdersTable();
@@ -1534,6 +1558,9 @@ function calcEditOrderTotal(){
 async function saveEditOrder(orderId,wasPickupOnly=false){
   const ro=!isAdmin();
   const originalOrder=await DB.getOrder(orderId);
+  // Snapshot pre-edit state for Undo — captured now, before anything below
+  // mutates it.
+  const previousItemsRaw = await DB.getOrderItems(orderId);
   const custId=ro?originalOrder.customer_id:parseInt(getPickerValue('eo-cust'));
   const pickup=ro?originalOrder.pickup_date:document.getElementById('eo-pickup').value;
   const delivery=ro?originalOrder.delivery_date:document.getElementById('eo-delivery').value;
@@ -1556,6 +1583,7 @@ async function saveEditOrder(orderId,wasPickupOnly=false){
 
   // Sync existing invoice and calculate totals
   const existingInv=await DB.getInvoiceByOrder(orderId);
+  const previousInvoice = existingInv ? { ...existingInv } : null;
   const discRate = existingInv ? (existingInv.discount_rate || 0) : 0;
   const eoFin = Financials.computeOrderFinancials(
     { discount_rate: discRate, delivery_charge: eoDelivery, extra_payment: extra },
@@ -1620,10 +1648,27 @@ async function saveEditOrder(orderId,wasPickupOnly=false){
 
   const existingOrder = await DB.getOrder(orderId);
   const batchId = existingOrder ? existingOrder.batch_id : '#' + orderId;
+  const previousOrderData = originalOrder ? {
+    customer_id: originalOrder.customer_id,
+    driver_id: originalOrder.driver_id,
+    pickup_date: originalOrder.pickup_date,
+    delivery_date: originalOrder.delivery_date,
+    status: originalOrder.status,
+    advance_payment: originalOrder.advance_payment,
+    extra_payment: originalOrder.extra_payment,
+    delivery_charge: originalOrder.delivery_charge,
+    discount_rate: originalOrder.discount_rate,
+    discount_amount: originalOrder.discount_amount,
+    total_amount: originalOrder.total_amount,
+    is_pickup_only: originalOrder.is_pickup_only
+  } : null;
+  const previousItemsForUndo = previousItemsRaw.map(i => ({ catalog_item_id: i.catalog_item_id, item_name: i.item_name, quantity: i.quantity, service_type: i.service_type, price: i.price, subtotal: i.subtotal }));
+
   await DB.logAction(
     'Edit Order',
     `Updated order #${batchId} (Total: LKR ${eoGrandTotal.toLocaleString()}, Status: ${status})`,
-    { order_id: orderId, batch_id: batchId, total_amount: eoGrandTotal, status: status },
+    { order_id: orderId, batch_id: batchId, total_amount: eoGrandTotal, status: status,
+      undo: previousOrderData ? { type: 'revert_edit', entity_type: 'Order', order_id: orderId, previous_order: previousOrderData, previous_items: previousItemsForUndo, previous_invoice: previousInvoice } : undefined },
     'Order'
   );
 

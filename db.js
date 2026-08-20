@@ -226,6 +226,37 @@ const DB = {
     // 4. Finally remove the order itself
     await _q(_sb.from('orders').delete().eq('id', id));
   },
+  // Full snapshot of everything deleteOrder() would remove, in the same
+  // shape restoreOrder() (Trash) puts back — used to back up an order
+  // before deleting it, not just for display.
+  async getOrderFullSnapshot(id) {
+    const order = await DB.getOrder(id);
+    if (!order) return null;
+    const items = await _q(_sb.from('order_items').select('*').eq('order_id', id).order('id', { ascending: true }));
+    const invoiceRows = await _q(_sb.from('invoices').select('*').eq('order_id', id));
+    const invoices = [];
+    for (const inv of (invoiceRows || [])) {
+      const payments = await _q(_sb.from('payments').select('*').eq('invoice_id', inv.id));
+      invoices.push({ ...inv, payments: payments || [] });
+    }
+    return { order, items: items || [], invoices };
+  },
+  // Reverse of getOrderFullSnapshot/deleteOrder — re-inserts everything
+  // with its original ids (safe: the id sequence has already moved past
+  // them, so there's no collision with new rows).
+  async restoreOrder(payload) {
+    await _q(_sb.from('orders').insert(payload.order));
+    if (payload.items && payload.items.length) {
+      await _q(_sb.from('order_items').insert(payload.items));
+    }
+    for (const inv of (payload.invoices || [])) {
+      const { payments, ...invRow } = inv;
+      await _q(_sb.from('invoices').insert(invRow));
+      if (payments && payments.length) {
+        await _q(_sb.from('payments').insert(payments));
+      }
+    }
+  },
   async getOrder(id) {
     const rows = await _q(_sb.from('orders').select('*').eq('id', id).limit(1));
     const r = rows[0] || null;
@@ -862,6 +893,62 @@ const DB = {
   },
   async clearActions() {
     await DB.setSetting('recent_system_actions', JSON.stringify([]));
+  },
+  // Rewrites one entry's `details.undone = true` after a successful Undo,
+  // so its Undo button doesn't get shown/used twice.
+  async markActionUndone(actionId) {
+    const actions = await DB.getActions();
+    const idx = actions.findIndex(a => a.id === actionId);
+    if (idx < 0) return;
+    actions[idx] = { ...actions[idx], details: { ...(actions[idx].details || {}), undone: true } };
+    await DB.setSetting('recent_system_actions', JSON.stringify(actions));
+  },
+
+  // ── Trash / Recycle Bin ───────────────────
+  // Anything deleted (Customer/Driver/Vehicle/Item/Trip/Order) is
+  // snapshotted here first and kept for 7 days before being purged for
+  // good — see supabase_trash_migration.sql. Also what Undo restores from
+  // for Delete-type Recent Actions entries.
+  async getTrash() {
+    const cutoff = new Date(Date.now() - 7 * 24 * 60 * 60 * 1000).toISOString();
+    try { await _q(_sb.from('trash').delete().lt('deleted_at', cutoff)); } catch (e) { console.warn('trash purge failed:', e); }
+    return _qAll(() => _sb.from('trash').select('*').order('deleted_at', { ascending: false }));
+  },
+  async addTrash({ entity_type, entity_label, payload, deleted_by }) {
+    const rows = await _q(_sb.from('trash').insert({ entity_type, entity_label, payload, deleted_by }).select());
+    return rows[0].id;
+  },
+  async getTrashItem(id) {
+    const rows = await _q(_sb.from('trash').select('*').eq('id', id).limit(1));
+    return rows[0] || null;
+  },
+  async deleteTrashForever(id) {
+    await _q(_sb.from('trash').delete().eq('id', id));
+  },
+  async restoreCustomer(payload) { await _q(_sb.from('customers').insert(payload)); },
+  async restoreDriver(payload) { await _q(_sb.from('drivers').insert(payload)); },
+  async restoreVehicle(payload) { await _q(_sb.from('vehicles').insert(payload)); },
+  async restoreItem(payload) { await _q(_sb.from('items').insert(payload)); },
+  async restoreTrip(payload) { await _q(_sb.from('trips').insert(payload)); },
+  // Dispatches to the right restore* function by entity_type and removes
+  // the trash row once restored. Shared by the Trash page's Restore button
+  // and the Recent Actions Undo button (undoRecentAction in app.js).
+  async restoreFromTrash(trashId) {
+    const row = await DB.getTrashItem(trashId);
+    if (!row) throw new Error('Trash item not found (already restored or purged)');
+    const restorers = {
+      Customer: DB.restoreCustomer,
+      Driver: DB.restoreDriver,
+      Vehicle: DB.restoreVehicle,
+      Item: DB.restoreItem,
+      Trip: DB.restoreTrip,
+      Order: DB.restoreOrder
+    };
+    const fn = restorers[row.entity_type];
+    if (!fn) throw new Error(`Don't know how to restore entity_type "${row.entity_type}"`);
+    await fn(row.payload);
+    await DB.deleteTrashForever(trashId);
+    return row;
   },
 
   // ── Expenses: Categories (Cash Book top-level columns) ─

@@ -150,7 +150,7 @@ function isDriver() { return currentUser && currentUser.role === 'driver'; }
 
 function getRoleAllowedPages() {
   if (isAdmin()) {
-    return ['dashboard', 'orders', 'customers', 'drivers', 'vehicles', 'transport', 'paynow', 'invoices', 'deductions', 'items', 'expenses', 'analytics', 'reports', 'pendings', 'recent-actions', 'settings'];
+    return ['dashboard', 'orders', 'customers', 'drivers', 'vehicles', 'transport', 'paynow', 'invoices', 'deductions', 'items', 'expenses', 'analytics', 'reports', 'pendings', 'recent-actions', 'trash', 'settings'];
   }
   if (isStaffUser()) {
     return ['dashboard', 'orders', 'customers', 'drivers', 'vehicles', 'transport', 'paynow', 'deductions', 'items', 'expenses', 'pendings', 'settings'];
@@ -189,6 +189,12 @@ function applyRoleSidebarRestrictions() {
     const page = a.dataset.page;
     a.style.display = allowed.includes(page) ? 'flex' : 'none';
   });
+
+  // Trash is admin-only (only admin can delete anything — canDelete()),
+  // same reasoning as the topbar Recent Actions button being effectively
+  // admin-only via the page allow-list above.
+  const trashBtn = document.getElementById('topbar-trash-btn');
+  if (trashBtn) trashBtn.style.display = isAdmin() ? 'inline-flex' : 'none';
 
   if (!allowed.includes(currentPage)) {
     navigate('dashboard');
@@ -313,7 +319,8 @@ function navigate(page) {
     orders: 'Orders', paynow: 'Pay Now', invoices: 'Invoices', payments: 'Payments',
     items: 'Items', expenses: 'Expenses', analytics: 'Data Analytics', reports: 'Reports', settings: 'Settings', deductions: 'Deductions',
     pendings: 'Pendings & Returns',
-    'recent-actions': 'Recent Actions'
+    'recent-actions': 'Recent Actions',
+    trash: 'Trash'
   };
   document.getElementById('page-title').textContent = titles[page] || page;
 
@@ -334,7 +341,8 @@ function navigate(page) {
     settings:  renderSettings,
     deductions: renderDeductions,
     pendings:  renderPendingsPage,
-    'recent-actions': renderRecentActions
+    'recent-actions': renderRecentActions,
+    trash:     () => { if (!requireAdmin()) { navigate('dashboard'); } else { renderTrash(); } }
   };
   if (pages[page]) pages[page]();
 }
@@ -1592,7 +1600,7 @@ async function saveNewCustomer() {
   await DB.logAction(
     'Add Customer',
     `Added new customer "${hotel_name}" (Phone: ${phone || 'N/A'}, Contact: ${contact || 'N/A'})`,
-    { id: custId, hotel_name, phone, contact_person: contact, address, email },
+    { id: custId, hotel_name, phone, contact_person: contact, address, email, undo: { type: 'delete_record', entity_type: 'Customer', id: custId } },
     'Customer'
   );
   hideModal('add-cust-modal');
@@ -1641,19 +1649,20 @@ async function saveEditCustomer(id) {
 
   await DB.updateCustomer(id,{hotel_name,contact_person:contact,phone,address,email});
 
+  const undoPayload = oldCust ? { type: 'revert_edit', entity_type: 'Customer', id, previous: { hotel_name: oldCust.hotel_name, contact_person: oldCust.contact_person, phone: oldCust.phone, address: oldCust.address, email: oldCust.email } } : undefined;
   const oldPhone = oldCust ? (oldCust.phone || '') : '';
   if (oldPhone !== phone) {
     await DB.logAction(
       'Phone Number Change',
       `Changed phone number for customer "${hotel_name}" from "${oldPhone || 'None'}" to "${phone || 'None'}"`,
-      { id, hotel_name, old_phone: oldPhone, new_phone: phone, contact_person: contact },
+      { id, hotel_name, old_phone: oldPhone, new_phone: phone, contact_person: contact, undo: undoPayload },
       'Customer'
     );
   } else {
     await DB.logAction(
       'Edit Customer',
       `Updated profile details for customer "${hotel_name}"`,
-      { id, hotel_name, phone, contact_person: contact, address, email },
+      { id, hotel_name, phone, contact_person: contact, address, email, undo: undoPayload },
       'Customer'
     );
   }
@@ -1674,11 +1683,12 @@ async function deleteCustomerConfirm(id) {
   const custPhone = cust ? cust.phone : '';
   confirmDialog('Delete this customer? (Their past orders will remain in the system)', async () => {
     try {
+      const trashId = cust ? await DB.addTrash({ entity_type: 'Customer', entity_label: custName, payload: cust, deleted_by: currentUser?.display_name }) : null;
       await DB.deleteCustomer(id);
       await DB.logAction(
         'Delete Customer',
         `Deleted customer "${custName}" (Phone: ${custPhone || 'N/A'})`,
-        { id, hotel_name: custName, phone: custPhone },
+        { id, hotel_name: custName, phone: custPhone, undo: trashId ? { type: 'restore_trash', trash_id: trashId } : undefined },
         'Customer'
       );
       toast('Customer deleted successfully');
@@ -2398,7 +2408,7 @@ async function saveNewDriver() {
     await DB.logAction(
       'Add Driver',
       `Added new driver "${name}" (Phone: ${phone}, NIC: ${nic})`,
-      { id: drvId, name, nickname, phone, phone2, nic, address, email, status },
+      { id: drvId, name, nickname, phone, phone2, nic, address, email, status, undo: { type: 'delete_record', entity_type: 'Driver', id: drvId } },
       'Driver'
     );
 
@@ -2484,6 +2494,8 @@ async function saveEditDriver(id) {
     return toast(`NIC "${nic}" is already registered to driver "${escapeHtml(dupNic.name)}"`, 'error');
   }
 
+  const oldDriver = all.find(d => String(d.id) === String(id));
+
   await DB.updateDriver(id, {
     name, nickname, phone, phone2, nic, address, email, status
   });
@@ -2491,7 +2503,8 @@ async function saveEditDriver(id) {
   await DB.logAction(
     'Edit Driver',
     `Updated details for driver "${name}"`,
-    { id, name, nickname, phone, phone2, nic, address, email, status },
+    { id, name, nickname, phone, phone2, nic, address, email, status,
+      undo: oldDriver ? { type: 'revert_edit', entity_type: 'Driver', id, previous: { name: oldDriver.name, nickname: oldDriver.nickname, phone: oldDriver.phone, phone2: oldDriver.phone2, nic: oldDriver.nic, address: oldDriver.address, email: oldDriver.email, status: oldDriver.status } } : undefined },
     'Driver'
   );
 
@@ -2511,11 +2524,12 @@ async function deleteDriverConfirm(id) {
   const drvPhone = d ? d.phone : '';
   confirmDialog('Delete this driver? (Their past trip records will remain in the system)', async () => {
     try {
+      const trashId = d ? await DB.addTrash({ entity_type: 'Driver', entity_label: drvName, payload: d, deleted_by: currentUser?.display_name }) : null;
       await DB.deleteDriver(id);
       await DB.logAction(
         'Delete Driver',
         `Deleted driver "${drvName}" (Phone: ${drvPhone || 'N/A'})`,
-        { id, name: drvName, phone: drvPhone },
+        { id, name: drvName, phone: drvPhone, undo: trashId ? { type: 'restore_trash', trash_id: trashId } : undefined },
         'Driver'
       );
       toast('Driver deleted successfully');
@@ -3206,7 +3220,7 @@ async function saveNewVehicle() {
   if (dup) return toast(`Vehicle No "${vehicleNo}" is already registered`, 'error');
 
   const newId = await DB.addVehicle({ vehicle_no: vehicleNo, category, model, status, initial_km: initialKm });
-  await DB.logAction('Add Vehicle', `Added vehicle "${vehicleNo}" (${category}, ${model || 'N/A'})`, { id: newId, vehicle_no: vehicleNo, category, model, status, initial_km: initialKm }, 'Vehicle');
+  await DB.logAction('Add Vehicle', `Added vehicle "${vehicleNo}" (${category}, ${model || 'N/A'})`, { id: newId, vehicle_no: vehicleNo, category, model, status, initial_km: initialKm, undo: { type: 'delete_record', entity_type: 'Vehicle', id: newId } }, 'Vehicle');
 
   hideModal('add-veh-modal');
   toast('Vehicle added successfully!');
@@ -3272,8 +3286,11 @@ async function saveEditVehicle(id) {
   const dup = all.find(v => String(v.id) !== String(id) && (v.vehicle_no || '').replace(/[\s-]/g, '').toUpperCase() === cleanPlate);
   if (dup) return toast(`Vehicle No "${vehicleNo}" is already registered to another vehicle`, 'error');
 
+  const oldVehicle = all.find(v => String(v.id) === String(id));
+
   await DB.updateVehicle(id, { vehicle_no: vehicleNo, category, model, status, initial_km: initialKm });
-  await DB.logAction('Edit Vehicle', `Updated vehicle "${vehicleNo}"`, { id, vehicle_no: vehicleNo, category, model, status, initial_km: initialKm }, 'Vehicle');
+  await DB.logAction('Edit Vehicle', `Updated vehicle "${vehicleNo}"`, { id, vehicle_no: vehicleNo, category, model, status, initial_km: initialKm,
+    undo: oldVehicle ? { type: 'revert_edit', entity_type: 'Vehicle', id, previous: { vehicle_no: oldVehicle.vehicle_no, category: oldVehicle.category, model: oldVehicle.model, status: oldVehicle.status, initial_km: oldVehicle.initial_km } } : undefined }, 'Vehicle');
 
   hideModal('edit-veh-modal');
   toast('Vehicle updated successfully!');
@@ -3290,8 +3307,9 @@ async function deleteVehicleConfirm(id) {
   const vNo = v ? v.vehicle_no : 'Vehicle #' + id;
   confirmDialog(`Delete vehicle "${vNo}"? (Past trip records will remain in the system)`, async () => {
     try {
+      const trashId = v ? await DB.addTrash({ entity_type: 'Vehicle', entity_label: vNo, payload: v, deleted_by: currentUser?.display_name }) : null;
       await DB.deleteVehicle(id);
-      await DB.logAction('Delete Vehicle', `Deleted vehicle "${vNo}"`, { id, vehicle_no: vNo }, 'Vehicle');
+      await DB.logAction('Delete Vehicle', `Deleted vehicle "${vNo}"`, { id, vehicle_no: vNo, undo: trashId ? { type: 'restore_trash', trash_id: trashId } : undefined }, 'Vehicle');
       toast('Vehicle deleted successfully');
       currentDetailVehicleId = null;
       renderVehicles();
@@ -3933,7 +3951,7 @@ async function processDeductionPayment(orderId, invoiceId, balance, deductionAmo
     }
 
     // 1. Add deduction record
-    await DB.addDeduction({
+    const deductionId = await DB.addDeduction({
       invoice_id: activeInvoiceId,
       invoice_number: invObj.invoice_number,
       original_amount: invObj.total_amount,
@@ -3972,7 +3990,7 @@ async function processDeductionPayment(orderId, invoiceId, balance, deductionAmo
 
     const dpOrder = await DB.getOrder(orderId);
     const dpBatchId = dpOrder ? dpOrder.batch_id : '#' + orderId;
-    await DB.logAction('Payment Received', `Applied deduction of LKR ${deductionAmount.toLocaleString()} (${reason || 'no reason given'}) and fully paid order #${dpBatchId}`, { order_id: orderId, batch_id: dpBatchId, invoice_id: activeInvoiceId, deduction_amount: deductionAmount, reason, method, notes }, 'Payment');
+    await DB.logAction('Payment Received', `Applied deduction of LKR ${deductionAmount.toLocaleString()} (${reason || 'no reason given'}) and fully paid order #${dpBatchId}`, { order_id: orderId, batch_id: dpBatchId, invoice_id: activeInvoiceId, deduction_amount: deductionAmount, reason, method, notes, undo: { type: 'undo_deduction', deduction_id: deductionId, invoice_id: activeInvoiceId, amount: deductionAmount } }, 'Payment');
 
     hideModal('paynow-options-modal');
     toast(`Deduction applied and invoice fully paid!`);
@@ -4012,7 +4030,7 @@ async function processFullPayment(orderId, invoiceId, amount, method, notes) {
 
     const fpOrder = await DB.getOrder(orderId);
     const fpBatchId = fpOrder ? fpOrder.batch_id : '#' + orderId;
-    await DB.logAction('Payment Received', `Received payment of LKR ${amount.toLocaleString()} via ${method} for order #${fpBatchId}`, { order_id: orderId, batch_id: fpBatchId, invoice_id: activeInvoiceId, amount, method, notes }, 'Payment');
+    await DB.logAction('Payment Received', `Received payment of LKR ${amount.toLocaleString()} via ${method} for order #${fpBatchId}`, { order_id: orderId, batch_id: fpBatchId, invoice_id: activeInvoiceId, amount, method, notes, undo: { type: 'undo_payment', invoice_id: activeInvoiceId } }, 'Payment');
 
     await DB.updateOrder(orderId, {
       status: 'Paid',
@@ -4094,7 +4112,10 @@ async function processPartialPayment(orderId, invoiceId, maxAmount, amount, meth
     }
 
     const ppBatchId = order ? order.batch_id : '#' + orderId;
-    await DB.logAction('Payment Received', `Received partial payment of LKR ${amount.toLocaleString()} via ${method} for order #${ppBatchId} (Status: ${paidStatus})`, { order_id: orderId, batch_id: ppBatchId, invoice_id: invoiceId, amount, method, notes, status: paidStatus }, 'Payment');
+    // Use activeInvoiceId, not the invoiceId param — the isTemp branch above
+    // creates a brand new invoice row, so invoiceId itself can be stale/null
+    // at this point; using it here would point Undo at the wrong invoice.
+    await DB.logAction('Payment Received', `Received partial payment of LKR ${amount.toLocaleString()} via ${method} for order #${ppBatchId} (Status: ${paidStatus})`, { order_id: orderId, batch_id: ppBatchId, invoice_id: activeInvoiceId, amount, method, notes, status: paidStatus, undo: { type: 'undo_payment', invoice_id: activeInvoiceId } }, 'Payment');
 
     hideModal('paynow-options-modal');
     toast(`Partial payment of LKR ${amount.toFixed(2)} recorded!`);
@@ -4910,7 +4931,7 @@ async function renderRecentActions() {
               <th>Category</th>
               <th>Description</th>
               <th>Performed By</th>
-              <th style="text-align:center;">Details</th>
+              <th style="text-align:center;">Actions</th>
             </tr>
           </thead>
           <tbody id="actions-table-body"></tbody>
@@ -5047,9 +5068,14 @@ async function _refreshActionsTable() {
           </div>
         </td>
         <td style="text-align:center;">
-          <button class="btn btn-secondary btn-sm" onclick="showActionDetailsModal('${a.id}')" title="View Payload Details">
-            <i class="fas fa-info-circle"></i>
-          </button>
+          <div style="display:inline-flex;gap:4px;">
+            <button class="btn btn-secondary btn-sm" onclick="showActionDetailsModal('${a.id}')" title="View Payload Details">
+              <i class="fas fa-info-circle"></i>
+            </button>
+            ${isAdmin() && a.details?.undo && !a.details?.undone
+              ? `<button class="btn btn-secondary btn-sm" style="color:#b45309;" onclick="undoRecentAction('${a.id}')" title="Undo this action"><i class="fas fa-rotate-left"></i> Undo</button>`
+              : (a.details?.undone ? `<span class="badge badge-gray" style="font-size:0.72em;">Undone</span>` : '')}
+          </div>
         </td>
       </tr>`;
     }).join('');
@@ -5170,6 +5196,206 @@ async function clearActionsConfirm() {
     await DB.clearActions();
     toast('System actions log cleared');
     _refreshActionsTable();
+  });
+}
+
+// ─────────────────────────────────────────────
+// UNDO — central dispatcher for the Recent Actions "Undo" button. Every
+// undoable log entry carries a details.undo = { type, ...whatever that
+// type needs } payload written at the time of the original action (see the
+// various logAction() call sites across app.js/orders.js/items.js/
+// transport.js). Payments/Deductions deliberately reuse the existing,
+// already-tested undoPaymentForInvoice()/undoDeductionConfirm() (invoice.js)
+// instead of a second reversal path for money.
+// ─────────────────────────────────────────────
+async function undoRecentAction(actionId) {
+  if (!isAdmin()) return toast('Admin permission required', 'error');
+  const actions = await DB.getActions();
+  const action = actions.find(a => String(a.id) === String(actionId));
+  if (!action) return toast('Action not found', 'error');
+  const undo = action.details && action.details.undo;
+  if (!undo || action.details.undone) return toast('This action cannot be undone', 'error');
+
+  const finish = async () => {
+    await DB.markActionUndone(actionId);
+    if (document.getElementById('actions-table-body')) await _refreshActionsTable();
+  };
+
+  if (undo.type === 'undo_payment') return undoPaymentForInvoice(undo.invoice_id, finish);
+  if (undo.type === 'undo_deduction') return undoDeductionConfirm(undo.deduction_id, undo.invoice_id, undo.amount, finish);
+
+  confirmDialog(`Undo "${action.action_type}"? ${escapeHtml(action.description || '')}`, async () => {
+    try {
+      switch (undo.type) {
+        case 'restore_trash': {
+          const row = await DB.restoreFromTrash(undo.trash_id);
+          toast(`${row.entity_type} "${row.entity_label}" restored`);
+          break;
+        }
+        case 'revert_order_fields': {
+          for (const o of (undo.orders || [])) {
+            await DB.updateOrder(o.order_id, { driver_id: o.driver_id, delivery_status: o.delivery_status, driver_assigned_at: o.driver_assigned_at });
+          }
+          toast('Order assignment/delivery status reverted');
+          break;
+        }
+        case 'delete_flags': {
+          for (const id of (undo.flag_ids || [])) await DB.deleteFlag(id);
+          toast('Pending/Returned flag(s) removed');
+          break;
+        }
+        case 'delete_record': {
+          await _undoCreateByDeleting(undo.entity_type, undo.id);
+          toast(`${undo.entity_type} removed`);
+          break;
+        }
+        case 'revert_edit': {
+          await _revertEdit(undo);
+          toast('Edit reverted');
+          break;
+        }
+        default:
+          toast('Unknown undo type', 'error');
+          return;
+      }
+      await finish();
+      _refreshOpenPageAfterUndo();
+    } catch (err) {
+      console.error('undoRecentAction error:', err);
+      toast('Failed to undo: ' + (err.message || err), 'error');
+    }
+  }, 'Undo', false);
+}
+
+// "Undo" on a create ("Add X") log entry = delete what was created — routed
+// through the same snapshot-to-Trash step the normal delete flows use, so
+// it's itself undoable again from Trash if that turns out to be a mistake.
+async function _undoCreateByDeleting(entityType, id) {
+  if (entityType === 'Order') {
+    const snapshot = await DB.getOrderFullSnapshot(id);
+    if (snapshot) await DB.addTrash({ entity_type: 'Order', entity_label: snapshot.order.batch_id, payload: snapshot, deleted_by: currentUser?.display_name });
+    await DB.deleteOrder(id);
+    return;
+  }
+  const meta = {
+    Customer: { get: DB.getCustomer, del: DB.deleteCustomer, label: r => r.hotel_name },
+    Driver:   { get: DB.getDriver,   del: DB.deleteDriver,   label: r => r.name },
+    Vehicle:  { get: DB.getVehicle,  del: DB.deleteVehicle,  label: r => r.vehicle_no },
+    Item:     { get: DB.getItem,     del: DB.deleteItem,     label: r => r.item_name }
+  }[entityType];
+  if (!meta) throw new Error(`Don't know how to undo a "${entityType}" creation`);
+  const record = await meta.get(id);
+  if (record) {
+    await DB.addTrash({ entity_type: entityType, entity_label: meta.label(record), payload: record, deleted_by: currentUser?.display_name });
+  }
+  await meta.del(id);
+}
+
+// "Undo" on an "Edit X" log entry = re-apply the field values captured
+// right before that edit was saved (see saveEditOrder/saveEditCustomer/
+// saveEditDriver/saveEditVehicle).
+async function _revertEdit(undo) {
+  if (undo.entity_type === 'Order') {
+    await DB.updateOrderWithItems(undo.order_id, undo.previous_order, undo.previous_items || []);
+    if (undo.previous_invoice) {
+      const { id: invId, payments, ...invFields } = undo.previous_invoice;
+      await DB.updateInvoice(invId, invFields);
+    }
+    return;
+  }
+  const updaters = { Customer: DB.updateCustomer, Driver: DB.updateDriver, Vehicle: DB.updateVehicle };
+  const fn = updaters[undo.entity_type];
+  if (!fn) throw new Error(`Don't know how to revert edit for "${undo.entity_type}"`);
+  await fn(undo.id, undo.previous);
+}
+
+// Best-effort refresh of whatever page is currently open after an undo —
+// mirrors the same "refresh if that view happens to be mounted" pattern
+// already used throughout orders.js (e.g. markOrderDelivered).
+function _refreshOpenPageAfterUndo() {
+  if (document.getElementById('orders-table-body')) _refreshOrdersTable();
+  if (document.getElementById('driver-dashboard-page')) renderDriverDashboard();
+  if (currentPage === 'customers') renderCustomers();
+  if (currentPage === 'drivers') renderDrivers();
+  if (currentPage === 'vehicles') _refreshVehiclesGrid();
+  if (currentPage === 'items') renderItems();
+  if (currentPage === 'trash') renderTrash();
+  if (currentPage === 'transport' && typeof TransportModule !== 'undefined') TransportModule.renderTripsList();
+}
+
+// ─────────────────────────────────────────────
+// TRASH / RECYCLE BIN — anything deleted (Customer/Driver/Vehicle/Item/
+// Trip/Order) lands here first via DB.addTrash (see the delete-confirm
+// functions in this file, orders.js, items.js, transport.js). DB.getTrash()
+// purges anything past 7 days before returning the rest. Restoring here is
+// the exact same DB.restoreFromTrash() the Recent Actions "Undo" button
+// uses for Delete-type entries — this page is just a direct view onto it.
+// ─────────────────────────────────────────────
+async function renderTrash() {
+  document.getElementById('page-title').textContent = 'Trash';
+  showLoading('content', 'Loading Trash...');
+
+  const items = await DB.getTrash();
+
+  const rows = items.map(t => {
+    const deletedAt = new Date(t.deleted_at);
+    const ageMs = Date.now() - deletedAt.getTime();
+    const daysLeft = Math.max(0, 7 - Math.floor(ageMs / (24 * 60 * 60 * 1000)));
+    const daysLeftColor = daysLeft <= 2 ? '#dc2626' : 'var(--text)';
+    return `<tr>
+      <td><span class="badge badge-blue">${escapeHtml(t.entity_type)}</span></td>
+      <td><strong>${escapeHtml(t.entity_label || '—')}</strong></td>
+      <td>${escapeHtml(t.deleted_by || 'Unknown')}</td>
+      <td>${formatDate(t.deleted_at)}</td>
+      <td style="font-weight:700;color:${daysLeftColor};">${daysLeft} day${daysLeft === 1 ? '' : 's'}</td>
+      <td style="text-align:center;">
+        <div style="display:inline-flex;gap:6px;">
+          <button class="btn btn-primary btn-sm" onclick="restoreTrashItemConfirm(${t.id})"><i class="fas fa-trash-arrow-up"></i> Restore</button>
+          <button class="btn btn-danger btn-sm" onclick="deleteTrashForeverConfirm(${t.id})"><i class="fas fa-trash"></i> Delete Forever</button>
+        </div>
+      </td>
+    </tr>`;
+  }).join('');
+
+  document.getElementById('content').innerHTML = `
+    <div class="section-header">
+      <span class="section-title"><i class="fas fa-trash-can" style="color:var(--primary);margin-right:8px;"></i>Trash</span>
+      <div style="font-size:0.83em;color:var(--text-muted);margin-top:2px;">Deleted records are kept here for 7 days before being permanently removed.</div>
+    </div>
+    <div class="card" style="padding:0;">
+      <div class="table-wrap">
+        <table>
+          <thead><tr><th>Type</th><th>Item</th><th>Deleted By</th><th>Deleted At</th><th>Days Left</th><th style="text-align:center;">Actions</th></tr></thead>
+          <tbody>${rows || `<tr><td colspan="6" style="text-align:center;padding:40px;color:var(--text-muted);"><div style="font-size:2em;margin-bottom:8px;">🗑️</div>Trash is empty</td></tr>`}</tbody>
+        </table>
+      </div>
+    </div>`;
+}
+
+function restoreTrashItemConfirm(trashId) {
+  confirmDialog('Restore this item back to the system?', async () => {
+    try {
+      const row = await DB.restoreFromTrash(trashId);
+      toast(`${row.entity_type} "${row.entity_label}" restored`);
+      renderTrash();
+    } catch (err) {
+      console.error('restoreTrashItemConfirm error:', err);
+      toast('Failed to restore: ' + (err.message || err), 'error');
+    }
+  }, 'Restore', false);
+}
+
+function deleteTrashForeverConfirm(trashId) {
+  if (!canDelete()) return toast('Admin permission required', 'error');
+  confirmDialog('Permanently delete this item? This cannot be undone.', async () => {
+    try {
+      await DB.deleteTrashForever(trashId);
+      toast('Deleted permanently');
+      renderTrash();
+    } catch (err) {
+      console.error('deleteTrashForeverConfirm error:', err);
+      toast('Failed to delete: ' + (err.message || err), 'error');
+    }
   });
 }
 

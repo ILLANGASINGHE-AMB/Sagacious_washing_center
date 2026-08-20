@@ -1132,8 +1132,9 @@ const TransportModule = {
 
       confirmDialog(`Are you sure you want to delete ${tripName}?`, async () => {
         try {
+          const trashId = trip ? await DB.addTrash({ entity_type: 'Trip', entity_label: trip.trip_id, payload: trip, deleted_by: currentUser?.display_name }) : null;
           await DB.deleteTrip(tripDbId);
-          await DB.logAction('Delete Trip', `Deleted trip record ${trip ? trip.trip_id : tripDbId}`, { id: tripDbId }, 'Transport');
+          await DB.logAction('Delete Trip', `Deleted trip record ${trip ? trip.trip_id : tripDbId}`, { id: tripDbId, undo: trashId ? { type: 'restore_trash', trash_id: trashId } : undefined }, 'Transport');
           showToast('Trip record deleted.');
           await this.renderTripsList();
         } catch (err) {

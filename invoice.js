@@ -1509,7 +1509,10 @@ async function submitRecordedPayment(invoiceId, balance) {
 }
 
 // ── UNDO PAYMENT (REVERSE PAYMENTS) ──
-async function undoPaymentForInvoice(invoiceId) {
+// onDone is optional — passed by undoRecentAction() (app.js) so the Recent
+// Actions dispatcher can mark that log entry undone only after this actually
+// succeeds, without stacking a second confirm dialog on top of this one.
+async function undoPaymentForInvoice(invoiceId, onDone) {
   confirmDialog('Are you sure you want to undo payment for this invoice? All recorded payments will be deleted and the status reverted.', async () => {
     try {
       const inv = await DB.getInvoice(invoiceId);
@@ -1563,6 +1566,7 @@ async function undoPaymentForInvoice(invoiceId) {
       if (currentPage === 'orders') renderOrders();
       else if (currentPage === 'invoices') _refreshInvoicesTable();
       else if (currentPage === 'paynow') renderPayNow();
+      if (onDone) await onDone();
     } catch (err) {
       toast('Failed to undo payment: ' + (err.message || err), 'error');
     }
@@ -1666,7 +1670,7 @@ async function _refreshDeductionsTable() {
   }
 }
 
-async function undoDeductionConfirm(deductionId, invoiceId, amount) {
+async function undoDeductionConfirm(deductionId, invoiceId, amount, onDone) {
   confirmDialog(`Are you sure you want to undo this deduction of LKR ${amount.toFixed(2)}? The amount will be re-added to the total paid amount and the final paid amount will be updated accordingly.`, async () => {
     try {
       const inv = await DB.getInvoice(invoiceId);
@@ -1697,6 +1701,7 @@ async function undoDeductionConfirm(deductionId, invoiceId, amount) {
 
       toast('Deduction undone successfully!');
       await _refreshDeductionsTable();
+      if (onDone) await onDone();
     } catch (err) {
       toast('Error undoing deduction: ' + (err.message || err), 'error');
     }

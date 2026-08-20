@@ -177,8 +177,8 @@ async function saveNewItem() {
   if(!item_name) return toast('Item name is required','error');
   const existing = await DB.getItemByCode(item_id);
   if(existing) return toast(`Item ID "${escapeHtml(item_id)}" already exists`,'error');
-  await DB.addItem({item_id, item_name, dry_clean_price, wash_press_price, wash_dry_price, description});
-  await DB.logAction('Add Item', `Added catalog item "${item_name}" (${item_id})`, { code: item_id, name: item_name, dry_clean_price, wash_press_price, wash_dry_price }, 'Item');
+  const newId = await DB.addItem({item_id, item_name, dry_clean_price, wash_press_price, wash_dry_price, description});
+  await DB.logAction('Add Item', `Added catalog item "${item_name}" (${item_id})`, { code: item_id, name: item_name, dry_clean_price, wash_press_price, wash_dry_price, undo: { type: 'delete_record', entity_type: 'Item', id: newId } }, 'Item');
   clearItemsCache();
   hideModal('add-item-modal');
   toast(`Item "${escapeHtml(item_name)}" added!`);
@@ -255,8 +255,9 @@ async function deleteItemConfirm(id) {
   if(!requireAdmin()) return;
   const item=await DB.getItem(id);
   confirmDialog(`Delete item "${escapeHtml(item?.item_name)}"?`, async()=>{
+    const trashId = item ? await DB.addTrash({ entity_type: 'Item', entity_label: item.item_name, payload: item, deleted_by: currentUser?.display_name }) : null;
     await DB.deleteItem(id);
-    await DB.logAction('Delete Item', `Deleted catalog item "${item?.item_name}" (${item?.item_id})`, { code: item?.item_id, name: item?.item_name }, 'Item');
+    await DB.logAction('Delete Item', `Deleted catalog item "${item?.item_name}" (${item?.item_id})`, { code: item?.item_id, name: item?.item_name, undo: trashId ? { type: 'restore_trash', trash_id: trashId } : undefined }, 'Item');
     clearItemsCache();
     toast('Item deleted'); renderItems();
   });
