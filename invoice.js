@@ -1206,6 +1206,7 @@ async function previewInvoiceByOrder(orderId) {
           </div>
           <div style="display:flex;gap:8px;align-items:center;">
             ${window.canEditOrders && canEditOrders() ? `<button onclick="document.getElementById('${modalId}-overlay').remove();showEditOrderModal(${order.id})" class="btn btn-secondary btn-sm"><i class="fas fa-edit"></i> Edit Order</button>` : ''}
+            ${window.canMarkReturned && canMarkReturned() ? `<button onclick="document.getElementById('${modalId}-overlay').remove();showMarkReturnedModal(${order.id})" class="btn btn-secondary btn-sm" style="color:#7c2d12;"><i class="fas fa-rotate-left"></i> Mark Returned</button>` : ''}
             <button onclick="document.getElementById('${modalId}-overlay').remove();printInvoiceByOrder(${orderId})" class="btn btn-primary btn-sm"><i class="fas fa-print"></i> Print Bill</button>
             <button onclick="document.getElementById('${modalId}-overlay').remove()" style="background:var(--bg);border:1px solid var(--border);border-radius:8px;padding:7px 12px;cursor:pointer;color:var(--text-muted);font-size:0.9em;display:inline-flex;align-items:center;gap:5px;"><i class="fas fa-times"></i></button>
           </div>

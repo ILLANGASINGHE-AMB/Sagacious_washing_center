@@ -194,6 +194,7 @@ async function _refreshOrdersTable() {
               <button class="btn btn-secondary btn-sm" onclick="viewOrderDetails(${o.id})" title="View Order"><i class="fas fa-eye"></i> View</button>
               <span class="order-extra-actions" style="${extraStyle}">
                 ${canEditOrders() ? `<button class="btn btn-primary btn-sm" onclick="showEditOrderModal(${o.id})"><i class="fas fa-edit"></i> Edit</button>` : ''}
+                ${canMarkReturned() ? `<button class="btn btn-secondary btn-sm" onclick="showMarkReturnedModal(${o.id})" style="color:#7c2d12;" title="Record item(s) the customer handed back"><i class="fas fa-rotate-left"></i> Returned</button>` : ''}
                 <button class="btn btn-success btn-sm" onclick="printInvoiceByOrder(${o.id})" style="background:#10b981;border-color:#10b981;color:#fff;"><i class="fas fa-print"></i> Print</button>
                 ${isAdmin() ? `<button class="btn btn-danger btn-sm" onclick="deleteOrderConfirm(${o.id})"><i class="fas fa-trash"></i> Delete</button>` : ''}
               </span>
@@ -664,7 +665,7 @@ async function saveCreditBill() {
 // ADD ORDER MODAL
 // ─────────────────────────────────────────────
 async function showAddOrderModal() {
-  if (!canAddOrders()) return toast('Staff or Admin permission required to add orders', 'error');
+  if (!canAddOrders()) return toast('Permission required to add orders', 'error');
   const [customers,drivers]=await Promise.all([DB.getCustomers(),DB.getDrivers()]);
   window._aoCustomersList = customers;
   window._aoMinDiscount = parseFloat(await DB.getSetting('min_discount_amount')||'0') || 0;
@@ -1277,6 +1278,72 @@ async function submitFlagPending(orderId,customerId,orderItemId,itemName,maxQty)
   } catch(err){
     console.error('flag pending error:',err);
     toast('Failed to mark item pending: '+(err.message||err),'error');
+  } finally {
+    if(btn) btn.disabled=false;
+  }
+}
+
+// ─────────────────────────────────────────────
+// RETURNED ITEMS — "Mark Returned" (order_item_flags ledger, flag_type
+// 'returned'). Gated by canMarkReturned() rather than canEditOrders(): it
+// only inserts a ledger row, never touches orders/order_items, so drivers
+// get this one exception to the "drivers cannot edit orders" rule
+// (Solution.md §4.2) without gaining any other order-edit capability.
+// Multiple items can be checked off in one go, matching how a driver
+// visit can hand back several things at once.
+// ─────────────────────────────────────────────
+async function showMarkReturnedModal(orderId){
+  if(!canMarkReturned()) return toast('Permission required to mark items returned','error');
+  const [order,items]=await Promise.all([DB.getOrder(orderId),DB.getOrderItems(orderId)]);
+  if(!order) return toast('Order not found','error');
+  if(!items.length) return toast('This order has no items','error');
+  createModal('mark-returned-modal',`Mark Returned Items — ${escapeHtml(order.batch_id||'')}`,`
+    <div style="margin-bottom:14px;font-size:0.9em;color:var(--text-muted);">Check any items the customer handed back, and how many.</div>
+    <div style="display:flex;flex-direction:column;gap:8px;">
+      ${items.map(i=>`
+        <label style="display:flex;align-items:center;gap:8px;padding:8px 10px;border:1px solid var(--border);border-radius:8px;">
+          <input type="checkbox" class="mr-check" data-item-id="${i.id}" data-item-name="${escapeHtml(i.item_name)}" data-max-qty="${i.quantity}" onchange="toggleMrQtyInput(this)"/>
+          <span style="flex:1;">${escapeHtml(i.item_name)} <span style="color:var(--text-muted);">(qty on order: ${i.quantity})</span></span>
+          <input type="number" class="mr-qty" data-item-id="${i.id}" value="${i.quantity}" min="1" max="${i.quantity}" disabled style="width:70px;padding:4px 6px;border-radius:6px;border:1px solid var(--border);"/>
+        </label>`).join('')}
+    </div>
+    <div style="display:flex;gap:10px;justify-content:flex-end;margin-top:16px;">
+      <button class="btn btn-secondary" onclick="hideModal('mark-returned-modal')">Cancel</button>
+      <button class="btn btn-primary" id="mr-submit-btn"><i class="fas fa-rotate-left"></i> Mark Returned</button>
+    </div>`);
+  showModal('mark-returned-modal');
+  document.getElementById('mr-submit-btn').onclick=()=>submitMarkReturned(orderId,order.customer_id);
+}
+
+function toggleMrQtyInput(checkbox){
+  const qtyInput=document.querySelector(`.mr-qty[data-item-id="${checkbox.dataset.itemId}"]`);
+  if(qtyInput) qtyInput.disabled=!checkbox.checked;
+}
+
+async function submitMarkReturned(orderId,customerId){
+  const flags=[];
+  document.querySelectorAll('.mr-check:checked').forEach(cb=>{
+    const itemId=cb.dataset.itemId;
+    const maxQty=parseFloat(cb.dataset.maxQty)||0;
+    const qtyInput=document.querySelector(`.mr-qty[data-item-id="${itemId}"]`);
+    let qty=parseFloat(qtyInput?.value)||maxQty;
+    if(qty<=0) qty=maxQty;
+    if(qty>maxQty) qty=maxQty;
+    flags.push({order_item_id:parseInt(itemId),item_name:cb.dataset.itemName,quantity:qty,flag_type:'returned'});
+  });
+  if(!flags.length) return toast('Select at least one item','error');
+  const btn=document.getElementById('mr-submit-btn');
+  if(btn) btn.disabled=true;
+  try {
+    await DB.flagOrderItems(orderId,customerId,flags);
+    await DB.logAction('Mark Returned',`Marked ${flags.length} item type(s) as returned on order`,{order_id:orderId,flags},'Order');
+    hideModal('mark-returned-modal');
+    toast('Item(s) marked returned');
+    if(document.getElementById('orders-table-body')) _refreshOrdersTable();
+    refreshCustomerDetailIfOpen(customerId);
+  } catch(err){
+    console.error('mark returned error:',err);
+    toast('Failed to mark items returned: '+(err.message||err),'error');
   } finally {
     if(btn) btn.disabled=false;
   }

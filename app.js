@@ -154,8 +154,14 @@ function getRoleAllowedPages() {
 }
 
 function canDelete() { return isAdmin(); }
-function canAddOrders() { return isAdmin() || isStaffUser(); }
+function canAddOrders() { return isAdmin() || isStaffUser() || isDriver(); }
 function canEditOrders() { return isAdmin() || isStaffUser(); }
+// Narrower than canEditOrders — drivers get exactly this one exception (see
+// Solution.md §4.2): recording a customer-returned item only inserts an
+// order_item_flags row, it never touches orders/order_items, so it doesn't
+// need full order-edit access. Admin/staff can use it too, e.g. to log a
+// return without opening the full edit modal.
+function canMarkReturned() { return isAdmin() || isStaffUser() || isDriver(); }
 function canEditCustomers() { return true; } // Admin, Staff User, Driver all can add/edit customers
 function canEditDrivers() { return isAdmin() || isStaffUser(); }
 function canEditVehicles() { return isAdmin() || isStaffUser(); }
