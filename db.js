@@ -280,6 +280,9 @@ const DB = {
     if (status === 'cleared') data.cleared_at = new Date().toISOString();
     await _q(_sb.from('order_item_flags').update(data).eq('id', id));
   },
+  async deleteFlag(id) {
+    await _q(_sb.from('order_item_flags').delete().eq('id', id));
+  },
 
   // ── Invoices ──────────────────────────────
   async getInvoices() { return _qAll(() => _sb.from('invoices').select('*').order('id', { ascending: false })); },

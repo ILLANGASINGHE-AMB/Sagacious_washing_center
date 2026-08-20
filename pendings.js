@@ -161,9 +161,14 @@ const PendingsModule = {
           <td>${f.cleared_at ? formatDate(f.cleared_at) : '—'}</td>
           <td>${escapeHtml(this._orderBatch(f.cleared_in_order_id))}</td>
           <td style="text-align:center;">
-            ${f.status !== 'cleared'
-              ? `<button class="btn btn-secondary btn-sm" onclick="PendingsModule.markCleared(${f.id})"><i class="fas fa-check"></i> Mark Cleared</button>`
-              : '—'}
+            <div style="display:inline-flex;gap:6px;">
+              ${f.status !== 'cleared'
+                ? `<button class="btn btn-secondary btn-sm" onclick="PendingsModule.markCleared(${f.id})"><i class="fas fa-check"></i> Mark Cleared</button>`
+                : ''}
+              ${typeof canDelete === 'function' && canDelete()
+                ? `<button class="btn btn-danger btn-sm" onclick="PendingsModule.deleteFlag(${f.id})" title="Permanently delete this record"><i class="fas fa-trash"></i></button>`
+                : ''}
+            </div>
           </td>
         </tr>`).join('');
   },
@@ -180,5 +185,22 @@ const PendingsModule = {
         toast('Failed to update: ' + (err.message || err), 'error');
       }
     }, 'Mark Cleared', false);
+  },
+
+  // Admin-only (see canDelete() gating above the button) — permanently
+  // removes the ledger row itself, unlike Mark Cleared which just changes
+  // its status. Use for a mistaken/duplicate entry, not routine resolution.
+  async deleteFlag(id) {
+    confirmDialog('Permanently delete this pending/returned record? This cannot be undone.', async () => {
+      try {
+        await DB.deleteFlag(id);
+        toast('Record deleted');
+        await this.loadData();
+        this.refreshTable();
+      } catch (err) {
+        console.error('deleteFlag error:', err);
+        toast('Failed to delete: ' + (err.message || err), 'error');
+      }
+    }, 'Delete', true);
   }
 };
