@@ -3940,6 +3940,10 @@ async function processDeductionPayment(orderId, invoiceId, balance, deductionAmo
     });
     paynowSelectedIds = paynowSelectedIds.filter(id => id !== orderId);
 
+    const dpOrder = await DB.getOrder(orderId);
+    const dpBatchId = dpOrder ? dpOrder.batch_id : '#' + orderId;
+    await DB.logAction('Payment Received', `Applied deduction of LKR ${deductionAmount.toLocaleString()} (${reason || 'no reason given'}) and fully paid order #${dpBatchId}`, { order_id: orderId, batch_id: dpBatchId, invoice_id: activeInvoiceId, deduction_amount: deductionAmount, reason, method, notes }, 'Payment');
+
     hideModal('paynow-options-modal');
     toast(`Deduction applied and invoice fully paid!`);
 
@@ -3976,7 +3980,9 @@ async function processFullPayment(orderId, invoiceId, amount, method, notes) {
       notes: notes
     });
 
-    await DB.logAction('Payment Received', `Received payment of LKR ${amount.toLocaleString()} via ${method} for Order #${orderId}`, { order_id: orderId, invoice_id: activeInvoiceId, amount, method, notes }, 'Payment');
+    const fpOrder = await DB.getOrder(orderId);
+    const fpBatchId = fpOrder ? fpOrder.batch_id : '#' + orderId;
+    await DB.logAction('Payment Received', `Received payment of LKR ${amount.toLocaleString()} via ${method} for order #${fpBatchId}`, { order_id: orderId, batch_id: fpBatchId, invoice_id: activeInvoiceId, amount, method, notes }, 'Payment');
 
     await DB.updateOrder(orderId, {
       status: 'Paid',
@@ -4056,6 +4062,9 @@ async function processPartialPayment(orderId, invoiceId, maxAmount, amount, meth
     if (paidStatus === 'Paid') {
       paynowSelectedIds = paynowSelectedIds.filter(id => id !== orderId);
     }
+
+    const ppBatchId = order ? order.batch_id : '#' + orderId;
+    await DB.logAction('Payment Received', `Received partial payment of LKR ${amount.toLocaleString()} via ${method} for order #${ppBatchId} (Status: ${paidStatus})`, { order_id: orderId, batch_id: ppBatchId, invoice_id: invoiceId, amount, method, notes, status: paidStatus }, 'Payment');
 
     hideModal('paynow-options-modal');
     toast(`Partial payment of LKR ${amount.toFixed(2)} recorded!`);

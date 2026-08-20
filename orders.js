@@ -295,7 +295,9 @@ async function submitBulkAssignDriver() {
     const ids = [...ordersSelectedIds];
     await DB.assignDriverToOrders(ids, driverId);
     const drv = await DB.getDriver(driverId);
-    await DB.logAction('Assign Driver', `Assigned ${ids.length} order(s) to driver "${drv?.name || driverId}"`, { order_ids: ids, driver_id: driverId }, 'Order');
+    const allOrders = await DB.getOrders();
+    const batchIds = ids.map(id => allOrders.find(o => o.id === id)?.batch_id || `#${id}`);
+    await DB.logAction('Assign Driver', `Assigned ${ids.length} order(s) [${batchIds.join(', ')}] to driver "${drv?.name || driverId}"`, { order_ids: ids, batch_ids: batchIds, driver_id: driverId }, 'Order');
     hideModal('bulk-assign-driver-modal');
     toast(`${ids.length} order(s) assigned to ${drv?.name || 'driver'}`);
     ordersSelectedIds.clear();
@@ -313,8 +315,10 @@ async function submitBulkAssignDriver() {
 async function markOrderDelivered(orderId) {
   confirmDialog('Mark this order as delivered?', async () => {
     try {
+      const order = await DB.getOrder(orderId);
+      const batchId = order ? order.batch_id : '#' + orderId;
       await DB.markOrderDelivered(orderId);
-      await DB.logAction('Mark Delivered', `Marked order #${orderId} as delivered`, { order_id: orderId }, 'Order');
+      await DB.logAction('Mark Delivered', `Marked order #${batchId} as delivered`, { order_id: orderId, batch_id: batchId }, 'Order');
       toast('Order marked delivered');
       if (document.getElementById('orders-table-body')) await _refreshOrdersTable();
       if (typeof renderDriverDashboard === 'function' && document.getElementById('driver-dashboard-page')) await renderDriverDashboard();
@@ -335,7 +339,9 @@ function markOrdersDeliveredBulk(orderIds) {
       for (const id of orderIds) {
         await DB.markOrderDelivered(id);
       }
-      await DB.logAction('Mark Delivered', `Marked ${orderIds.length} order(s) as delivered`, { order_ids: orderIds }, 'Order');
+      const allOrders = await DB.getOrders();
+      const batchIds = orderIds.map(id => allOrders.find(o => o.id === id)?.batch_id || `#${id}`);
+      await DB.logAction('Mark Delivered', `Marked ${orderIds.length} order(s) [${batchIds.join(', ')}] as delivered`, { order_ids: orderIds, batch_ids: batchIds }, 'Order');
       toast(`${orderIds.length} order(s) marked delivered`);
       if (typeof driverSelectedOrderIds !== 'undefined') driverSelectedOrderIds.clear();
       if (document.getElementById('orders-table-body')) await _refreshOrdersTable();
@@ -1432,8 +1438,10 @@ async function submitMarkFlag(orderId,customerId,flagType){
   if(btn) btn.disabled=true;
   try {
     await DB.flagOrderItems(orderId,customerId,flags);
+    const order = await DB.getOrder(orderId);
+    const batchId = order ? order.batch_id : '#' + orderId;
     const label = flagType==='pending' ? 'Mark Pending' : 'Mark Returned';
-    await DB.logAction(label,`Marked ${flags.length} item type(s) as ${flagType} on order`,{order_id:orderId,flags},'Order');
+    await DB.logAction(label,`Marked ${flags.length} item type(s) as ${flagType} on order #${batchId}`,{order_id:orderId,batch_id:batchId,flags},'Order');
     hideModal('mark-flag-modal');
     toast(`Item(s) marked ${flagType}`);
     if(document.getElementById('orders-table-body')) _refreshOrdersTable();
