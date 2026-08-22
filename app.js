@@ -737,12 +737,12 @@ async function renderDashCharts(orders, payments, expenseCategories = [], expens
 
   // ── Daily Orders by Status (last 14 days) ──
   // Shows total ORDER VALUE (LKR) per status per day — one stacked bar segment per status.
-  // X-axis = dates, Y-axis = LKR value (formatted with K/M shorthand).
+  // X-axis = dates (pickup date, matching the Orders list), Y-axis = LKR value (formatted with K/M shorthand).
   const datasets = ORDER_STATUSES.map(status => ({
     label: status,
     data: days.map(d =>
       orders
-        .filter(o => o.status === status && (o.created_at || '').startsWith(d))
+        .filter(o => o.status === status && (o.pickup_date || '').startsWith(d))
         .reduce((sum, o) => sum + (parseFloat(o.total_amount) || 0), 0)
     ),
     backgroundColor: statusChartColor(status),
