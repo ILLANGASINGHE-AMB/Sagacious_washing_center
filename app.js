@@ -3660,7 +3660,12 @@ async function showPayNowOptionsModal(orderId) {
       <div><span class="form-label">Total Amount:</span> <strong>${formatCurrency(inv.total_amount)}</strong></div>
       <div><span class="form-label">Remaining Balance:</span> <strong style="color:var(--danger);">${formatCurrency(balance)}</strong></div>
     </div>
-    
+
+    <div class="form-group" style="max-width:240px;">
+      <label class="form-label">Paying Date *</label>
+      <input type="date" class="form-input" id="pn-payment-date" value="${today()}" max="${today()}"/>
+    </div>
+
     <div style="display:grid;grid-template-columns:1fr 1fr 1fr;gap:16px;margin-bottom:20px;">
       <!-- Full Payment Card -->
       <div class="card" onclick="showFullInputContainer()" 
@@ -3868,10 +3873,17 @@ function recalcPayNowPartial(balance) {
 }
 
 function confirmFullPayment(orderId, invoiceId, amount) {
+  let paymentDateISO;
+  try {
+    paymentDateISO = resolvePaymentTimestamp('pn-payment-date');
+  } catch (err) {
+    return toast(err.message, 'error');
+  }
+
   const method = document.getElementById('pn-full-method').value;
   const notesInput = document.getElementById('pn-full-notes').value.trim();
   let notes = notesInput || 'Paid fully via Pay Now tab';
-  
+
   if (method === 'Cheque') {
     const chqNum = document.getElementById('pn-full-cheque-num').value.trim();
     if (!chqNum) return toast('Please enter a cheque number', 'error');
@@ -3879,7 +3891,7 @@ function confirmFullPayment(orderId, invoiceId, amount) {
   }
 
   confirmDialog(`Confirm Full Payment of LKR ${amount.toFixed(2)} using ${method}?`, async () => {
-    await processFullPayment(orderId, invoiceId, amount, method, notes);
+    await processFullPayment(orderId, invoiceId, amount, method, notes, paymentDateISO);
   }, 'Confirm', false);
 }
 
@@ -3894,6 +3906,13 @@ function confirmPartialPayment(orderId, invoiceId, maxAmount) {
     return toast(`Amount cannot exceed the remaining balance of LKR ${maxAmount.toFixed(2)}`, 'error');
   }
 
+  let paymentDateISO;
+  try {
+    paymentDateISO = resolvePaymentTimestamp('pn-payment-date');
+  } catch (err) {
+    return toast(err.message, 'error');
+  }
+
   const method = document.getElementById('pn-partial-method').value;
   const notesInput = document.getElementById('pn-partial-notes').value.trim();
   let notes = notesInput || 'Partial payment via Pay Now tab';
@@ -3905,7 +3924,7 @@ function confirmPartialPayment(orderId, invoiceId, maxAmount) {
   }
 
   confirmDialog(`Confirm Partial Payment of LKR ${amount.toFixed(2)} using ${method}?`, async () => {
-    await processPartialPayment(orderId, invoiceId, maxAmount, amount, method, notes);
+    await processPartialPayment(orderId, invoiceId, maxAmount, amount, method, notes, paymentDateISO);
   }, 'Confirm', false);
 }
 
@@ -3913,12 +3932,19 @@ function confirmDeductionPayment(orderId, invoiceId, balance) {
   const deductInput = document.getElementById('paynow-deduct-amount');
   const deductionAmount = parseFloat(deductInput?.value || '0');
   const reason = document.getElementById('paynow-deduct-reason')?.value.trim() || 'No reason provided';
-  
+
   if (isNaN(deductionAmount) || deductionAmount <= 0) {
     return toast('Please enter a valid deduction amount', 'error');
   }
   if (deductionAmount > balance) {
     return toast('Deduction cannot exceed the remaining due balance', 'error');
+  }
+
+  let paymentDateISO;
+  try {
+    paymentDateISO = resolvePaymentTimestamp('pn-payment-date');
+  } catch (err) {
+    return toast(err.message, 'error');
   }
 
   const method = document.getElementById('pn-deduct-method').value;
@@ -3932,12 +3958,13 @@ function confirmDeductionPayment(orderId, invoiceId, balance) {
   }
 
   confirmDialog(`Confirm deduction of LKR ${deductionAmount.toFixed(2)} and payment of LKR ${(balance - deductionAmount).toFixed(2)} using ${method}?`, async () => {
-    await processDeductionPayment(orderId, invoiceId, balance, deductionAmount, reason, method, notes);
+    await processDeductionPayment(orderId, invoiceId, balance, deductionAmount, reason, method, notes, paymentDateISO);
   }, 'Confirm', false);
 }
 
-async function processDeductionPayment(orderId, invoiceId, balance, deductionAmount, reason, method, notes) {
+async function processDeductionPayment(orderId, invoiceId, balance, deductionAmount, reason, method, notes, paymentDateISO) {
   try {
+    paymentDateISO = paymentDateISO || new Date().toISOString();
     let activeInvoiceId = invoiceId;
     const isTemp = window._isTempInvoice;
     const invObj = window._currentPayNowInvoice;
@@ -3946,7 +3973,7 @@ async function processDeductionPayment(orderId, invoiceId, balance, deductionAmo
       invObj.deduction_amount = deductionAmount;
       invObj.balance = 0;
       invObj.paid_status = 'Paid';
-      invObj.payment_date = new Date().toISOString();
+      invObj.payment_date = paymentDateISO;
       activeInvoiceId = await DB.addInvoice(invObj);
     }
 
@@ -3967,7 +3994,8 @@ async function processDeductionPayment(orderId, invoiceId, balance, deductionAmo
         invoice_id: activeInvoiceId,
         amount: payAmount,
         method: method,
-        notes: notes
+        notes: notes,
+        date: paymentDateISO
       });
     }
 
@@ -3977,14 +4005,14 @@ async function processDeductionPayment(orderId, invoiceId, balance, deductionAmo
         deduction_amount: (invObj.deduction_amount || 0) + deductionAmount,
         balance: 0,
         paid_status: 'Paid',
-        payment_date: new Date().toISOString()
+        payment_date: paymentDateISO
       });
     }
 
     // 4. Update order to Paid
     await DB.updateOrder(orderId, {
       status: 'Paid',
-      payment_date: new Date().toISOString()
+      payment_date: paymentDateISO
     });
     paynowSelectedIds = paynowSelectedIds.filter(id => id !== orderId);
 
@@ -4002,8 +4030,9 @@ async function processDeductionPayment(orderId, invoiceId, balance, deductionAmo
   }
 }
 
-async function processFullPayment(orderId, invoiceId, amount, method, notes) {
+async function processFullPayment(orderId, invoiceId, amount, method, notes, paymentDateISO) {
   try {
+    paymentDateISO = paymentDateISO || new Date().toISOString();
     let activeInvoiceId = invoiceId;
     const isTemp = window._isTempInvoice;
     const invObj = window._currentPayNowInvoice;
@@ -4011,13 +4040,13 @@ async function processFullPayment(orderId, invoiceId, amount, method, notes) {
     if (isTemp) {
       invObj.paid_status = 'Paid';
       invObj.balance = 0;
-      invObj.payment_date = new Date().toISOString();
+      invObj.payment_date = paymentDateISO;
       activeInvoiceId = await DB.addInvoice(invObj);
     } else {
       await DB.updateInvoice(invoiceId, {
         balance: 0,
         paid_status: 'Paid',
-        payment_date: new Date().toISOString()
+        payment_date: paymentDateISO
       });
     }
 
@@ -4025,7 +4054,8 @@ async function processFullPayment(orderId, invoiceId, amount, method, notes) {
       invoice_id: activeInvoiceId,
       amount: amount,
       method: method,
-      notes: notes
+      notes: notes,
+      date: paymentDateISO
     });
 
     const fpOrder = await DB.getOrder(orderId);
@@ -4034,7 +4064,7 @@ async function processFullPayment(orderId, invoiceId, amount, method, notes) {
 
     await DB.updateOrder(orderId, {
       status: 'Paid',
-      payment_date: new Date().toISOString()
+      payment_date: paymentDateISO
     });
 
     paynowSelectedIds = paynowSelectedIds.filter(id => id !== orderId);
@@ -4049,8 +4079,9 @@ async function processFullPayment(orderId, invoiceId, amount, method, notes) {
   }
 }
 
-async function processPartialPayment(orderId, invoiceId, maxAmount, amount, method, notes) {
+async function processPartialPayment(orderId, invoiceId, maxAmount, amount, method, notes, paymentDateISO) {
   try {
+    paymentDateISO = paymentDateISO || new Date().toISOString();
     const isTemp = window._isTempInvoice;
     const invObj = window._currentPayNowInvoice;
     const order = await DB.getOrder(orderId);
@@ -4073,21 +4104,23 @@ async function processPartialPayment(orderId, invoiceId, maxAmount, amount, meth
       invObj.advance_payment = newAdvance;
       invObj.balance = finCheck.balance;
       invObj.paid_status = paidStatus;
-      invObj.payment_date = new Date().toISOString();
+      invObj.payment_date = paymentDateISO;
       activeInvoiceId = await DB.addInvoice(invObj);
 
       await DB.addPayment({
         invoice_id: activeInvoiceId,
         amount: amount,
         method: method,
-        notes: notes
+        notes: notes,
+        date: paymentDateISO
       });
     } else {
       await DB.addPayment({
         invoice_id: invoiceId,
         amount: amount,
         method: method,
-        notes: notes
+        notes: notes,
+        date: paymentDateISO
       });
 
       const payments = await DB.getPaymentsByInvoice(invoiceId);
@@ -4097,14 +4130,14 @@ async function processPartialPayment(orderId, invoiceId, maxAmount, amount, meth
       await DB.updateInvoice(invoiceId, {
         balance: fin.balance,
         paid_status: paidStatus,
-        payment_date: new Date().toISOString()
+        payment_date: paymentDateISO
       });
     }
 
     await DB.updateOrder(orderId, {
       advance_payment: newAdvance,
       status: paidStatus,
-      payment_date: new Date().toISOString()
+      payment_date: paymentDateISO
     });
 
     if (paidStatus === 'Paid') {
@@ -4276,6 +4309,10 @@ async function showBatchPayConfirmModal() {
 
     <!-- Batch Payment Details Form -->
     <div style="border-top: 1.5px dashed var(--border); padding-top: 14px; margin-top: 14px; margin-bottom: 18px;">
+      <div class="form-group" style="max-width:240px;">
+        <label class="form-label" style="font-weight:700;">Paying Date *</label>
+        <input type="date" class="form-input" id="pn-batch-date" value="${today()}" max="${today()}"/>
+      </div>
       <div style="display:grid; grid-template-columns:1fr 1fr; gap:12px; margin-bottom:12px;">
         <div class="form-group" style="margin:0;">
           <label class="form-label" style="font-weight:700;">Batch Payment Method *</label>
@@ -4308,6 +4345,13 @@ async function showBatchPayConfirmModal() {
 }
 
 function confirmBatchPayment() {
+  let paymentDateISO;
+  try {
+    paymentDateISO = resolvePaymentTimestamp('pn-batch-date');
+  } catch (err) {
+    return toast(err.message, 'error');
+  }
+
   const method = document.getElementById('pn-batch-method').value;
   const notesInput = document.getElementById('pn-batch-notes').value.trim();
   let notes = notesInput || 'Paid fully via Batch Payment';
@@ -4328,11 +4372,11 @@ function confirmBatchPayment() {
   }
 
   confirmDialog(confirmMsg, async () => {
-    await processBatchPayment(method, notes);
+    await processBatchPayment(method, notes, paymentDateISO);
   }, 'Confirm Batch Payment', false);
 }
 
-async function processBatchPayment(method = 'Cash', notes = 'Paid fully via Batch Payment') {
+async function processBatchPayment(method = 'Cash', notes = 'Paid fully via Batch Payment', paymentDateISO) {
   const details = window._currentBatchDetails;
   const totalAmount = window._currentBatchTotal;
   if (!details || !details.length) return;
@@ -4354,170 +4398,87 @@ async function processBatchPayment(method = 'Cash', notes = 'Paid fully via Batc
   }
 
   try {
+    paymentDateISO = paymentDateISO || new Date().toISOString();
     showProcessingOverlay('Processing Batch Payment', 'Creating invoices and payments...');
     const orderIds = details.map(d => d.orderId);
-    
+
     // Fetch all details from DB
     const [orders, invoices] = await Promise.all([
       DB.getOrders(),
       DB.getInvoices()
     ]);
-    
+
     const oMap = Object.fromEntries(orders.map(o => [o.id, o]));
     const existingInvMap = Object.fromEntries(invoices.filter(i => orderIds.includes(i.order_id)).map(i => [i.order_id, i]));
 
     const createdInvoiceIds = [];
     const touchedCustomerIds = new Set();
     const isSingleInvoice = currentBatchInvoiceMode === 'single';
-    const singleInvoiceDetails = [];
-    let singleInvoiceTotal = 0;
-    let singleInvoiceAdvance = 0;
     const singleInvoiceNumber = isSingleInvoice ? await DB.generateInvoiceNumber() : null;
 
-    for (const detail of details) {
+    // Phase 1 — pure computation, no writes yet. Doing every order's math
+    // up front (and only starting to write once it's all known-good) means
+    // a mid-batch failure can't leave an order half-updated: marked Paid
+    // with no invoice behind it, or its old invoice deleted with nothing to
+    // replace it — the "invoice missing" bug this replaced.
+    let deductionAssigned = 0;
+    const computed = [];
+    for (let idx = 0; idx < details.length; idx++) {
+      const detail = details[idx];
       const oId = detail.orderId;
       const order = oMap[oId];
       if (!order) continue;
       touchedCustomerIds.add(order.customer_id);
 
-      // Fetch order items for subtotal calculation
       const orderItems = await DB.getOrderItems(oId);
       const itemsSubtotal = orderItems.reduce((s, i) => s + (i.subtotal || (i.price * i.quantity) || 0), 0);
       const orderTotal = (order.total_amount && order.total_amount > 0) ? order.total_amount : (itemsSubtotal > 0 ? itemsSubtotal : detail.amount);
       const orderAdvance = order.advance_payment || 0;
       const orderBalance = detail.amount; // balance for this order
 
-      // Calculate proportional deduction for this order
+      // Proportional deduction split — only meaningful in Separate Invoice
+      // mode (Single Invoice mode below records the un-split deductionAmount
+      // directly on the one consolidated invoice). The last order absorbs
+      // whatever rounding remainder is left, so the per-order pieces always
+      // sum to exactly `deductionAmount` instead of silently drifting a cent
+      // or two off it.
       let orderDeduction = 0;
-      if (deductionAmount > 0 && totalAmount > 0) {
-        orderDeduction = Math.round((orderBalance / totalAmount) * deductionAmount * 100) / 100;
+      if (!isSingleInvoice && deductionAmount > 0 && totalAmount > 0) {
+        const isLast = idx === details.length - 1;
+        orderDeduction = isLast
+          ? Math.round((deductionAmount - deductionAssigned) * 100) / 100
+          : Math.round((orderBalance / totalAmount) * deductionAmount * 100) / 100;
+        deductionAssigned += orderDeduction;
       }
 
-      const existingInv = existingInvMap[oId];
-      const payAmount = Math.max(0, orderBalance - orderDeduction);
-
-      if (isSingleInvoice) {
-        // Multiple orders are being folded into one shared invoice below, so
-        // any invoice this order already had on its own can't be reused —
-        // it has to go before the consolidated one is created.
-        if (existingInv) {
-          await DB.deletePaymentsForInvoice(existingInv.id);
-          await DB.deleteInvoice(existingInv.id);
-        }
-        singleInvoiceTotal += orderTotal;
-        singleInvoiceAdvance += orderAdvance;
-        singleInvoiceDetails.push({
-          invoiceNumber: singleInvoiceNumber,
-          orderNumber: order.batch_id || ('#' + oId),
-          customerName: detail.customerName,
-          amount: orderBalance
-        });
-      } else if (existingInv) {
-        // This order already has its own invoice (e.g. from an earlier Pay
-        // Now partial payment) — settle it in place under its existing
-        // invoice number instead of discarding it and minting a new one.
-        const newInvId = existingInv.id;
-        const invNum = existingInv.invoice_number;
-
-        await DB.updateInvoice(newInvId, {
-          balance: 0,
-          paid_status: 'Paid',
-          deduction_amount: (existingInv.deduction_amount || 0) + orderDeduction,
-          payment_date: new Date().toISOString()
-        });
-
-        createdInvoiceIds.push(newInvId);
-
-        if (orderDeduction > 0) {
-          await DB.addDeduction({
-            invoice_id: newInvId,
-            invoice_number: invNum,
-            original_amount: orderTotal,
-            deduction_amount: orderDeduction,
-            final_amount: orderTotal - orderDeduction,
-            reason: reason
-          });
-        }
-
-        if (payAmount > 0) {
-          await DB.addPayment({
-            invoice_id: newInvId,
-            amount: payAmount,
-            method: method,
-            notes: notes
-          });
-        }
-      } else {
-        // First ever payment on this order — Separate Invoice mode, one
-        // invoice per order.
-        const invNum = await DB.generateInvoiceNumber();
-        const newInvId = await DB.addInvoice({
-          order_id:                 oId,
-          invoice_number:           invNum,
-          issue_date:               new Date().toISOString(),
-          delivery_date:            order.delivery_date || today(),
-          invoice_type:             'Standard',
-          total_amount:             orderTotal,
-          advance_payment:          orderAdvance,
-          extra_payment:            order.extra_payment || 0,
-          balance:                  0,
-          paid_status:              'Paid',
-          discount_rate:            order.discount_rate || 0,
-          discount_amount:          order.discount_amount || 0,
-          delivery_charge:          order.delivery_charge || 0,
-          subtotal_before_discount: itemsSubtotal > 0 ? itemsSubtotal : orderTotal,
-          deduction_amount:         orderDeduction,
-          payment_date:             new Date().toISOString()
-        });
-
-        createdInvoiceIds.push(newInvId);
-
-        if (orderDeduction > 0) {
-          await DB.addDeduction({
-            invoice_id: newInvId,
-            invoice_number: invNum,
-            original_amount: orderTotal,
-            deduction_amount: orderDeduction,
-            final_amount: orderTotal - orderDeduction,
-            reason: reason
-          });
-        }
-
-        if (payAmount > 0) {
-          await DB.addPayment({
-            invoice_id: newInvId,
-            amount: payAmount,
-            method: method,
-            notes: notes
-          });
-        }
-      }
-
-      // Mark order as Paid
-      await DB.updateOrder(oId, {
-        status: 'Paid',
-        payment_date: new Date().toISOString()
+      computed.push({
+        oId, order, itemsSubtotal, orderTotal, orderAdvance, orderBalance, orderDeduction,
+        customerName: detail.customerName,
+        existingInv: existingInvMap[oId],
+        payAmount: Math.max(0, orderBalance - orderDeduction)
       });
-
-      // Log action
-      await DB.logAction(
-        'Payment Received',
-        `Batch payment: Order #${order.batch_id || oId} paid LKR ${payAmount.toLocaleString()} via ${method}${orderDeduction > 0 ? ' (Deduction: LKR ' + orderDeduction.toLocaleString() + ')' : ''}`,
-        { order_id: oId, batch_id: order.batch_id, amount: payAmount, deduction: orderDeduction, method },
-        'Payment'
-      );
     }
 
     if (isSingleInvoice) {
-      // One consolidated invoice row covering every selected order, keyed to
-      // the first order but listing all order IDs — printInvoice() already
-      // knows how to render this via batch_order_ids/batch_invoice_details.
-      const primaryOrderId = details[0].orderId;
-      const primaryOrder = oMap[primaryOrderId];
+      // Build + write the consolidated invoice FIRST. Only once it (and its
+      // deduction/payment) exist do we touch each order's own pre-existing
+      // invoice or status, so a failure here leaves every order exactly as
+      // it was before — never "Paid" with no invoice behind it.
+      const singleInvoiceTotal = computed.reduce((s, c) => s + c.orderTotal, 0);
+      const singleInvoiceAdvance = computed.reduce((s, c) => s + c.orderAdvance, 0);
+      const singleInvoiceDetails = computed.map(c => ({
+        invoiceNumber: singleInvoiceNumber,
+        orderNumber: c.order.batch_id || ('#' + c.oId),
+        customerName: c.customerName,
+        amount: c.orderBalance
+      }));
+      const primaryOrderId = computed[0].oId;
+      const primaryOrder = computed[0].order;
+
       const newInvId = await DB.addInvoice({
         order_id:         primaryOrderId,
         invoice_number:   singleInvoiceNumber,
-        issue_date:       new Date().toISOString(),
+        issue_date:       paymentDateISO,
         delivery_date:    primaryOrder?.delivery_date || today(),
         invoice_type:     'Standard',
         total_amount:     singleInvoiceTotal,
@@ -4525,8 +4486,8 @@ async function processBatchPayment(method = 'Cash', notes = 'Paid fully via Batc
         balance:          0,
         paid_status:      'Paid',
         deduction_amount: deductionAmount,
-        payment_date:     new Date().toISOString(),
-        batch_order_ids:      details.map(d => d.orderId).join(','),
+        payment_date:     paymentDateISO,
+        batch_order_ids:      computed.map(c => c.oId).join(','),
         batch_invoice_details: JSON.stringify(singleInvoiceDetails)
       });
       createdInvoiceIds.push(newInvId);
@@ -4548,8 +4509,122 @@ async function processBatchPayment(method = 'Cash', notes = 'Paid fully via Batc
           invoice_id: newInvId,
           amount: totalPayAmount,
           method: method,
-          notes: notes
+          notes: notes,
+          date: paymentDateISO
         });
+      }
+
+      // Consolidated invoice is safely written — now fold in each order:
+      // drop its old standalone invoice (can't be reused once merged) and
+      // mark it Paid.
+      for (const c of computed) {
+        if (c.existingInv) {
+          await DB.deletePaymentsForInvoice(c.existingInv.id);
+          await DB.deleteInvoice(c.existingInv.id);
+        }
+        await DB.updateOrder(c.oId, { status: 'Paid', payment_date: paymentDateISO });
+        await DB.logAction(
+          'Payment Received',
+          `Batch payment: Order #${c.order.batch_id || c.oId} folded into single invoice ${singleInvoiceNumber}`,
+          { order_id: c.oId, batch_id: c.order.batch_id, amount: c.payAmount, deduction: c.orderDeduction, method },
+          'Payment'
+        );
+      }
+    } else {
+      // Separate Invoice mode — each order settles independently.
+      for (const c of computed) {
+        const { oId, order, itemsSubtotal, orderTotal, orderAdvance, orderDeduction, payAmount, existingInv } = c;
+
+        if (existingInv) {
+          // This order already has its own invoice (e.g. from an earlier Pay
+          // Now partial payment) — settle it in place under its existing
+          // invoice number instead of discarding it and minting a new one.
+          const newInvId = existingInv.id;
+          const invNum = existingInv.invoice_number;
+
+          await DB.updateInvoice(newInvId, {
+            balance: 0,
+            paid_status: 'Paid',
+            deduction_amount: (existingInv.deduction_amount || 0) + orderDeduction,
+            payment_date: paymentDateISO
+          });
+
+          createdInvoiceIds.push(newInvId);
+
+          if (orderDeduction > 0) {
+            await DB.addDeduction({
+              invoice_id: newInvId,
+              invoice_number: invNum,
+              original_amount: orderTotal,
+              deduction_amount: orderDeduction,
+              final_amount: orderTotal - orderDeduction,
+              reason: reason
+            });
+          }
+
+          if (payAmount > 0) {
+            await DB.addPayment({
+              invoice_id: newInvId,
+              amount: payAmount,
+              method: method,
+              notes: notes,
+              date: paymentDateISO
+            });
+          }
+        } else {
+          // First ever payment on this order — one invoice per order.
+          const invNum = await DB.generateInvoiceNumber();
+          const newInvId = await DB.addInvoice({
+            order_id:                 oId,
+            invoice_number:           invNum,
+            issue_date:               paymentDateISO,
+            delivery_date:            order.delivery_date || today(),
+            invoice_type:             'Standard',
+            total_amount:             orderTotal,
+            advance_payment:          orderAdvance,
+            extra_payment:            order.extra_payment || 0,
+            balance:                  0,
+            paid_status:              'Paid',
+            discount_rate:            order.discount_rate || 0,
+            discount_amount:          order.discount_amount || 0,
+            delivery_charge:          order.delivery_charge || 0,
+            subtotal_before_discount: itemsSubtotal > 0 ? itemsSubtotal : orderTotal,
+            deduction_amount:         orderDeduction,
+            payment_date:             paymentDateISO
+          });
+
+          createdInvoiceIds.push(newInvId);
+
+          if (orderDeduction > 0) {
+            await DB.addDeduction({
+              invoice_id: newInvId,
+              invoice_number: invNum,
+              original_amount: orderTotal,
+              deduction_amount: orderDeduction,
+              final_amount: orderTotal - orderDeduction,
+              reason: reason
+            });
+          }
+
+          if (payAmount > 0) {
+            await DB.addPayment({
+              invoice_id: newInvId,
+              amount: payAmount,
+              method: method,
+              notes: notes,
+              date: paymentDateISO
+            });
+          }
+        }
+
+        await DB.updateOrder(oId, { status: 'Paid', payment_date: paymentDateISO });
+
+        await DB.logAction(
+          'Payment Received',
+          `Batch payment: Order #${order.batch_id || oId} paid LKR ${payAmount.toLocaleString()} via ${method}${orderDeduction > 0 ? ' (Deduction: LKR ' + orderDeduction.toLocaleString() + ')' : ''}`,
+          { order_id: oId, batch_id: order.batch_id, amount: payAmount, deduction: orderDeduction, method },
+          'Payment'
+        );
       }
     }
 

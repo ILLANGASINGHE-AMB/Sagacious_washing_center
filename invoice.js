@@ -1355,6 +1355,8 @@ async function showPaymentModal(invoiceId) {
       </div>
     </div>
 
+    <div class="form-group"><label class="form-label">Paying Date *</label>
+      <input type="date" class="form-input" id="pay-date" value="${today()}" max="${today()}"/></div>
     <div class="form-group"><label class="form-label">Payment Method</label>
       <select class="form-input form-select" id="pay-method">${methodOpts}</select></div>
     <div class="form-group"><label class="form-label">Notes</label>
@@ -1425,29 +1427,38 @@ function recalcDeductionBalance(balance) {
 }
 
 async function submitRecordedPayment(invoiceId, balance) {
+  let paymentDateISO;
+  try {
+    paymentDateISO = resolvePaymentTimestamp('pay-date');
+  } catch (err) {
+    return toast(err.message, 'error');
+  }
+
   if (currentPayOption === 'standard') {
     const amount = parseFloat(document.getElementById('pay-amount').value);
     const method = document.getElementById('pay-method').value;
     const notes = document.getElementById('pay-notes').value;
     if (!amount || amount <= 0) return toast('Please enter a valid amount', 'error');
-    
-    await DB.addPayment({ invoice_id: invoiceId, amount, method, notes });
+
+    await DB.addPayment({ invoice_id: invoiceId, amount, method, notes, date: paymentDateISO });
     const inv = await DB.getInvoice(invoiceId);
     const payments = await DB.getPaymentsByInvoice(invoiceId);
-    const totalPaid = payments.reduce((s, p) => s + p.amount, 0) + (inv.advance_payment || 0);
-    const newBalance = Math.max(0, inv.total_amount - (inv.deduction_amount || 0) - totalPaid);
-    const paidStatus = newBalance <= 0 ? 'Paid' : 'Unpaid';
-    
+    // Canonical calc — the old manual `newBalance <= 0 ? 'Paid' : 'Unpaid'`
+    // check never recognized 'Partially Paid', so a partial payment recorded
+    // here silently left both the invoice and its order stuck on 'Unpaid'.
+    const fin = Financials.computeInvoiceFinancials(inv, [], payments);
+    const paidStatus = fin.status;
+
     await DB.updateInvoice(invoiceId, {
-      balance: newBalance,
+      balance: fin.balance,
       paid_status: paidStatus,
-      payment_date: new Date().toISOString()
+      payment_date: paymentDateISO
     });
     await DB.updateOrder(inv.order_id, {
       status: paidStatus,
-      payment_date: new Date().toISOString()
+      payment_date: paymentDateISO
     });
-    
+
     hideModal('payment-modal');
     toast(`Payment of ${formatCurrency(amount)} recorded!`);
     _refreshInvoicesTable();
@@ -1462,12 +1473,12 @@ async function submitRecordedPayment(invoiceId, balance) {
     const reason = document.getElementById('pay-deduct-reason').value.trim() || 'No reason provided';
     const method = document.getElementById('pay-method').value;
     const notes = document.getElementById('pay-notes').value.trim() || 'Paid with Deductions';
-    
+
     if (deductionAmount <= 0) return toast('Deduction amount must be greater than zero', 'error');
     if (deductionAmount > balance) return toast('Deduction cannot exceed remaining due balance', 'error');
-    
+
     const inv = await DB.getInvoice(invoiceId);
-    
+
     await DB.addDeduction({
       invoice_id: invoiceId,
       invoice_number: inv.invoice_number,
@@ -1476,29 +1487,30 @@ async function submitRecordedPayment(invoiceId, balance) {
       final_amount: inv.total_amount - deductionAmount,
       reason: reason
     });
-    
+
     const payAmount = Math.max(0, balance - deductionAmount);
     if (payAmount > 0) {
       await DB.addPayment({
         invoice_id: invoiceId,
         amount: payAmount,
         method: method,
-        notes: `Final payment after deduction (Reason: ${reason}). Notes: ${notes}`
+        notes: `Final payment after deduction (Reason: ${reason}). Notes: ${notes}`,
+        date: paymentDateISO
       });
     }
-    
+
     await DB.updateInvoice(invoiceId, {
       deduction_amount: (inv.deduction_amount || 0) + deductionAmount,
       balance: 0,
       paid_status: 'Paid',
-      payment_date: new Date().toISOString()
+      payment_date: paymentDateISO
     });
-    
+
     await DB.updateOrder(inv.order_id, {
       status: 'Paid',
-      payment_date: new Date().toISOString()
+      payment_date: paymentDateISO
     });
-    
+
     hideModal('payment-modal');
     toast('Recorded deduction and finalized invoice payment!');
     _refreshInvoicesTable();

@@ -355,7 +355,10 @@ const DB = {
   // ── Payments ──────────────────────────────
   async getPayments() { return _qAll(() => _sb.from('payments').select('*').order('date', { ascending: false }).order('id', { ascending: false })); },
   async addPayment(data) {
-    const rows = await _q(_sb.from('payments').insert({ ...data, date: new Date().toISOString() }).select());
+    // `date` may be caller-supplied (user-editable "paying date" from the
+    // payment modals) — only default to now when none was given, never
+    // overwrite a provided one.
+    const rows = await _q(_sb.from('payments').insert({ ...data, date: data.date || new Date().toISOString() }).select());
     return rows[0].id;
   },
   async getPaymentsByInvoice(invoiceId) {

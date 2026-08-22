@@ -144,6 +144,20 @@ function formatDateTime(d) { if(!d)return'—'; return new Date(d).toLocaleStrin
 function today() { return new Date().toISOString().split('T')[0]; }
 function todayDisplay() { return new Date().toLocaleDateString('en-GB',{weekday:'long',day:'numeric',month:'long',year:'numeric'}); }
 
+// Reads a `<input type="date" id="{dateInputId}">` (a 'YYYY-MM-DD' string) and
+// turns it into a full timestamp for payment/invoice records, keeping the
+// current wall-clock time-of-day so same-day payments still sort sensibly.
+// Throws if the picked date is in the future (backdating is allowed, forward-
+// dating a payment is not) or blank.
+function resolvePaymentTimestamp(dateInputId) {
+  const val = document.getElementById(dateInputId)?.value;
+  if (!val) throw new Error('Please select a payment date.');
+  if (val > today()) throw new Error('Payment date cannot be in the future.');
+  const now = new Date();
+  const [y, m, d] = val.split('-').map(Number);
+  return new Date(y, m - 1, d, now.getHours(), now.getMinutes(), now.getSeconds(), now.getMilliseconds()).toISOString();
+}
+
 function getOrderCustomerName(order, cMap = {}, deletedMap = window._deletedCustOrders || {}) {
   if (!order) return '—';
   if (order.customer_id && cMap[order.customer_id]?.hotel_name) {
