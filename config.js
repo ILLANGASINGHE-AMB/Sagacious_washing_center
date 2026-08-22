@@ -1,3 +1,3 @@
 // Auto-generated configuration file
-window.SUPABASE_URL = "https://mzxpdirmsegsgkrunerk.supabase.co";
-window.SUPABASE_ANON_KEY = "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6Im16eHBkaXJtc2Vnc2drcnVuZXJrIiwicm9sZSI6ImFub24iLCJpYXQiOjE3ODM0ODIyMDYsImV4cCI6MjA5OTA1ODIwNn0.8qwcNal0BrNaLd7FBg-Om_ZMLbPi_VA_dxFnha-Ma4E";
+window.SUPABASE_URL = "https://wceevlczgsjcjeavojde.supabase.co";
+window.SUPABASE_ANON_KEY = "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6IndjZWV2bGN6Z3NqY2plYXZvamRlIiwicm9sZSI6ImFub24iLCJpYXQiOjE3NzMxNTUxMjcsImV4cCI6MjA4ODczMTEyN30.Jpckx8jS5T5fAQ-npXOvklIOf2oIChu6PByxXq33Q3w";
