@@ -61,10 +61,15 @@ exports.handler = async function (event) {
   const token = authHeader.startsWith('Bearer ') ? authHeader.slice(7) : null;
 
   let callerIsAdmin = false;
+  let callerRole = null;
+  let tokenError = null;
   if (token) {
     const { data, error } = await admin.auth.getUser(token);
-    if (!error && data?.user?.user_metadata?.role === 'admin') {
-      callerIsAdmin = true;
+    if (error) {
+      tokenError = error.message;
+    } else {
+      callerRole = data?.user?.user_metadata?.role || 'user';
+      if (callerRole === 'admin') callerIsAdmin = true;
     }
   }
 
@@ -78,7 +83,17 @@ exports.handler = async function (event) {
   }
 
   if (!callerIsAdmin && !bootstrapMode) {
-    return { statusCode: 403, body: JSON.stringify({ error: 'Admin permission required.' }) };
+    // Distinguish the three real causes instead of a single opaque message,
+    // since "Admin permission required" was being shown even when the real
+    // problem was an expired/missing session — which reads as "your account
+    // isn't allowed" when it actually means "you weren't recognized at all".
+    if (!token) {
+      return { statusCode: 401, body: JSON.stringify({ error: 'Not signed in. Please log out and log back in, then try again.' }) };
+    }
+    if (tokenError) {
+      return { statusCode: 401, body: JSON.stringify({ error: 'Your session has expired or is invalid. Please log out and log back in, then try again.' }) };
+    }
+    return { statusCode: 403, body: JSON.stringify({ error: `Admin permission required (your account's role is "${callerRole}", not "admin").` }) };
   }
 
   try {
