@@ -25,7 +25,7 @@
       --accent: #00b4d8;
       --accent2: #f0a500;
       --bg: #f0f4fa;
-      --sidebar-bg: #0f2d5c;
+      --sidebar-bg: linear-gradient(160deg, #0a6e6e 0%, #0d9488 40%, #0891b2 100%);
       --card-bg: #ffffff;
       --text: #1e293b;
       --text-muted: #64748b;
@@ -41,7 +41,7 @@
       --text: #f1f5f9;
       --text-muted: #94a3b8;
       --border: #334155;
-      --sidebar-bg: #020817;
+      --sidebar-bg: linear-gradient(160deg, #0a6e6e 0%, #0d9488 40%, #0891b2 100%);
     }
     * { box-sizing: border-box; }
     body {
@@ -410,7 +410,9 @@
       border-radius:3px; background:linear-gradient(90deg, rgba(255,255,255,0.15), #fff, rgba(255,255,255,0.15));
       animation: bootProgress 1.15s cubic-bezier(0.4,0,0.2,1) infinite;
     }
+    .boot-loader-textgroup { display:flex; flex-direction:column; align-items:center; gap:6px; }
     .boot-loader-text { color:rgba(255,255,255,0.88); font-size:0.78em; font-weight:700; letter-spacing:1.2px; text-transform:uppercase; }
+    .boot-loader-subtext { color:rgba(255,255,255,0.6); font-size:0.72em; font-weight:500; letter-spacing:0.3px; }
     @keyframes bootPulse {
       0%, 100% { transform:scale(1); box-shadow:0 20px 50px rgba(0,0,0,0.25); }
       50%      { transform:scale(1.035); box-shadow:0 26px 60px rgba(0,0,0,0.3); }
@@ -781,7 +783,10 @@
         <img src="/assets/logo.png" class="boot-loader-logo" alt="Sagacious Washing Center"/>
       </div>
       <div class="boot-loader-progress"><div class="boot-loader-progress-bar"></div></div>
-      <div class="boot-loader-text">Loading your workspace</div>
+      <div class="boot-loader-textgroup">
+        <div class="boot-loader-text">Loading your workspace</div>
+        <div class="boot-loader-subtext">Loading in System</div>
+      </div>
     </div>
   </div>
 

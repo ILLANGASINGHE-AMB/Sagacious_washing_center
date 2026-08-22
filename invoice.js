@@ -763,6 +763,10 @@ async function viewInvoice(id) {
               <span style="color:#16a34a;">Payment (${p.method})</span>
               <span style="color:#16a34a;">− ${formatCurrency(p.amount)}</span>
             </div>`).join('')}
+          <div style="display:flex;justify-content:space-between;padding:12px 0;margin-top:4px;border-top:2px solid #1a4d8f;font-size:0.98em;font-weight:800;color:${balance <= 0.009 ? '#16a34a' : '#ef4444'};">
+            <span>Balance Due</span>
+            <span>${formatCurrency(balance)}</span>
+          </div>
         </div>
       </div>
 
@@ -955,7 +959,10 @@ async function printInvoice(id) {
     ${payments.map(p => `
       <div style="display:flex;justify-content:space-between;padding:8px 12px;border-bottom:1px solid #e5e7eb;color:#16a34a;">
         <span>Payment (${p.method})</span><span>- ${formatCurrency(p.amount)}</span>
-      </div>`).join('')}`;
+      </div>`).join('')}
+    <div style="display:flex;justify-content:space-between;padding:10px 12px;border-top:2px solid #1a4d8f;font-weight:800;color:${balance <= 0.009 ? '#16a34a' : '#ef4444'};">
+      <span>Balance Due</span><span>${formatCurrency(balance)}</span>
+    </div>`;
 
   const printHTML = `<!DOCTYPE html><html><head><meta charset="UTF-8"/><title>Invoice ${inv.invoice_number}</title>
     <link href="https://fonts.googleapis.com/css2?family=DM+Sans:wght@400;600;700&family=Playfair+Display:wght@600;700;800&display=swap" rel="stylesheet"/>
@@ -1178,7 +1185,10 @@ async function previewInvoiceByOrder(orderId) {
       ${payments.map(p => `
         <div style="display:flex;justify-content:space-between;padding:8px 12px;border-bottom:1px solid #e5e7eb;color:#16a34a;">
           <span>Payment (${p.method})</span><span>- ${formatCurrency(p.amount)}</span>
-        </div>`).join('')}`;
+        </div>`).join('')}
+      <div style="display:flex;justify-content:space-between;padding:10px 12px;border-top:2px solid #1a4d8f;font-weight:800;color:${balance <= 0.009 ? '#16a34a' : '#ef4444'};">
+        <span>Balance Due</span><span>${formatCurrency(balance)}</span>
+      </div>`;
 
     const paidStamp = balance <= 0 ? `
       <div style="position:absolute;left:0;bottom:20px;pointer-events:none;z-index:10;">
