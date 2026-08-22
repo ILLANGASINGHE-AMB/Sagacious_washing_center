@@ -2,6 +2,7 @@
 
 let ordersPage=1, ordersSearch='', ordersStatusFilter='', ordersDriverFilter='', ordersCustFilter='', ordersDateFilter='', ordersDateFrom='', ordersDateTo='', ordersPerPage=12;
 let ordersActionsVisible = true;
+let ordersDebugMode = false;
 let sigPad=null;
 let _ordersCustomers=[], _ordersDrivers=[];
 // Bulk "Assign Driver" selection (Orders tab, admin/staff only) — reset on
@@ -39,6 +40,7 @@ async function renderOrders() {
         ${canBulkAssign ? `<button id="orders-assign-driver-btn" class="btn btn-primary" style="display:none;" onclick="showBulkAssignDriverModal()"><i class="fas fa-user-tie"></i> Assign Driver (<span id="orders-selected-count">0</span>)</button>` : ''}
         ${isAdmin() ? `<button id="orders-mark-delivered-btn" class="btn btn-secondary" style="display:none;color:#166534;" onclick="markOrdersDeliveredBulk(Array.from(ordersSelectedIds))"><i class="fas fa-truck-ramp-box"></i> Mark Delivered (<span id="orders-selected-count-2">0</span>)</button>` : ''}
         ${canAddOrders() ? `<button class="btn btn-primary" onclick="showAddOrderModal()"><i class="fas fa-plus"></i> New Order</button>` : ''}
+        ${isAdmin() ? `<button id="orders-debug-mode-btn" class="btn btn-sm" style="background:${ordersDebugMode?'#7f1d1d':'#dc2626'};border-color:${ordersDebugMode?'#7f1d1d':'#dc2626'};color:#fff;font-weight:700;" onclick="toggleOrdersDebugMode()"><i class="fas fa-bug"></i> ${ordersDebugMode?'Exit Debug Mode':'Debug Mode'}</button>` : ''}
       </div>
     </div>
 
@@ -212,12 +214,14 @@ async function _refreshOrdersTable() {
             <div style="display:inline-flex;align-items:center;gap:4px;flex-wrap:nowrap;">
               <button class="btn btn-secondary btn-sm" onclick="viewOrderDetails(${o.id})" title="View Order"><i class="fas fa-eye"></i> View</button>
               <span class="order-extra-actions" style="${extraStyle}">
+                ${ordersDebugMode ? (isAdmin() ? `<button class="btn btn-sm" style="background:#dc2626;border-color:#dc2626;color:#fff;" onclick="showDebugEditOrderModal(${o.id})"><i class="fas fa-bug"></i> Debug Edit</button>` : '') : `
                 ${canEditOrders() ? `<button class="btn btn-primary btn-sm" onclick="showEditOrderModal(${o.id})"><i class="fas fa-edit"></i> Edit</button>` : ''}
                 <button class="btn btn-success btn-sm" onclick="printInvoiceByOrder(${o.id})" style="background:#10b981;border-color:#10b981;color:#fff;"><i class="fas fa-print"></i> Print</button>
                 ${canEditOrders() ? `<button class="btn btn-secondary btn-sm" onclick="showMarkFlagModal(${o.id},'pending')" style="color:#92400e;" title="Tick item(s) to keep as pending"><i class="fas fa-hourglass-half"></i> Pending</button>` : ''}
                 ${canMarkReturned() ? `<button class="btn btn-secondary btn-sm" onclick="showMarkFlagModal(${o.id},'returned')" style="color:#7c2d12;" title="Record item(s) the customer handed back"><i class="fas fa-rotate-left"></i> Returned</button>` : ''}
                 ${(canBulkAssign && o.delivery_status === 'out_for_delivery') ? `<button class="btn btn-secondary btn-sm" onclick="markOrderDelivered(${o.id})" style="color:#166534;" title="Mark this order delivered"><i class="fas fa-truck-ramp-box"></i> Delivered</button>` : ''}
                 ${isAdmin() ? `<button class="btn btn-danger btn-sm" onclick="deleteOrderConfirm(${o.id})"><i class="fas fa-trash"></i> Delete</button>` : ''}
+                `}
               </span>
             </div>
           </td>
@@ -412,6 +416,17 @@ function _toggleAllOrderActions() {
   // Update the header toggle button icon
   const toggleBtn = document.getElementById('orders-actions-toggle');
   if (toggleBtn) toggleBtn.innerHTML = ordersActionsVisible ? '<i class="fas fa-eye"></i>' : '<i class="fas fa-eye-slash"></i>';
+}
+
+function toggleOrdersDebugMode(){
+  if(!isAdmin()) return toast('Admin permission required','error');
+  ordersDebugMode=!ordersDebugMode;
+  const btn=document.getElementById('orders-debug-mode-btn');
+  if(btn){
+    btn.style.background=btn.style.borderColor=ordersDebugMode?'#7f1d1d':'#dc2626';
+    btn.innerHTML=`<i class="fas fa-bug"></i> ${ordersDebugMode?'Exit Debug Mode':'Debug Mode'}`;
+  }
+  _refreshOrdersTable();
 }
 
 function _syncOrdersDateBtns() {
@@ -1045,6 +1060,14 @@ function applyItemToWrap(wrap, itemId, itemLabel, dryCleanPrice, washPressPrice,
     if (priceInput) _applyServicePrice(wrap, svc, priceInput);
     calcEditOrderTotal(); return;
   }
+  // Debug Mode rows
+  const dboRow = wrap.closest('.dbo-item-row');
+  if (dboRow) {
+    const svc = dboRow.querySelector('.dbo-svc')?.value || 'Dry Clean';
+    const priceInput = dboRow.querySelector('.dbo-price');
+    if (priceInput) _applyServicePrice(wrap, svc, priceInput);
+    calcDebugOrderTotal(); return;
+  }
 }
 
 function selectItemFromDropdown(event,itemId,itemLabel,dryCleanPrice,washPressPrice,washDryPrice){
@@ -1131,6 +1154,10 @@ async function saveQuickAddItem(context = 'new-order') {
     await addCbItemRow();
     containerId = '#cb-items-container';
     rowClass = '.cb-item-row';
+  } else if (context === 'debug-order') {
+    await addDebugOrderItemRow();
+    containerId = '#dbo-items-container';
+    rowClass = '.dbo-item-row';
   } else {
     await addOrderItemRow();
   }
@@ -1415,6 +1442,248 @@ async function showEditOrderModal(id){
   showModal('edit-order-modal');
   if(!ro){
     initSearchPicker('eo-cust',customers,c=>c.hotel_name,c=>c.id,order.customer_id);
+  }
+}
+
+// ─────────────────────────────────────────────
+// DEBUG MODE — admin-only reconstruction of broken orders' item breakdown.
+// Sub Total / Grand Total are frozen at whatever the order already shows
+// (the paper-bill ground truth) when the modal opens; item edits here can
+// never move them. Only Delivery Charge / Advance / Extra Payment are
+// allowed to move the Grand Total, same as they always could. See
+// DebugMode.md.
+// ─────────────────────────────────────────────
+let _dboFrozenSubtotal = 0, _dboFrozenDiscountAmount = 0, _dboFrozenGrandTotal = 0;
+
+async function showDebugEditOrderModal(id){
+  if(!isAdmin()) return toast('Admin permission required','error');
+  const [order,customers,existingItems,allCatalog,invoice]=await Promise.all([
+    DB.getOrder(id),
+    DB.getCustomers(),
+    DB.getOrderItems(id),
+    DB.getItems(),
+    DB.getInvoiceByOrder(id)
+  ]);
+  if(!order)return toast('Order not found','error');
+  _editOrderCatalog=allCatalog;
+
+  // Freeze the ground-truth numbers once, at open time — never recomputed
+  // from edited item rows.
+  _dboFrozenSubtotal = existingItems.reduce((s,i)=>s+(parseFloat(i.quantity)||0)*(parseFloat(i.price)||0),0);
+  _dboFrozenDiscountAmount = parseFloat(order.discount_amount)||0;
+  _dboFrozenGrandTotal = parseFloat(order.total_amount)||0;
+
+  const itemRows=existingItems.map(item=>{
+    const cat=allCatalog.find(c=>c.id===item.catalog_item_id);
+    const label=escapeHtml(cat?`${cat.item_id} — ${cat.item_name}`:item.item_name);
+    const dryCleanP  = cat ? (cat.dry_clean_price||0)   : 0;
+    const washPressP = cat ? (cat.wash_press_price||0)  : 0;
+    const washDryP   = cat ? (cat.wash_dry_price||0)    : 0;
+    const curSvcItem = item.service_type || 'Wash & Press';
+    const curPrice   = item.price || 0;
+    const svcOpts = ['Dry Clean','Wash & Press','Wash & Dry'].map(s=>`<option value="${s}" ${s===curSvcItem?'selected':''}>${s}</option>`).join('');
+    return `<div class="dbo-item-row" style="display:grid;grid-template-columns:2.5fr 1.6fr 0.8fr 1.2fr auto;gap:8px;margin-bottom:6px;align-items:center;">
+      <div class="item-picker-wrap" style="position:relative;" data-selected-id="${item.catalog_item_id||''}" data-dry-clean="${dryCleanP}" data-wash-press="${washPressP}" data-wash-dry="${washDryP}">
+        <input class="form-input item-picker-input" value="${label}" autocomplete="off" placeholder="Type to search item..."
+          oninput="filterDboItemDropdown(this)" onfocus="showDboItemDropdown(this)" onblur="setTimeout(()=>hideDboItemDropdown(this),200)" style="width:100%;"/>
+        <div class="item-picker-dropdown" style="display:none;position:absolute;top:100%;left:0;right:0;z-index:999;background:var(--card-bg);border:1px solid var(--border);border-radius:8px;box-shadow:0 8px 24px rgba(0,0,0,0.12);max-height:200px;overflow-y:auto;margin-top:2px;"></div>
+      </div>
+      <select class="form-input form-select dbo-svc" onchange="onDboSvcChange(this)" style="font-size:0.82em;padding:6px 8px;">${svcOpts}</select>
+      <input type="number" class="form-input dbo-qty" value="${item.quantity}" min="1" oninput="calcDebugOrderTotal()"/>
+      <input type="number" class="form-input dbo-price" value="${curPrice}" min="0" oninput="calcDebugOrderTotal()" placeholder="Price"/>
+      <button class="btn btn-danger btn-icon btn-sm" onclick="this.closest('.dbo-item-row').remove();calcDebugOrderTotal()"><i class="fas fa-trash"></i></button>
+    </div>`;
+  }).join('');
+
+  const delCharge = order.delivery_charge || (invoice ? (invoice.delivery_charge||0) : 0);
+
+  createModal('debug-edit-order-modal',`Debug Edit Order: ${order.batch_id}`,`
+    <div style="background:#fef2f2;border:1px solid #fecaca;color:#991b1b;padding:10px 14px;border-radius:8px;font-size:0.85em;margin-bottom:14px;">
+      <i class="fas fa-bug"></i> <strong>Debug Mode</strong> — item edits below never change this order's Sub Total / Grand Total (frozen at ${formatCurrency(_dboFrozenGrandTotal)}). Only Delivery Charge / Advance / Extra Payment can move the total.
+    </div>
+    <div style="display:grid;grid-template-columns:1fr 1fr;gap:14px;">
+      <div class="form-group" style="grid-column: span 2;"><label class="form-label">Customer (locked)</label>
+        <input class="form-input" value="${escapeHtml(customers.find(c=>c.id===order.customer_id)?.hotel_name||'—')}" disabled/>
+      </div>
+      <div class="form-group"><label class="form-label">Pickup Date</label>
+        <input type="date" class="form-input" id="dbo-pickup" value="${order.pickup_date||''}"/></div>
+      <div class="form-group"><label class="form-label">Delivery Date</label>
+        <input type="date" class="form-input" id="dbo-delivery" value="${order.delivery_date||''}"/></div>
+      <div class="form-group"><label class="form-label">Advance Payment (LKR)</label>
+        <input type="number" class="form-input" id="dbo-advance" value="${order.advance_payment||0}" min="0" oninput="calcDebugOrderTotal()"/></div>
+      <div class="form-group"><label class="form-label">Extra Payments (LKR)</label>
+        <input type="number" class="form-input" id="dbo-extra-payment" value="${order.extra_payment||0}" min="0" oninput="calcDebugOrderTotal()"/></div>
+    </div>
+
+    <div style="display:flex;align-items:center;justify-content:space-between;margin:14px 0 8px;">
+      <span style="font-family:'Playfair Display',serif;font-size:1em;font-weight:700;color:var(--primary);">Order Items</span>
+      <div style="display:flex;gap:8px;">
+        <button class="btn btn-secondary btn-sm" onclick="showQuickAddItemModal('debug-order')"><i class="fas fa-box-open"></i> Add New Item</button>
+        <button class="btn btn-secondary btn-sm" onclick="addDebugOrderItemRow()"><i class="fas fa-plus"></i> Add Row</button>
+      </div>
+    </div>
+    <div style="display:grid;grid-template-columns:2.5fr 1.6fr 0.8fr 1.2fr auto;gap:8px;margin-bottom:4px;padding:0 2px;">
+      <span class="form-label">Item</span>
+      <span class="form-label">Service Type</span>
+      <span class="form-label">Qty</span>
+      <span class="form-label">Price (LKR)</span>
+      <span></span>
+    </div>
+    <div id="dbo-items-container">${itemRows}</div>
+
+    <div style="border-top:1px solid var(--border);margin-top:10px;padding-top:12px;">
+      <div class="form-group" style="max-width:260px;">
+        <label class="form-label">Delivery Charge (LKR)</label>
+        <input type="number" class="form-input" id="dbo-delivery-charge" value="${delCharge}" min="0" step="0.01" oninput="calcDebugOrderTotal()"/>
+      </div>
+    </div>
+
+    <div style="margin-top:10px;padding:10px 12px;background:var(--bg);border-radius:8px;font-size:0.85em;" id="dbo-discrepancy"></div>
+
+    <div style="display:flex;justify-content:space-between;align-items:center;padding:12px 0 0;margin-top:4px;">
+      <strong style="font-size:1.15em;">Grand Total (frozen): <span id="dbo-total">${formatCurrency(_dboFrozenGrandTotal)}</span></strong>
+      <div style="display:flex;gap:10px;">
+        <button class="btn btn-secondary" onclick="hideModal('debug-edit-order-modal')">Cancel [Esc]</button>
+        <button class="btn btn-primary" style="background:#dc2626;border-color:#dc2626;" onclick="saveDebugOrder(${id})"><i class="fas fa-save"></i> Save Debug Edit</button>
+      </div>
+    </div>`,'modal-lg');
+  showModal('debug-edit-order-modal');
+  calcDebugOrderTotal();
+}
+
+function showDboItemDropdown(input){const wrap=input.closest('.item-picker-wrap');_renderItemList(wrap.querySelector('.item-picker-dropdown'),_editOrderCatalog);wrap.querySelector('.item-picker-dropdown').style.display='block';}
+function hideDboItemDropdown(input){const wrap=input.closest('.item-picker-wrap');if(wrap)wrap.querySelector('.item-picker-dropdown').style.display='none';}
+function filterDboItemDropdown(input){
+  const wrap=input.closest('.item-picker-wrap');
+  const q=input.value.toLowerCase();
+  _renderItemList(wrap.querySelector('.item-picker-dropdown'),q?_editOrderCatalog.filter(i=>i.item_name.toLowerCase().includes(q)||i.item_id.toLowerCase().includes(q)):_editOrderCatalog);
+  wrap.querySelector('.item-picker-dropdown').style.display='block';
+}
+
+function onDboSvcChange(sel){
+  const row=sel.closest('.dbo-item-row');
+  const wrap=row?.querySelector('.item-picker-wrap');
+  const priceInput=row?.querySelector('.dbo-price');
+  if(wrap && priceInput) _applyServicePrice(wrap, sel.value, priceInput);
+  calcDebugOrderTotal();
+}
+
+async function addDebugOrderItemRow(){
+  const container=document.getElementById('dbo-items-container');
+  const row=document.createElement('div'); row.className='dbo-item-row';
+  row.style.cssText='display:grid;grid-template-columns:2.5fr 1.6fr 0.8fr 1.2fr auto;gap:8px;margin-bottom:6px;align-items:center;';
+  row.innerHTML=`<div class="item-picker-wrap" style="position:relative;" data-selected-id="" data-dry-clean="0" data-wash-press="0" data-wash-dry="0">
+    <input class="form-input item-picker-input" value="" autocomplete="off" placeholder="Type to search item..."
+      oninput="filterDboItemDropdown(this)" onfocus="showDboItemDropdown(this)" onblur="setTimeout(()=>hideDboItemDropdown(this),200)" style="width:100%;"/>
+    <div class="item-picker-dropdown" style="display:none;position:absolute;top:100%;left:0;right:0;z-index:999;background:var(--card-bg);border:1px solid var(--border);border-radius:8px;box-shadow:0 8px 24px rgba(0,0,0,0.12);max-height:200px;overflow-y:auto;margin-top:2px;"></div>
+  </div>
+  <select class="form-input form-select dbo-svc" onchange="onDboSvcChange(this)" style="font-size:0.82em;padding:6px 8px;">
+    <option value="Dry Clean">Dry Clean</option>
+    <option value="Wash &amp; Press" selected>Wash &amp; Press</option>
+    <option value="Wash &amp; Dry">Wash &amp; Dry</option>
+  </select>
+  <input type="number" class="form-input dbo-qty" value="1" min="1" oninput="calcDebugOrderTotal()"/>
+  <input type="number" class="form-input dbo-price" value="0" min="0" oninput="calcDebugOrderTotal()" placeholder="Price"/>
+  <button class="btn btn-danger btn-icon btn-sm" onclick="this.closest('.dbo-item-row').remove();calcDebugOrderTotal()"><i class="fas fa-trash"></i></button>`;
+  container.appendChild(row);
+}
+
+function calcDebugOrderTotal(){
+  let itemsTotal=0;
+  document.querySelectorAll('.dbo-item-row').forEach(row=>{
+    const qty=parseFloat(row.querySelector('.dbo-qty')?.value)||0;
+    const price=parseFloat(row.querySelector('.dbo-price')?.value)||0;
+    itemsTotal+=qty*price;
+  });
+  const delivery=parseFloat(document.getElementById('dbo-delivery-charge')?.value)||0;
+  const extra=parseFloat(document.getElementById('dbo-extra-payment')?.value)||0;
+
+  // Grand total is ALWAYS derived from the frozen subtotal/discount, never
+  // from itemsTotal — item edits can never move it.
+  const grandTotal=Math.max(0,_dboFrozenSubtotal-_dboFrozenDiscountAmount+delivery+extra);
+  const totalEl=document.getElementById('dbo-total');
+  if(totalEl) totalEl.textContent=formatCurrency(grandTotal);
+
+  const diff=itemsTotal-_dboFrozenSubtotal;
+  const box=document.getElementById('dbo-discrepancy');
+  if(box){
+    const ok=Math.abs(diff)<0.01;
+    box.style.color=ok?'#166534':'#92400e';
+    box.innerHTML=`Items Total: <strong>${formatCurrency(itemsTotal)}</strong> &nbsp;|&nbsp; Target Sub Total: <strong>${formatCurrency(_dboFrozenSubtotal)}</strong> &nbsp;|&nbsp; Diff: <strong>${diff>=0?'+':''}${formatCurrency(diff)}</strong>${ok?' ✓ matches':''}`;
+  }
+}
+
+async function saveDebugOrder(orderId){
+  if(!isAdmin()) return toast('Admin permission required','error');
+  const saveBtn=document.querySelector('#debug-edit-order-modal .btn-primary');
+  if(saveBtn && saveBtn.disabled) return;
+  if(saveBtn) saveBtn.disabled=true;
+  try {
+    const pickup=document.getElementById('dbo-pickup').value;
+    const delivery=document.getElementById('dbo-delivery').value;
+    const advance=parseFloat(document.getElementById('dbo-advance').value)||0;
+    const extra=parseFloat(document.getElementById('dbo-extra-payment').value)||0;
+    const deliveryCharge=parseFloat(document.getElementById('dbo-delivery-charge').value)||0;
+
+    const orderItems=[]; let valid=true;
+    document.querySelectorAll('.dbo-item-row').forEach(row=>{
+      const wrap=row.querySelector('.item-picker-wrap');
+      const itemId=parseInt(wrap?.dataset.selectedId);
+      const itemTxt=wrap?.querySelector('.item-picker-input')?.value||'';
+      const svc=row.querySelector('.dbo-svc')?.value||'Wash & Press';
+      const qty=parseFloat(row.querySelector('.dbo-qty')?.value)||0;
+      const price=parseFloat(row.querySelector('.dbo-price')?.value)||0;
+      if(!itemId){ valid=false; return; }
+      orderItems.push({catalog_item_id:itemId,item_name:itemTxt.split('—')[1]?.trim()||itemTxt,quantity:qty,service_type:svc,price,subtotal:qty*price});
+    });
+    if(!valid){ toast('Please select an item for every row','error'); return; }
+
+    // Grand total recomputed ONLY from the frozen subtotal/discount + live
+    // delivery/extra — never from orderItems.
+    const grandTotal=Math.max(0,_dboFrozenSubtotal-_dboFrozenDiscountAmount+deliveryCharge+extra);
+    const status=advance>=grandTotal?'Paid':'Unpaid';
+
+    const order=await DB.getOrder(orderId);
+
+    await DB.updateOrderWithItems(orderId,{
+      pickup_date:     pickup,
+      delivery_date:   delivery,
+      advance_payment: advance,
+      extra_payment:   extra,
+      delivery_charge: deliveryCharge,
+      total_amount:    grandTotal,
+      status,
+      debug_edited_by: currentUser?.display_name||null,
+      debug_edited_at: new Date().toISOString()
+      // customer_id, driver_id, discount_rate, discount_amount deliberately
+      // omitted — Debug Mode never touches them.
+    }, orderItems);
+
+    const existingInv=await DB.getInvoiceByOrder(orderId);
+    if(existingInv){
+      await DB.updateInvoice(existingInv.id,{
+        total_amount:     grandTotal,
+        advance_payment:  advance,
+        extra_payment:    extra,
+        delivery_charge:  deliveryCharge,
+        delivery_date:    delivery,
+        balance:          Math.max(0,grandTotal-advance),
+        paid_status:      status
+        // subtotal_before_discount / discount_amount / discount_rate left untouched (frozen).
+      });
+    }
+
+    await DB.logAction('Debug Edit Order',`Debug-edited order #${order?.batch_id||orderId} items (Grand Total unchanged: ${formatCurrency(grandTotal)})`,{order_id:orderId,total_amount:grandTotal},'Order');
+
+    clearItemsCache();
+    hideModal('debug-edit-order-modal');
+    toast('Order updated in Debug Mode');
+    await _refreshOrdersTable();
+  } catch(err){
+    console.error('saveDebugOrder error:',err);
+    toast('Failed to save debug edit: '+(err.message||err),'error');
+  } finally {
+    if(saveBtn) saveBtn.disabled=false;
   }
 }
 
