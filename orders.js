@@ -1883,7 +1883,10 @@ async function printInvoiceByOrder(orderId) {
   const order = await DB.getOrder(orderId);
   if (!order) return toast('Order not found', 'error');
 
-  let inv = await DB.getInvoiceByOrder(orderId);
+  // A "Single Invoice" batch payment folds this order's own invoice into a
+  // shared one keyed to a different order — look that up (see invoice.js)
+  // before assuming this order has no invoice at all.
+  let inv = await _findInvoiceForOrder(orderId);
   if (!inv) {
     const orderItems = await DB.getOrderItems(orderId);
     const itemsSubtotal = orderItems.reduce((s, i) => s + (i.subtotal || 0), 0);

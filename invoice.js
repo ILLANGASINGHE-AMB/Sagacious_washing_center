@@ -498,14 +498,62 @@ function getSortIcon(field) {
 }
 
 // ── VIEW / PRINT INVOICE ──
+// ── Shared invoice/order resolution for bill preview & print ──
+// A "Single Invoice" batch payment keeps only one invoice row (keyed to the
+// first selected order) but covers every order listed in `batch_order_ids`
+// — each other order's own invoice row is deleted once it's folded in (see
+// processBatchPayment in app.js). Looking an invoice up by `order_id` alone
+// then finds nothing for those other orders; this fallback finds the shared
+// invoice by scanning for the order id inside `batch_order_ids`.
+async function _findInvoiceForOrder(orderId) {
+  const direct = await DB.getInvoiceByOrder(orderId);
+  if (direct) return direct;
+  const invoices = await DB.getInvoices();
+  return invoices.find(i => i.batch_order_ids &&
+    i.batch_order_ids.split(',').map(Number).includes(Number(orderId))) || null;
+}
+
+// Resolves the item list for an invoice. For a "Single Invoice" batch this
+// pulls items from every order it covers (not just `inv.order_id`, which is
+// only the first of them) and also returns a per-order breakdown — item rows
+// plus qty/subtotal totals — so the bill can be rendered grouped by order
+// instead of one flat list that hides which items belong to which order.
+async function _resolveInvoiceItemGroups(inv, fallbackOrder) {
+  if (inv.batch_order_ids) {
+    const orderIds = inv.batch_order_ids.split(',').map(Number);
+    const ordersList = await Promise.all(orderIds.map(oid => DB.getOrder(oid)));
+    const activeOrders = ordersList.filter(Boolean);
+    const items = [];
+    const groups = [];
+    for (const o of activeOrders) {
+      const orderItems = await DB.getOrderItems(o.id);
+      orderItems.forEach(item => { item.order_batch_id = o.batch_id; });
+      items.push(...orderItems);
+      groups.push({
+        orderLabel: o.batch_id,
+        items: orderItems,
+        qtyTotal: orderItems.reduce((s, i) => s + (parseFloat(i.quantity) || 0), 0),
+        subtotalTotal: orderItems.reduce((s, i) => s + (parseFloat(i.subtotal) || 0), 0)
+      });
+    }
+    return { items, groups, orders: activeOrders };
+  }
+  const items = fallbackOrder ? await DB.getOrderItems(fallbackOrder.id) : (inv.order_id ? await DB.getOrderItems(inv.order_id) : []);
+  return { items, groups: [], orders: fallbackOrder ? [fallbackOrder] : [] };
+}
+
 async function viewInvoice(id) {
   const inv = await DB.getInvoice(id); if (!inv) return;
   const order = await DB.getOrder(inv.order_id);
   const customerRaw = (order && order.customer_id) ? await DB.getCustomer(order.customer_id) : null;
   const customer = customerRaw || (order ? { hotel_name: getOrderCustomerName(order) } : null);
-  const items = order ? await DB.getOrderItems(order.id) : [];
+  // For a "Single Invoice" batch, this pulls items from every order the
+  // invoice covers (not just `order`, which is only the first of them) —
+  // previously this only ever showed one order's items on a multi-order
+  // invoice.
+  const { items, groups: batchItemGroups, orders: batchOrders } = await _resolveInvoiceItemGroups(inv, order);
   const payments = await DB.getPaymentsByInvoice(id);
-  
+
   const settings = {
     company_name: await DB.getSetting('company_name') || 'Sagacious Washing Center',
     address: await DB.getSetting('address') || '',
@@ -528,10 +576,19 @@ async function viewInvoice(id) {
   const finalTotal = fin.netPayableTotal;
 
   const _svcColor = { 'Dry Clean': '#7c3aed', 'Wash & Press': '#0369a1', 'Wash & Dry': '#16a34a' };
-  const pendingItemIds = order ? await _getPendingItemIdsForOrder(order.id) : new Set();
-  const pendingReturnSummaryHtml = order ? await _buildPendingReturnSummaryHtml(order) : '';
+  // For a batch invoice, "pending" badges must be computed per-item's own
+  // order across every order it covers — a single order's pending list
+  // would miss items belonging to the other orders folded into this bill.
+  let pendingItemIds = new Set();
+  if (batchItemGroups.length > 0) {
+    const sets = await Promise.all(batchOrders.map(o => _getPendingItemIdsForOrder(o.id)));
+    sets.forEach(s => s.forEach(v => pendingItemIds.add(v)));
+  } else if (order) {
+    pendingItemIds = await _getPendingItemIdsForOrder(order.id);
+  }
+  const pendingReturnSummaryHtml = (batchItemGroups.length === 0 && order) ? await _buildPendingReturnSummaryHtml(order) : '';
 
-  const itemsHTML = items.map(i => `
+  const _itemRowHTML = i => `
     <tr>
       <td style="padding:8px 12px;border-bottom:1px solid #e5e7eb;">${escapeHtml(i.item_name)}</td>
       <td style="padding:8px 12px;border-bottom:1px solid #e5e7eb;text-align:center;">${i.quantity}</td>
@@ -541,7 +598,26 @@ async function viewInvoice(id) {
       </td>
       <td style="padding:8px 12px;border-bottom:1px solid #e5e7eb;text-align:right;">${formatCurrency(i.price)}</td>
       <td style="padding:8px 12px;border-bottom:1px solid #e5e7eb;text-align:right;font-weight:600;">${formatCurrency(i.subtotal)}</td>
-    </tr>`).join('');
+    </tr>`;
+
+  // Batch invoice: item rows grouped under a heading per order, each group
+  // closed with its own Order Total row, followed by one Invoice Total row
+  // summing every order's subtotal. Non-batch: the plain flat item list.
+  const itemsHTML = batchItemGroups.length > 0
+    ? batchItemGroups.map(g => `
+        <tr><td colspan="6" style="padding:14px 12px 6px;font-weight:800;font-size:0.95em;color:#1a4d8f;border-top:2px solid #e2e8f0;">Order: ${escapeHtml(g.orderLabel)}</td></tr>
+        ${g.items.map(_itemRowHTML).join('')}
+        <tr style="background:#f8fafc;">
+          <td style="padding:8px 12px;font-weight:700;">Order Total</td>
+          <td style="padding:8px 12px;text-align:center;font-weight:700;">${g.qtyTotal}</td>
+          <td></td><td></td><td></td>
+          <td style="padding:8px 12px;text-align:right;font-weight:800;color:#1a4d8f;">${formatCurrency(g.subtotalTotal)}</td>
+        </tr>`).join('') +
+      `<tr style="border-top:2px solid #1a4d8f;">
+          <td colspan="5" style="padding:12px;text-align:right;font-weight:800;">Invoice Total</td>
+          <td style="padding:12px;text-align:right;font-weight:800;color:#16a34a;">${formatCurrency(batchItemGroups.reduce((s, g) => s + g.subtotalTotal, 0))}</td>
+        </tr>`
+    : items.map(_itemRowHTML).join('');
 
   const paymentsHTML = payments.map(p => `
     <tr>
@@ -602,15 +678,29 @@ async function viewInvoice(id) {
       <div style="display:grid;grid-template-columns:1fr 1fr;gap:24px;margin-bottom:32px;">
         <div>
           <div style="font-size:0.72em;font-weight:700;text-transform:uppercase;letter-spacing:1px;color:#94a3b8;margin-bottom:10px;">Bill To</div>
-          <div style="font-weight:700;font-size:1.05em;color:#1e293b;">${escapeHtml(customer?.hotel_name || (order ? getOrderCustomerName(order) : '—'))}</div>
-          ${customer?.address ? `<div style="font-size:0.88em;color:#64748b;margin-top:3px;">${escapeHtml(customer.address)}</div>` : ''}
-          ${customer?.contact_person ? `<div style="font-size:0.88em;color:#64748b;">${escapeHtml(customer.contact_person)}</div>` : ''}
-          ${customer?.phone ? `<div style="font-size:0.88em;color:#64748b;">${escapeHtml(customer.phone)}</div>` : ''}
+          ${(() => {
+            if (batchItemGroups.length > 0 && inv.batch_invoice_details) {
+              const batchDetails = JSON.parse(inv.batch_invoice_details || '[]');
+              const customerNames = [...new Set(batchDetails.map(d => d.customerName))];
+              return `<div style="font-weight:700;font-size:1.05em;color:#1e293b;line-height:1.4;">${customerNames.map(escapeHtml).join('<br/>')}</div>`;
+            }
+            return `
+              <div style="font-weight:700;font-size:1.05em;color:#1e293b;">${escapeHtml(customer?.hotel_name || (order ? getOrderCustomerName(order) : '—'))}</div>
+              ${customer?.address ? `<div style="font-size:0.88em;color:#64748b;margin-top:3px;">${escapeHtml(customer.address)}</div>` : ''}
+              ${customer?.contact_person ? `<div style="font-size:0.88em;color:#64748b;">${escapeHtml(customer.contact_person)}</div>` : ''}
+              ${customer?.phone ? `<div style="font-size:0.88em;color:#64748b;">${escapeHtml(customer.phone)}</div>` : ''}
+            `;
+          })()}
         </div>
         <div>
           <div style="font-size:0.72em;font-weight:700;text-transform:uppercase;letter-spacing:1px;color:#94a3b8;margin-bottom:10px;">Order Info</div>
-          <div style="font-size:0.9em;color:#64748b;">Batch: <strong style="color:#1e293b;">${order?.batch_id || '—'}</strong></div>
-          <div style="font-size:0.9em;color:#64748b;margin-top:3px;">Pickup: ${formatDate(order?.pickup_date)}</div>
+          ${batchItemGroups.length > 0 ? `
+            <div style="font-size:0.9em;color:#64748b;">Order IDs: <strong style="color:#1e293b;">${batchOrders.map(o => o.batch_id).join(', ')}</strong></div>
+            <div style="font-size:0.9em;color:#64748b;margin-top:3px;">Invoice Type: Consolidated Batch</div>
+          ` : `
+            <div style="font-size:0.9em;color:#64748b;">Batch: <strong style="color:#1e293b;">${order?.batch_id || '—'}</strong></div>
+            <div style="font-size:0.9em;color:#64748b;margin-top:3px;">Pickup: ${formatDate(order?.pickup_date)}</div>
+          `}
         </div>
       </div>
 
@@ -625,19 +715,7 @@ async function viewInvoice(id) {
             <th style="padding:10px 0;text-align:right;font-size:0.75em;font-weight:700;text-transform:uppercase;letter-spacing:0.8px;color:#94a3b8;">Subtotal</th>
           </tr>
         </thead>
-        <tbody>
-          ${items.map((i, idx) => `
-            <tr style="border-bottom:1px solid #f1f5f9;${idx % 2 === 1 ? 'background:#fafafa;' : ''}">
-              <td style="padding:12px 0;font-size:0.92em;">${escapeHtml(i.item_name)}</td>
-              <td style="padding:12px 8px;text-align:center;font-size:0.92em;">${i.quantity}</td>
-              <td style="padding:12px 8px;text-align:center;">${pendingItemIds.has(String(i.id)) ? '<span style="display:inline-block;background:#facc15;color:#78350f;font-weight:800;font-size:0.85em;width:20px;height:20px;line-height:20px;border-radius:5px;">P</span>' : ''}</td>
-              <td style="padding:12px 8px;font-size:0.88em;">
-                <span style="font-weight:600;padding:3px 8px;border-radius:5px;background:${_svcColor[i.service_type] || '#64748b'}18;color:${_svcColor[i.service_type] || '#64748b'};">${i.service_type || '—'}</span>
-              </td>
-              <td style="padding:12px 8px;text-align:right;font-size:0.92em;">${formatCurrency(i.price)}</td>
-              <td style="padding:12px 0;text-align:right;font-size:0.92em;font-weight:700;">${formatCurrency(i.subtotal)}</td>
-            </tr>`).join('')}
-        </tbody>
+        <tbody>${itemsHTML}</tbody>
       </table>
 
       <div style="display:flex;justify-content:flex-end;margin-top:20px;position:relative;">
@@ -734,35 +812,25 @@ async function printInvoice(id) {
   const customer = customerRaw || (order ? { hotel_name: getOrderCustomerName(order) } : null);
   const payments = (inv.id && typeof id !== 'object') ? await DB.getPaymentsByInvoice(inv.id) : [];
   
-  let orderInfoHTML = '';
-  let items = [];
+  // For a "Single Invoice" batch this pulls items from every order the
+  // invoice covers, grouped per order (batchItemGroups), instead of just
+  // `inv.order_id`'s items.
+  const { items, groups: batchItemGroups, orders: activeOrders } = await _resolveInvoiceItemGroups(inv, order);
 
+  let orderInfoHTML = '';
   if (inv.batch_order_ids) {
-    const orderIds = inv.batch_order_ids.split(',').map(Number);
-    const ordersList = await Promise.all(orderIds.map(oid => DB.getOrder(oid)));
-    const activeOrders = ordersList.filter(Boolean);
-    
     orderInfoHTML = `
       <div><span style="color:#64748b;">Invoice Number:</span> <strong>${inv.invoice_number}</strong></div>
       <div style="margin-top:4.5px;"><span style="color:#64748b;">Order IDs:</span> <strong>${activeOrders.map(o => o.batch_id).join(', ')}</strong></div>
       <div style="margin-top:4.5px;"><span style="color:#64748b;">Invoice Type:</span> Consolidated Batch</div>
     `;
-
-    for (const o of activeOrders) {
-      const orderItems = await DB.getOrderItems(o.id);
-      orderItems.forEach(item => {
-        item.order_batch_id = o.batch_id;
-      });
-      items.push(...orderItems);
-    }
   } else {
     orderInfoHTML = `
       <div><span style="color:#64748b;">Batch:</span> <strong>${order?.batch_id || '—'}</strong></div>
       <div><span style="color:#64748b;">Pickup:</span> ${formatDate(order?.pickup_date)}</div>
     `;
-    items = order ? await DB.getOrderItems(order.id) : (inv.order_id ? await DB.getOrderItems(inv.order_id) : []);
   }
-  
+
   const settings = {
     company_name: await DB.getSetting('company_name') || 'Sagacious Washing Center',
     address: await DB.getSetting('address') || '',
@@ -805,12 +873,9 @@ async function printInvoice(id) {
   }
   const pendingReturnSummaryHtml = (!inv.batch_order_ids && order) ? await _buildPendingReturnSummaryHtml(order) : '';
 
-  const itemsHTML = items.map((i, idx) => `
+  const _itemRowHTMLPrint = (i, idx) => `
     <tr style="${idx % 2 === 1 ? 'background:#fafafa;' : ''}">
-      <td style="padding:10px 12px;border-bottom:1px solid #f1f5f9;">
-        ${escapeHtml(i.item_name)}
-        ${i.order_batch_id ? `<span style="display:block;font-size:0.75em;color:#64748b;margin-top:2px;">Order: ${escapeHtml(i.order_batch_id)}</span>` : ''}
-      </td>
+      <td style="padding:10px 12px;border-bottom:1px solid #f1f5f9;">${escapeHtml(i.item_name)}</td>
       <td style="padding:10px 12px;border-bottom:1px solid #f1f5f9;text-align:center;">${i.quantity}</td>
       <td style="padding:10px 12px;border-bottom:1px solid #f1f5f9;text-align:center;">${pendingItemIds.has(String(i.id)) ? '<span style="display:inline-block;background:#facc15;color:#78350f;font-weight:800;font-size:0.85em;width:20px;height:20px;line-height:20px;border-radius:5px;">P</span>' : ''}</td>
       <td style="padding:10px 12px;border-bottom:1px solid #f1f5f9;">
@@ -818,7 +883,27 @@ async function printInvoice(id) {
       </td>
       <td style="padding:10px 12px;border-bottom:1px solid #f1f5f9;text-align:right;">${formatCurrency(i.price)}</td>
       <td style="padding:10px 12px;border-bottom:1px solid #f1f5f9;text-align:right;font-weight:700;">${formatCurrency(i.subtotal)}</td>
-    </tr>`).join('');
+    </tr>`;
+
+  // Batch invoice ("Single Invoice" across multiple orders): item rows
+  // grouped under a heading per order, each group closed with its own Order
+  // Total row, followed by one Invoice Total row summing every order's
+  // subtotal. Non-batch: the plain flat item list.
+  const itemsHTML = batchItemGroups.length > 0
+    ? batchItemGroups.map(g => `
+        <tr><td colspan="6" style="padding:14px 12px 6px;font-weight:800;font-size:0.95em;color:#1a4d8f;border-top:2px solid #e2e8f0;">Order: ${escapeHtml(g.orderLabel)}</td></tr>
+        ${g.items.map(_itemRowHTMLPrint).join('')}
+        <tr style="background:#f8fafc;">
+          <td style="padding:8px 12px;font-weight:700;">Order Total</td>
+          <td style="padding:8px 12px;text-align:center;font-weight:700;">${g.qtyTotal}</td>
+          <td></td><td></td><td></td>
+          <td style="padding:8px 12px;text-align:right;font-weight:800;color:#1a4d8f;">${formatCurrency(g.subtotalTotal)}</td>
+        </tr>`).join('') +
+      `<tr style="border-top:2px solid #1a4d8f;">
+          <td colspan="5" style="padding:12px;text-align:right;font-weight:800;font-size:1em;">Invoice Total</td>
+          <td style="padding:12px;text-align:right;font-weight:800;font-size:1.05em;color:#16a34a;">${formatCurrency(batchItemGroups.reduce((s, g) => s + g.subtotalTotal, 0))}</td>
+        </tr>`
+    : items.map(_itemRowHTMLPrint).join('');
 
   const paidStamp = balance <= 0 ? `
     <div style="position:absolute;left:0;bottom:20px;pointer-events:none;z-index:10;">
@@ -926,49 +1011,19 @@ async function printInvoice(id) {
         </div>
       </div>
 
-      ${(() => {
-        if (inv.batch_invoice_details) {
-          const batchDetails = JSON.parse(inv.batch_invoice_details || '[]');
-          const rows = batchDetails.map((d, idx) => `
-            <tr style="${idx % 2 === 1 ? 'background:#fafafa;' : ''}">
-              <td style="padding:10px 12px;border-bottom:1px solid #f1f5f9;font-family:monospace;font-weight:700;">${d.invoiceNumber}</td>
-              <td style="padding:10px 12px;border-bottom:1px solid #f1f5f9;font-family:monospace;">${d.orderNumber}</td>
-              <td style="padding:10px 12px;border-bottom:1px solid #f1f5f9;">${escapeHtml(d.customerName)}</td>
-              <td style="padding:10px 12px;border-bottom:1px solid #f1f5f9;text-align:right;font-weight:700;color:#16a34a;">${formatCurrency(d.amount)}</td>
-            </tr>
-          `).join('');
-
-          return `
-            <table style="width:100%;border-collapse:collapse;margin-bottom:24px;">
-              <thead>
-                <tr style="background:#1a4d8f;color:#fff;">
-                  <th style="padding:10px 12px;text-align:left;font-size:0.82em;text-transform:uppercase;">Invoice Number</th>
-                  <th style="padding:10px 12px;text-align:left;font-size:0.82em;text-transform:uppercase;">Order Number</th>
-                  <th style="padding:10px 12px;text-align:left;font-size:0.82em;text-transform:uppercase;">Customer</th>
-                  <th style="padding:10px 12px;text-align:right;font-size:0.82em;text-transform:uppercase;">Payment per Invoice</th>
-                </tr>
-              </thead>
-              <tbody>${rows}</tbody>
-            </table>
-          `;
-        } else {
-          return `
-            <table style="width:100%;border-collapse:collapse;margin-bottom:24px;">
-              <thead>
-                <tr style="background:#1a4d8f;color:#fff;">
-                  <th style="padding:10px 12px;text-align:left;font-size:0.82em;text-transform:uppercase;">Item</th>
-                  <th style="padding:10px 12px;text-align:center;font-size:0.82em;text-transform:uppercase;">Qty</th>
-                  <th style="padding:10px 12px;text-align:center;font-size:0.82em;text-transform:uppercase;">Status</th>
-                  <th style="padding:10px 12px;text-align:left;font-size:0.82em;text-transform:uppercase;">Service</th>
-                  <th style="padding:10px 12px;text-align:right;font-size:0.82em;text-transform:uppercase;">Unit Price</th>
-                  <th style="padding:10px 12px;text-align:right;font-size:0.82em;text-transform:uppercase;">Subtotal</th>
-                </tr>
-              </thead>
-              <tbody>${itemsHTML}</tbody>
-            </table>
-          `;
-        }
-      })()}
+      <table style="width:100%;border-collapse:collapse;margin-bottom:24px;">
+        <thead>
+          <tr style="background:#1a4d8f;color:#fff;">
+            <th style="padding:10px 12px;text-align:left;font-size:0.82em;text-transform:uppercase;">Item</th>
+            <th style="padding:10px 12px;text-align:center;font-size:0.82em;text-transform:uppercase;">Qty</th>
+            <th style="padding:10px 12px;text-align:center;font-size:0.82em;text-transform:uppercase;">Status</th>
+            <th style="padding:10px 12px;text-align:left;font-size:0.82em;text-transform:uppercase;">Service</th>
+            <th style="padding:10px 12px;text-align:right;font-size:0.82em;text-transform:uppercase;">Unit Price</th>
+            <th style="padding:10px 12px;text-align:right;font-size:0.82em;text-transform:uppercase;">Subtotal</th>
+          </tr>
+        </thead>
+        <tbody>${itemsHTML}</tbody>
+      </table>
 
       <div style="display:flex;justify-content:flex-end;margin-bottom:24px;position:relative;">
         ${paidStamp}
@@ -997,7 +1052,10 @@ async function previewInvoiceByOrder(orderId) {
     const order = await DB.getOrder(orderId);
     if (!order) return toast('Order not found', 'error');
 
-    let inv = await DB.getInvoiceByOrder(orderId);
+    // A "Single Invoice" batch payment folds this order's own invoice into
+    // a shared one keyed to a different order — look that up before
+    // assuming this order has no invoice at all.
+    let inv = await _findInvoiceForOrder(orderId);
     if (!inv) {
       const orderItems = await DB.getOrderItems(orderId);
       const itemsSubtotal = orderItems.reduce((s, i) => s + (i.subtotal || 0), 0);
@@ -1025,7 +1083,9 @@ async function previewInvoiceByOrder(orderId) {
     const customerRaw = order.customer_id ? await DB.getCustomer(order.customer_id) : null;
     const customer = customerRaw || { hotel_name: getOrderCustomerName(order) };
     const payments = (inv.id && typeof inv.id !== 'undefined') ? await DB.getPaymentsByInvoice(inv.id) : [];
-    const items = order ? await DB.getOrderItems(order.id) : [];
+    // If `inv` is the shared invoice for a "Single Invoice" batch, this
+    // pulls items from every order it covers, not just this one.
+    const { items, groups: batchItemGroups, orders: batchOrders } = await _resolveInvoiceItemGroups(inv, order);
 
     const settings = {
       company_name: await DB.getSetting('company_name') || 'Sagacious Washing Center',
@@ -1052,10 +1112,16 @@ async function previewInvoiceByOrder(orderId) {
       : `<div style="height:64px;width:64px;border-radius:12px;background:linear-gradient(135deg,#00b4d8,#1a4d8f);display:flex;align-items:center;justify-content:center;color:#fff;font-size:2em;">SW</div>`;
 
     const _svcColorPrint = { 'Dry Clean': '#7c3aed', 'Wash & Press': '#0369a1', 'Wash & Dry': '#16a34a' };
-    const pendingItemIds = await _getPendingItemIdsForOrder(order.id);
-    const pendingReturnSummaryHtml = await _buildPendingReturnSummaryHtml(order);
+    let pendingItemIds = new Set();
+    if (batchItemGroups.length > 0) {
+      const sets = await Promise.all(batchOrders.map(o => _getPendingItemIdsForOrder(o.id)));
+      sets.forEach(s => s.forEach(v => pendingItemIds.add(v)));
+    } else {
+      pendingItemIds = await _getPendingItemIdsForOrder(order.id);
+    }
+    const pendingReturnSummaryHtml = batchItemGroups.length === 0 ? await _buildPendingReturnSummaryHtml(order) : '';
 
-    const itemsHTML = items.map((i, idx) => `
+    const _itemRowHTMLPreview = (i, idx) => `
       <tr style="${idx % 2 === 1 ? 'background:#fafafa;' : ''}">
         <td style="padding:10px 12px;border-bottom:1px solid #f1f5f9;">${escapeHtml(i.item_name)}</td>
         <td style="padding:10px 12px;border-bottom:1px solid #f1f5f9;text-align:center;">${i.quantity}</td>
@@ -1065,7 +1131,23 @@ async function previewInvoiceByOrder(orderId) {
         </td>
         <td style="padding:10px 12px;border-bottom:1px solid #f1f5f9;text-align:right;">${formatCurrency(i.price)}</td>
         <td style="padding:10px 12px;border-bottom:1px solid #f1f5f9;text-align:right;font-weight:700;">${formatCurrency(i.subtotal)}</td>
-      </tr>`).join('');
+      </tr>`;
+
+    const itemsHTML = batchItemGroups.length > 0
+      ? batchItemGroups.map(g => `
+          <tr><td colspan="6" style="padding:14px 12px 6px;font-weight:800;font-size:0.95em;color:#1a4d8f;border-top:2px solid #e2e8f0;">Order: ${escapeHtml(g.orderLabel)}</td></tr>
+          ${g.items.map(_itemRowHTMLPreview).join('')}
+          <tr style="background:#f8fafc;">
+            <td style="padding:8px 12px;font-weight:700;">Order Total</td>
+            <td style="padding:8px 12px;text-align:center;font-weight:700;">${g.qtyTotal}</td>
+            <td></td><td></td><td></td>
+            <td style="padding:8px 12px;text-align:right;font-weight:800;color:#1a4d8f;">${formatCurrency(g.subtotalTotal)}</td>
+          </tr>`).join('') +
+        `<tr style="border-top:2px solid #1a4d8f;">
+            <td colspan="5" style="padding:12px;text-align:right;font-weight:800;font-size:1em;">Invoice Total</td>
+            <td style="padding:12px;text-align:right;font-weight:800;font-size:1.05em;color:#16a34a;">${formatCurrency(batchItemGroups.reduce((s, g) => s + g.subtotalTotal, 0))}</td>
+          </tr>`
+      : items.map(_itemRowHTMLPreview).join('');
 
     const summaryHTML = `
       <div style="display:flex;justify-content:space-between;padding:8px 12px;border-bottom:1px solid #e5e7eb;">
@@ -1103,7 +1185,9 @@ async function previewInvoiceByOrder(orderId) {
         <div style="color:#16a34a;font-family:'Playfair Display',serif;font-size:72px;font-weight:900;letter-spacing:8px;text-transform:uppercase;opacity:0.30;transform:rotate(-12deg);line-height:1;user-select:none;">PAID</div>
       </div>` : '';
 
-    const orderInfoHTML = `
+    const orderInfoHTML = batchItemGroups.length > 0 ? `
+      <div><span style="color:#64748b;">Order IDs:</span> <strong>${batchOrders.map(o => o.batch_id).join(', ')}</strong></div>
+      <div style="margin-top:4px;"><span style="color:#64748b;">Invoice Type:</span> Consolidated Batch</div>` : `
       <div><span style="color:#64748b;">Batch:</span> <strong>${order?.batch_id || '—'}</strong></div>
       <div style="margin-top:4px;"><span style="color:#64748b;">Pickup:</span> ${formatDate(order?.pickup_date)}</div>`;
 
@@ -1139,10 +1223,19 @@ async function previewInvoiceByOrder(orderId) {
           <div style="display:grid;grid-template-columns:1fr 1fr;gap:20px;margin-bottom:24px;">
             <div style="background:#f8fafc;padding:16px;border-radius:10px;">
               <div style="font-size:0.75em;font-weight:700;text-transform:uppercase;letter-spacing:0.5px;color:#64748b;margin-bottom:8px;">Bill To</div>
-              <div style="font-weight:700;font-size:1.05em;">${escapeHtml(customer?.hotel_name || getOrderCustomerName(order) || '—')}</div>
-              <div style="color:#64748b;font-size:0.9em;margin-top:4px;">${escapeHtml(customer?.address || '')}</div>
-              <div style="color:#64748b;font-size:0.9em;">${escapeHtml(customer?.contact_person || '')}</div>
-              <div style="color:#64748b;font-size:0.9em;">${escapeHtml(customer?.phone || '')}</div>
+              ${(() => {
+                if (batchItemGroups.length > 0 && inv.batch_invoice_details) {
+                  const batchDetails = JSON.parse(inv.batch_invoice_details || '[]');
+                  const customerNames = [...new Set(batchDetails.map(d => d.customerName))];
+                  return `<div style="font-weight:700;font-size:1.05em;line-height:1.4;">${customerNames.map(escapeHtml).join('<br/>')}</div>`;
+                }
+                return `
+                  <div style="font-weight:700;font-size:1.05em;">${escapeHtml(customer?.hotel_name || getOrderCustomerName(order) || '—')}</div>
+                  <div style="color:#64748b;font-size:0.9em;margin-top:4px;">${escapeHtml(customer?.address || '')}</div>
+                  <div style="color:#64748b;font-size:0.9em;">${escapeHtml(customer?.contact_person || '')}</div>
+                  <div style="color:#64748b;font-size:0.9em;">${escapeHtml(customer?.phone || '')}</div>
+                `;
+              })()}
             </div>
             <div style="background:#f8fafc;padding:16px;border-radius:10px;">
               <div style="font-size:0.75em;font-weight:700;text-transform:uppercase;letter-spacing:0.5px;color:#64748b;margin-bottom:8px;">Order Info</div>
