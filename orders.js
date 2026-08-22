@@ -108,7 +108,7 @@ async function renderOrders() {
             ${canBulkAssign ? `<th style="width:36px;text-align:center;"><input type="checkbox" id="orders-select-all" onchange="toggleAllOrdersSelection(this)"/></th>` : ''}
             <th>Order ID</th><th>Customer</th><th>Pickup Date</th><th>Status</th>
             <th>Paid Date</th><th>Total</th><th>Driver</th>
-            <th style="text-align:center;white-space:nowrap;">
+            <th style="text-align:right;white-space:nowrap;">
               Actions
               <button id="orders-actions-toggle" onclick="_toggleAllOrderActions()" title="Show / Hide action buttons"
                 style="margin-left:6px;padding:2px 7px;font-size:0.75em;cursor:pointer;border-radius:5px;border:1px solid var(--border);background:var(--bg);color:var(--text-muted);vertical-align:middle;">
@@ -210,8 +210,8 @@ async function _refreshOrdersTable() {
           <td>${o.status === 'Paid' ? (o.payment_date ? formatDate(o.payment_date) : '—') : '—'}</td>
           <td><strong>${formatCurrency(o.total_amount)}</strong></td>
           <td>${drvName}${deliveryBadge}</td>
-          <td style="text-align:center;">
-            <div style="display:inline-flex;align-items:center;gap:4px;flex-wrap:nowrap;">
+          <td style="text-align:right;">
+            <div style="display:inline-flex;align-items:center;justify-content:flex-end;gap:4px;flex-wrap:nowrap;">
               <button class="btn btn-secondary btn-sm" onclick="viewOrderDetails(${o.id})" title="View Order"><i class="fas fa-eye"></i> View</button>
               <span class="order-extra-actions" style="${extraStyle}">
                 ${ordersDebugMode ? (isAdmin() ? `<button class="btn btn-sm" style="background:#dc2626;border-color:#dc2626;color:#fff;" onclick="showDebugEditOrderModal(${o.id})"><i class="fas fa-bug"></i> Debug Edit</button>` : '') : `
