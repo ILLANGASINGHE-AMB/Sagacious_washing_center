@@ -6,8 +6,12 @@ const Print = {
    * Opens a standardized styled popup window and triggers print after fonts load
    * @param {string} htmlContent - The body HTML content to display inside the printable document
    * @param {string} documentTitle - The title tag for the printable document
+   * @param {Window} [existingWin] - An already-opened window to write into instead
+   *   of opening a new one. Batch printing opens all of its windows up front,
+   *   inside the user's click, so pop-up blockers don't kill the ones that would
+   *   otherwise be opened after an await.
    */
-  openPrintWindow(htmlContent, documentTitle = 'Print Document') {
+  openPrintWindow(htmlContent, documentTitle = 'Print Document', existingWin = null) {
     const fullHTML = `<!DOCTYPE html>
 <html>
 <head>
@@ -37,12 +41,13 @@ const Print = {
 </body>
 </html>`;
 
-    const win = window.open('', '_blank');
+    const win = existingWin || window.open('', '_blank');
     if (!win) {
       if (window.toast) window.toast('Please allow pop-ups to view printable documents', 'warning');
       return null;
     }
 
+    if (existingWin) win.document.open();
     win.document.write(fullHTML);
     win.document.close();
     return win;

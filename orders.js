@@ -30,7 +30,9 @@ async function renderOrders() {
   const custOpts   = customers.map(c=>`<option value="${c.id}" ${String(c.id)===ordersCustFilter?'selected':''}>${escapeHtml(c.hotel_name)}</option>`).join('');
   // Bulk driver assignment is admin/staff only — it does not matter who
   // originally collected the order (newchanges2.md), so drivers themselves
-  // don't get this reassignment tool.
+  // don't get this reassignment tool. The tick column itself is for
+  // everyone though: it also drives Batch Print, which every role that can
+  // see the per-row Print button is allowed to use.
   const canBulkAssign = isAdmin() || isStaffUser();
 
   document.getElementById('content').innerHTML = `
@@ -39,6 +41,7 @@ async function renderOrders() {
       <div style="display:flex;gap:8px;flex-wrap:wrap;">
         ${canBulkAssign ? `<button id="orders-assign-driver-btn" class="btn btn-primary" style="display:none;" onclick="showBulkAssignDriverModal()"><i class="fas fa-user-tie"></i> Assign Driver (<span id="orders-selected-count">0</span>)</button>` : ''}
         ${isAdmin() ? `<button id="orders-mark-delivered-btn" class="btn btn-secondary" style="display:none;color:#166534;" onclick="markOrdersDeliveredBulk(Array.from(ordersSelectedIds))"><i class="fas fa-truck-ramp-box"></i> Mark Delivered (<span id="orders-selected-count-2">0</span>)</button>` : ''}
+        <button id="orders-batch-print-btn" class="btn btn-success" style="display:none;background:#10b981;border-color:#10b981;color:#fff;" onclick="batchPrintSelectedOrders()"><i class="fas fa-print"></i> Batch Print (<span id="orders-selected-count-3">0</span>)</button>
         ${canAddOrders() ? `<button class="btn btn-primary" onclick="showAddOrderModal()"><i class="fas fa-plus"></i> New Order</button>` : ''}
         ${isAdmin() ? `<button id="orders-debug-mode-btn" class="btn btn-sm" style="background:${ordersDebugMode?'#7f1d1d':'#dc2626'};border-color:${ordersDebugMode?'#7f1d1d':'#dc2626'};color:#fff;font-weight:700;" onclick="toggleOrdersDebugMode()"><i class="fas fa-bug"></i> ${ordersDebugMode?'Exit Debug Mode':'Debug Mode'}</button>` : ''}
       </div>
@@ -105,7 +108,7 @@ async function renderOrders() {
       <div class="table-wrap">
         <table>
           <thead><tr>
-            ${canBulkAssign ? `<th style="width:36px;text-align:center;"><input type="checkbox" id="orders-select-all" onchange="toggleAllOrdersSelection(this)"/></th>` : ''}
+            <th style="width:36px;text-align:center;"><input type="checkbox" id="orders-select-all" onchange="toggleAllOrdersSelection(this)" title="Select all shown orders"/></th>
             <th>Order ID</th><th>Customer</th><th>Pickup Date</th><th>Status</th>
             <th>Paid Date</th><th>Total</th><th>Driver</th>
             <th style="text-align:left;white-space:nowrap;">
@@ -187,7 +190,7 @@ async function _refreshOrdersTable() {
   _syncOrdersDateBtns();
 
   const canBulkAssign = isAdmin() || isStaffUser();
-  const colCount = canBulkAssign ? 9 : 8;
+  const colCount = 9; // tick column is always rendered (Batch Print)
 
   // Update tbody only
   tbody.innerHTML = items.length===0
@@ -202,7 +205,7 @@ async function _refreshOrdersTable() {
           : (o.delivery_status === 'out_for_delivery' ? `<div style="margin-top:2px;">${statusBadge('Out for Delivery')}</div>` : '');
         const extraStyle = ordersActionsVisible ? 'display:inline-flex;gap:4px;' : 'display:none;';
         return `<tr>
-          ${canBulkAssign ? `<td style="text-align:center;"><input type="checkbox" class="orders-row-check" data-order-id="${o.id}" ${ordersSelectedIds.has(o.id)?'checked':''} onchange="toggleOrderSelection(${o.id},this.checked)"/></td>` : ''}
+          <td style="text-align:center;"><input type="checkbox" class="orders-row-check" data-order-id="${o.id}" ${ordersSelectedIds.has(o.id)?'checked':''} onchange="toggleOrderSelection(${o.id},this.checked)"/></td>
           <td><strong style="font-family:monospace;color:var(--primary);">${o.batch_id||'—'}</strong></td>
           <td>${escapeHtml(custName)}</td>
           <td>${formatDate(o.pickup_date)}</td>
@@ -232,7 +235,7 @@ async function _refreshOrdersTable() {
   const toggleBtn = document.getElementById('orders-actions-toggle');
   if (toggleBtn) toggleBtn.innerHTML = ordersActionsVisible ? '<i class="fas fa-eye"></i>' : '<i class="fas fa-eye-slash"></i>';
 
-  _updateOrdersAssignBar();
+  _updateOrdersSelectionBar();
 }
 
 // ─────────────────────────────────────────────
@@ -244,7 +247,7 @@ async function _refreshOrdersTable() {
 // ─────────────────────────────────────────────
 function toggleOrderSelection(id, checked) {
   if (checked) ordersSelectedIds.add(id); else ordersSelectedIds.delete(id);
-  _updateOrdersAssignBar();
+  _updateOrdersSelectionBar();
 }
 
 function toggleAllOrdersSelection(checkbox) {
@@ -253,12 +256,14 @@ function toggleAllOrdersSelection(checkbox) {
     const id = parseInt(cb.dataset.orderId);
     if (checkbox.checked) ordersSelectedIds.add(id); else ordersSelectedIds.delete(id);
   });
-  _updateOrdersAssignBar();
+  _updateOrdersSelectionBar();
 }
 
+// Shows/hides every bulk action that depends on the tick column — Assign
+// Driver, Mark Delivered, Batch Print — and keeps their counts in sync.
 // "Select all" only ever reflects the currently-rendered page/filter, so
 // re-derive it (rather than trust its last checked state) every refresh.
-function _updateOrdersAssignBar() {
+function _updateOrdersSelectionBar() {
   const btn = document.getElementById('orders-assign-driver-btn');
   const countEl = document.getElementById('orders-selected-count');
   if (countEl) countEl.textContent = ordersSelectedIds.size;
@@ -268,6 +273,11 @@ function _updateOrdersAssignBar() {
   const delCountEl = document.getElementById('orders-selected-count-2');
   if (delCountEl) delCountEl.textContent = ordersSelectedIds.size;
   if (delBtn) delBtn.style.display = ordersSelectedIds.size > 0 ? 'inline-flex' : 'none';
+
+  const printBtn = document.getElementById('orders-batch-print-btn');
+  const printCountEl = document.getElementById('orders-selected-count-3');
+  if (printCountEl) printCountEl.textContent = ordersSelectedIds.size;
+  if (printBtn) printBtn.style.display = ordersSelectedIds.size > 0 ? 'inline-flex' : 'none';
 
   const rowChecks = document.querySelectorAll('.orders-row-check');
   const selectAll = document.getElementById('orders-select-all');
@@ -2159,37 +2169,192 @@ function collectAoFlagClears() {
   return clears;
 }
 
+// Resolves the invoice a bill should be printed from for one order.
+// A "Single Invoice" batch payment folds this order's own invoice into a
+// shared one keyed to a different order — look that up (see invoice.js)
+// before assuming this order has no invoice at all. Orders with no invoice
+// at all (still unpaid) get a virtual invoice built from the order itself
+// so an unpaid order can still be printed as a bill.
+async function _resolveInvoiceForOrderPrint(order) {
+  const existing = await _findInvoiceForOrder(order.id);
+  if (existing) return existing;
+
+  const orderItems = await DB.getOrderItems(order.id);
+  const itemsSubtotal = orderItems.reduce((s, i) => s + (i.subtotal || 0), 0);
+
+  return {
+    order_id: order.id,
+    invoice_number: order.batch_id,
+    invoice_type: 'Standard',
+    advance_payment: order.advance_payment || 0,
+    discount_amount: order.discount_amount || 0,
+    discount_rate: order.discount_rate || 0,
+    delivery_charge: order.delivery_charge || 0,
+    extra_payment: order.extra_payment || 0,
+    subtotal_before_discount: itemsSubtotal,
+    total_amount: order.total_amount,
+    deduction_amount: 0,
+    batch_order_ids: null,
+    payment_date: null,
+    issue_date: (order.pickup_date || order.created_at || '').slice(0, 10),
+    delivery_date: order.delivery_date || '',
+    paid_status: 'Unpaid'
+  };
+}
+
 async function printInvoiceByOrder(orderId) {
   const order = await DB.getOrder(orderId);
   if (!order) return toast('Order not found', 'error');
-
-  // A "Single Invoice" batch payment folds this order's own invoice into a
-  // shared one keyed to a different order — look that up (see invoice.js)
-  // before assuming this order has no invoice at all.
-  let inv = await _findInvoiceForOrder(orderId);
-  if (!inv) {
-    const orderItems = await DB.getOrderItems(orderId);
-    const itemsSubtotal = orderItems.reduce((s, i) => s + (i.subtotal || 0), 0);
-
-    // Construct virtual invoice for unpaid order printing
-    inv = {
-      order_id: order.id,
-      invoice_number: order.batch_id,
-      invoice_type: 'Standard',
-      advance_payment: order.advance_payment || 0,
-      discount_amount: order.discount_amount || 0,
-      discount_rate: order.discount_rate || 0,
-      delivery_charge: order.delivery_charge || 0,
-      extra_payment: order.extra_payment || 0,
-      subtotal_before_discount: itemsSubtotal,
-      total_amount: order.total_amount,
-      deduction_amount: 0,
-      batch_order_ids: null,
-      payment_date: null,
-      issue_date: (order.pickup_date || order.created_at || '').slice(0, 10),
-      delivery_date: order.delivery_date || '',
-      paid_status: 'Unpaid'
-    };
-  }
+  const inv = await _resolveInvoiceForOrderPrint(order);
   printInvoice(inv);
 }
+
+// ─────────────────────────────────────────────
+// BATCH PRINT — tick orders in the Orders table, then print each ticked
+// order as its OWN bill. Two modes, because "separate PDFs" means two
+// different things depending on how the user saves them:
+//
+//   combined — one print window holding every bill, each forced onto its
+//              own page. One dialog, one "Save as PDF" → a single file
+//              whose pages are the individual bills. Popup-blocker safe.
+//   separate — one print window (and so one Save-as-PDF dialog) PER order,
+//              giving a genuinely separate PDF file per bill. Needs
+//              pop-ups allowed, so the count is capped and confirmed.
+//
+// Both reuse buildInvoiceBillHtml (invoice.js), so a batch-printed bill is
+// byte-for-byte the same document as the row's own Print button produces.
+// ─────────────────────────────────────────────
+const BATCH_PRINT_SEPARATE_LIMIT = 20;
+
+function batchPrintSelectedOrders() {
+  const ids = Array.from(ordersSelectedIds);
+  if (!ids.length) return toast('Select at least one order to print', 'error');
+
+  createModal('batch-print-modal', `Batch Print ${ids.length} Bill(s)`, `
+    <div style="font-size:0.9em;color:var(--text-muted);margin-bottom:14px;">
+      Each selected order prints as its own separate bill. Choose how you want to save them.
+    </div>
+    <div class="form-group">
+      <label style="display:flex;gap:10px;align-items:flex-start;padding:12px;border:1px solid var(--border);border-radius:8px;cursor:pointer;margin-bottom:10px;">
+        <input type="radio" name="bp-mode" value="combined" checked style="margin-top:3px;"/>
+        <span>
+          <strong>One PDF, one bill per page</strong>
+          <div style="font-size:0.82em;color:var(--text-muted);margin-top:3px;">
+            A single print dialog. Save as PDF and you get one file with ${ids.length} page-separated bill(s).
+          </div>
+        </span>
+      </label>
+      <label style="display:flex;gap:10px;align-items:flex-start;padding:12px;border:1px solid var(--border);border-radius:8px;cursor:pointer;">
+        <input type="radio" name="bp-mode" value="separate" style="margin-top:3px;"/>
+        <span>
+          <strong>Separate PDF file per bill</strong>
+          <div style="font-size:0.82em;color:var(--text-muted);margin-top:3px;">
+            Opens ${ids.length} print window(s) — one Save-as-PDF dialog each. Pop-ups must be allowed for this site.
+          </div>
+        </span>
+      </label>
+    </div>
+    <div style="display:flex;gap:10px;justify-content:flex-end;margin-top:16px;">
+      <button class="btn btn-secondary" onclick="hideModal('batch-print-modal')">Cancel</button>
+      <button class="btn btn-primary" id="bp-submit-btn"><i class="fas fa-print"></i> Print</button>
+    </div>`);
+  showModal('batch-print-modal');
+  document.getElementById('bp-submit-btn').onclick = () => {
+    const mode = document.querySelector('input[name="bp-mode"]:checked')?.value || 'combined';
+    hideModal('batch-print-modal');
+    runBatchPrint(ids, mode);
+  };
+}
+
+// Builds every selected order's bill up front. Orders that fail to build
+// are collected rather than aborting the run — one bad order shouldn't cost
+// the user the other nineteen.
+async function _buildBatchBills(orderIds) {
+  const bills = [], failed = [];
+  // Fetch the order list once, and let the first bill's company-header
+  // lookup be reused by the rest (cacheSettings) — otherwise a 20-bill run
+  // repeats the same six settings queries 20 times over.
+  clearBillSettingsCache();
+  const allOrders = await DB.getOrders();
+  const orderMap = Object.fromEntries(allOrders.map(o => [o.id, o]));
+
+  for (let i = 0; i < orderIds.length; i++) {
+    const id = orderIds[i];
+    const order = orderMap[id];
+    const subEl = document.getElementById('processing-sublabel');
+    if (subEl) subEl.textContent = `Building bill ${i + 1} of ${orderIds.length}...`;
+    if (!order) { failed.push(`#${id} (not found)`); continue; }
+    try {
+      const inv = await _resolveInvoiceForOrderPrint(order);
+      // includePayments:false keeps a batch-printed bill identical to the
+      // one the row's Print button produces for the same order.
+      const { html } = await buildInvoiceBillHtml(inv, { includePayments: false, cacheSettings: true });
+      bills.push({ orderId: id, batchId: order.batch_id || `#${id}`, html });
+    } catch (err) {
+      console.error('batch print: failed to build bill for order', id, err);
+      failed.push(order.batch_id || `#${id}`);
+    }
+  }
+  clearBillSettingsCache();
+  return { bills, failed };
+}
+
+async function runBatchPrint(orderIds, mode) {
+  if (mode === 'separate' && orderIds.length > BATCH_PRINT_SEPARATE_LIMIT) {
+    return toast(`Separate-file printing is capped at ${BATCH_PRINT_SEPARATE_LIMIT} orders at a time (${orderIds.length} selected). Deselect some, or use the one-PDF option.`, 'error');
+  }
+
+  // Pop-up blockers only trust window.open() calls made in the same task as
+  // the user's click, and building the bills is async — so for separate-file
+  // mode every window is opened NOW, blank, and written into once its bill
+  // is ready. Opening them afterwards would get all but the first blocked.
+  let preOpened = null;
+  if (mode === 'separate') {
+    preOpened = orderIds.map(() => window.open('', '_blank'));
+    if (preOpened.some(w => !w)) {
+      preOpened.forEach(w => { try { w && w.close(); } catch (e) {} });
+      return toast('Please allow pop-ups for this site to print separate PDF files', 'warning');
+    }
+    preOpened.forEach(w => {
+      w.document.write('<title>Preparing bill…</title><body style="font-family:sans-serif;padding:40px;color:#64748b;">Preparing bill…</body>');
+      w.document.close();
+    });
+  }
+
+  showProcessingOverlay('Batch Printing', `Preparing ${orderIds.length} bill(s)...`);
+  let bills, failed;
+  try {
+    ({ bills, failed } = await _buildBatchBills(orderIds));
+  } catch (err) {
+    console.error('batch print failed:', err);
+    preOpened?.forEach(w => { try { w.close(); } catch (e) {} });
+    return toast('Batch print failed: ' + (err.message || err), 'error');
+  } finally {
+    hideProcessingOverlay();
+  }
+
+  if (!bills.length) {
+    preOpened?.forEach(w => { try { w.close(); } catch (e) {} });
+    return toast('No bills could be generated for the selected orders', 'error');
+  }
+
+  if (mode === 'separate') {
+    // One window per successfully built bill; any window left over (an order
+    // whose bill couldn't be built) is closed rather than left hanging.
+    bills.forEach((b, i) => Print.openPrintWindow(b.html, `Order_Print_${b.batchId}`, preOpened[i]));
+    preOpened.slice(bills.length).forEach(w => { try { w.close(); } catch (e) {} });
+  } else {
+    // page-break-after on every bill but the last: N bills → exactly N
+    // pages' worth of breaks, with no trailing blank page.
+    const combined = bills.map((b, idx) => `
+      <div style="${idx < bills.length - 1 ? 'page-break-after:always;break-after:page;' : ''}">
+        ${b.html}
+      </div>`).join('');
+    const win = Print.openPrintWindow(combined, `Batch_Print_${bills.length}_Bills`);
+    if (!win) return;
+  }
+
+  const msg = `Printing ${bills.length} bill(s)` + (failed.length ? ` — skipped ${failed.length} (${failed.join(', ')})` : '');
+  toast(msg, failed.length ? 'warning' : 'success');
+}
+

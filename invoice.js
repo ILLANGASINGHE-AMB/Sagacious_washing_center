@@ -800,21 +800,49 @@ async function viewInvoice(id) {
   showModal('view-invoice-modal');
 }
 
-async function printInvoice(id) {
-  showProcessingOverlay('Generating Invoice', 'Preparing print layout...');
-  try {
-  let inv;
-  if (id && typeof id === 'object') {
-    inv = id;
-  } else {
-    inv = await DB.getInvoice(id);
-  }
-  if (!inv) return toast('Invoice not found', 'error');
+// Bill header settings (company details + logo) are the same for every bill
+// in a run, but DB.getSetting is one network round trip each — six per bill.
+// Fetching them in parallel speeds up every print; the opt-in cache lets a
+// batch run fetch them once instead of once per bill.
+let _billSettingsCache = null;
+async function _getBillSettings(useCache = false) {
+  if (useCache && _billSettingsCache) return _billSettingsCache;
+  const [company_name, address, phone, email, footer_message, logo_data] = await Promise.all([
+    DB.getSetting('company_name'),
+    DB.getSetting('address'),
+    DB.getSetting('phone'),
+    DB.getSetting('email'),
+    DB.getSetting('footer_message'),
+    DB.getSetting('logo_data')
+  ]);
+  const resolved = {
+    company_name: company_name || 'Sagacious Washing Center',
+    address: address || '',
+    phone: phone || '',
+    email: email || '',
+    footer_message: footer_message || '',
+    logo_data
+  };
+  if (useCache) _billSettingsCache = resolved;
+  return resolved;
+}
+function clearBillSettingsCache() { _billSettingsCache = null; }
 
+// ── Bill body builder ─────────────────────────────────────────────────
+// Returns ONLY the bill <div> (no <html>/<head>/<body> wrapper) so the same
+// markup can be dropped into a single-invoice print window (printInvoice)
+// or repeated, one per page, inside a batch print window
+// (runBatchPrint in orders.js). Anything that changes here changes
+// every bill the app prints — that is the point.
+// `includePayments` mirrors the old printInvoice behaviour: a caller that
+// hands over an already-resolved invoice OBJECT (Orders tab → Print) prints
+// the bill without re-listing individual payment rows, while a caller that
+// passes an invoice id (Invoices tab) gets them.
+async function buildInvoiceBillHtml(inv, { includePayments = true, cacheSettings = false } = {}) {
   const order = await DB.getOrder(inv.order_id);
   const customerRaw = (order && order.customer_id) ? await DB.getCustomer(order.customer_id) : null;
   const customer = customerRaw || (order ? { hotel_name: getOrderCustomerName(order) } : null);
-  const payments = (inv.id && typeof id !== 'object') ? await DB.getPaymentsByInvoice(inv.id) : [];
+  const payments = (inv.id && includePayments) ? await DB.getPaymentsByInvoice(inv.id) : [];
   
   // For a "Single Invoice" batch this pulls items from every order the
   // invoice covers, grouped per order (batchItemGroups), instead of just
@@ -835,14 +863,8 @@ async function printInvoice(id) {
     `;
   }
 
-  const settings = {
-    company_name: await DB.getSetting('company_name') || 'Sagacious Washing Center',
-    address: await DB.getSetting('address') || '',
-    phone: await DB.getSetting('phone') || '',
-    email: await DB.getSetting('email') || '',
-    footer_message: await DB.getSetting('footer_message') || ''
-  };
-  const logoData = await DB.getSetting('logo_data');
+  const settings = await _getBillSettings(cacheSettings);
+  const logoData = settings.logo_data;
   const isCredit = inv.invoice_type === 'Credit';
 
   const fin = Financials.computeInvoiceFinancials(inv, items, payments);
@@ -964,14 +986,7 @@ async function printInvoice(id) {
       <span>Balance Due</span><span>${formatCurrency(balance)}</span>
     </div>`;
 
-  const printHTML = `<!DOCTYPE html><html><head><meta charset="UTF-8"/><title>Invoice ${inv.invoice_number}</title>
-    <link href="https://fonts.googleapis.com/css2?family=DM+Sans:wght@400;600;700&family=Playfair+Display:wght@600;700;800&display=swap" rel="stylesheet"/>
-    <style>
-      *{box-sizing:border-box;margin:0;padding:0;}
-      body{font-family:'DM Sans',sans-serif;background:#fff;color:#1e293b;}
-      @media print{body{margin:0;}@page{margin:12mm 10mm;size:A4;}}
-    </style>
-    </head><body>
+  const billHTML = `
     <div style="position:relative;font-family:'DM Sans',sans-serif;background:#fff;color:#1e293b;max-width:780px;margin:0 auto;padding:40px 44px;">
       ${creditBanner}
       
@@ -1042,8 +1057,24 @@ async function printInvoice(id) {
       ${pendingReturnSummaryHtml}
 
       ${settings.footer_message ? `<div style="text-align:center;padding:16px;background:#f8fafc;border-radius:10px;font-size:0.9em;color:#64748b;font-style:italic;">${escapeHtml(settings.footer_message)}</div>` : ''}
-    </div>`;
-    Print.openPrintWindow(printHTML, `Order_Print_${order.batch_id}`);
+    </div><!-- /font-size:12px -->
+    </div><!-- /bill root -->`;
+  return { html: billHTML, order, invoice: inv };
+}
+
+async function printInvoice(id) {
+  showProcessingOverlay('Generating Invoice', 'Preparing print layout...');
+  try {
+    let inv;
+    if (id && typeof id === 'object') {
+      inv = id;
+    } else {
+      inv = await DB.getInvoice(id);
+    }
+    if (!inv) return toast('Invoice not found', 'error');
+
+    const { html, order } = await buildInvoiceBillHtml(inv, { includePayments: typeof id !== 'object' });
+    Print.openPrintWindow(html, `Order_Print_${order?.batch_id || inv.invoice_number}`);
   } finally {
     hideProcessingOverlay();
   }
