@@ -2,60 +2,33 @@
 
 // ── Gemini API Call ─────────────────────────────────
 async function callGemini(promptText) {
-  // First attempt to call the secure Netlify serverless proxy
-  try {
-    const proxyRes = await fetch('/.netlify/functions/gemini', {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ promptText })
-    });
+  // The Gemini key lives only in the Netlify function's server-side
+  // environment (GEMINI_API_KEY) — there is deliberately no client-side
+  // fallback that reads a key out of the `settings` table and calls Google
+  // directly. That table is reachable by any logged-in user via the anon
+  // key, so a client-side fallback would turn a billable Google key into a
+  // effectively public one. If the proxy is unavailable, the call fails
+  // closed with a clear error instead.
+  const proxyRes = await fetch('/.netlify/functions/gemini', {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ promptText })
+  });
 
-    if (proxyRes.ok) {
-      const data = await proxyRes.json();
-      if (data.text) return data.text;
-    } else if (proxyRes.status !== 404 && proxyRes.status !== 500) {
-      const errData = await proxyRes.json().catch(() => ({}));
-      throw new Error(errData.error || `Server proxy HTTP ${proxyRes.status}`);
-    }
-  } catch (proxyError) {
-    console.warn('Netlify serverless proxy call failed, checking fallback:', proxyError.message);
+  if (proxyRes.ok) {
+    const data = await proxyRes.json();
+    if (data.text) return data.text;
+    throw new Error('Empty response from Gemini proxy.');
   }
 
-  // Fallback if running outside Netlify or using local setting key
-  const apiKey = await DB.getSetting('gemini_api_key');
-  if (!apiKey) {
-    throw new Error('Gemini API Key is not configured. Please configure GEMINI_API_KEY environment variable on Netlify or in Settings.');
+  const errData = await proxyRes.json().catch(() => ({}));
+  if (proxyRes.status === 404) {
+    throw new Error('Gemini AI features require the Netlify serverless functions, which are not available in this environment.');
   }
-
-  const models = ["gemini-1.5-flash", "gemini-1.5-pro"];
-  const errors = [];
-
-  for (const model of models) {
-    try {
-      const response = await fetch(`https://generativelanguage.googleapis.com/v1beta/models/${model}:generateContent?key=${apiKey}`, {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({
-          contents: [{ parts: [{ text: promptText }] }]
-        })
-      });
-
-      if (!response.ok) {
-        const errData = await response.json().catch(() => ({}));
-        throw new Error(errData.error?.message || `HTTP error! Status: ${response.status}`);
-      }
-
-      const data = await response.json();
-      const text = data.candidates?.[0]?.content?.parts?.[0]?.text;
-      if (!text) throw new Error('Empty response from model.');
-      return text;
-    } catch (error) {
-      console.warn(`Model ${model} failed:`, error.message);
-      errors.push(`${model}: "${error.message}"`);
-    }
+  if (proxyRes.status === 500 && /GEMINI_API_KEY/i.test(errData.error || '')) {
+    throw new Error('Gemini AI features are not configured. Set the GEMINI_API_KEY environment variable on Netlify.');
   }
-
-  throw new Error(`All Gemini models failed. Details:\n${errors.join('\n')}`);
+  throw new Error(errData.error || `Server proxy HTTP ${proxyRes.status}`);
 }
 
 // ── Database Data Aggregations for Prompt Context ──
@@ -214,8 +187,12 @@ let geminiChatHistory = [];
 async function renderGemini() {
   document.getElementById('page-title').textContent = `SAGA Assistant`;
 
-  const apiKey = await DB.getSetting('gemini_api_key');
-  const forecastCardHtml = apiKey ? `
+  // Whether Gemini is actually configured lives in a server-side env var
+  // (GEMINI_API_KEY on Netlify) that the client can't read — so these cards
+  // are always shown; if the proxy isn't configured, clicking one just
+  // surfaces a clear error in the report panel instead of calling Google
+  // directly with a client-stored key.
+  const forecastCardHtml = `
       <div class="card" style="cursor: pointer; transition: all 0.2s;" onclick="runAIForecast()">
         <div style="display: flex; align-items: center; gap: 14px; margin-bottom: 12px;">
           <div class="icon badge badge-purple" style="width: 48px; height: 48px; border-radius: 12px; display: flex; align-items: center; justify-content: center; font-size: 1.3em; background: rgba(139, 92, 246, 0.12); color: #8b5cf6;">
@@ -244,13 +221,6 @@ async function renderGemini() {
         <button class="btn btn-primary btn-sm" style="width: 100%; justify-content: center; background: linear-gradient(135deg, #22c55e, #10b981); border: none;">
           <i class="fas fa-wand-magic-sparkles"></i> Run Efficiency Analysis
         </button>
-      </div>` : `
-      <div class="card" style="grid-column:1/-1; text-align:center; padding:20px;">
-        <div style="font-size:0.88em; color:var(--text-muted); margin-bottom:10px;">
-          <i class="fas fa-circle-info"></i> The free chatbot below covers most day-to-day questions with no setup.
-          Optional Gemini-powered forecast/efficiency reports need an API key if you want them too.
-        </div>
-        <button class="btn btn-secondary btn-sm" onclick="navigate('settings')"><i class="fas fa-cog"></i> Add Gemini key (optional)</button>
       </div>`;
 
   // Render full dashboard — the free chatbot below always works, no key required.
@@ -279,7 +249,7 @@ async function renderGemini() {
         <div id="gemini-report-body" style="flex: 1; overflow-y: auto; color: var(--text); line-height: 1.6; font-size: 0.92em; display: flex; align-items: center; justify-content: center; background: rgba(0,0,0,0.01); border-radius: 8px; padding: 20px;">
           <div style="text-align: center; color: var(--text-muted);">
             <i class="fas fa-wand-magic-sparkles" style="font-size: 2.2em; color:#8b5cf6; margin-bottom: 14px; display: block;"></i>
-            ${apiKey ? 'Click an action card above to generate a forecasting report or efficiency analysis.' : 'Add a Gemini API key in Settings to unlock optional forecast/efficiency reports.'}
+            Click an action card above to generate a forecasting report or efficiency analysis.
           </div>
         </div>
       </div>

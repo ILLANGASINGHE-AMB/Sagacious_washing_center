@@ -294,7 +294,7 @@ async function applySettings() {
 
   if (companyName) {
     const el = document.getElementById('sidebar-company-name');
-    if (el) el.innerHTML = companyName.replace(' ', '<br/>');
+    if (el) el.innerHTML = escapeHtml(companyName).replace(' ', '<br/>');
   }
 
   if (logoData && typeof updateLogo === 'function') {

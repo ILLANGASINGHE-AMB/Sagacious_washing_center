@@ -2,13 +2,12 @@
 
 async function renderSettings() {
   document.getElementById('page-title').textContent = 'Settings';
-  const [companyName, address, phone, email, invPrefix, footer, darkMode, textSize, minDiscountAmt, deliveryCharge, showUndo, geminiApiKey, aiProvider, showAIFab] = await Promise.all([
+  const [companyName, address, phone, email, invPrefix, footer, darkMode, textSize, minDiscountAmt, deliveryCharge, showUndo, showAIFab] = await Promise.all([
     DB.getSetting('company_name'), DB.getSetting('address'), DB.getSetting('phone'),
     DB.getSetting('email'), DB.getSetting('invoice_prefix'),
     DB.getSetting('footer_message'), DB.getSetting('dark_mode'), DB.getSetting('text_size'),
     DB.getSetting('min_discount_amount'), DB.getSetting('delivery_charge'),
-    DB.getSetting('show_undo_button'), DB.getSetting('gemini_api_key'),
-    DB.getSetting('ai_provider'), DB.getSetting('show_saga_ai_button')
+    DB.getSetting('show_undo_button'), DB.getSetting('show_saga_ai_button')
   ]);
   const logoData = await DB.getSetting('logo_data');
   const isUndoVisible = showUndo !== 'false';
@@ -276,21 +275,13 @@ async function renderSettings() {
             </div>
           </div>
 
-          <div class="form-group" style="margin-bottom:10px;">
-            <label class="form-label">Gemini API Key</label>
-            <div style="position:relative;display:flex;align-items:center;">
-              <input type="password" class="form-input" id="s-gemini-key" value="${escapeHtml(geminiApiKey||'')}" placeholder="Paste API Key (AIzaSy...)" style="padding-right:42px;font-family:monospace;font-size:0.9em;"/>
-              <button type="button" onclick="const f=document.getElementById('s-gemini-key');const icon=this.querySelector('i');if(f.type==='password'){f.type='text';icon.className='fas fa-eye-slash';}else{f.type='password';icon.className='fas fa-eye';}" style="position:absolute;right:8px;background:none;border:none;color:var(--text-muted);cursor:pointer;padding:6px 8px;border-radius:6px;" title="Toggle visibility">
-                <i class="fas fa-eye"></i>
-              </button>
-            </div>
-          </div>
-          <div style="font-size:0.8em;color:var(--text-muted);line-height:1.4;">
-            Free API keys are available from <a href="https://aistudio.google.com/" target="_blank" style="color:var(--accent);text-decoration:underline;font-weight:600;"><i class="fas fa-external-link-alt" style="font-size:0.85em;"></i> Google AI Studio</a>.
-          </div>
-
-          <div style="margin-top:14px;padding-top:12px;border-top:1px solid var(--border);display:flex;justify-content:flex-end;">
-            <button class="btn btn-primary btn-sm" onclick="saveGeminiSettings()"><i class="fas fa-save"></i> Save AI Settings</button>
+          <div style="font-size:0.85em;color:var(--text-muted);line-height:1.6;">
+            <i class="fas fa-shield-halved" style="color:#8b5cf6;"></i>
+            For security, the Gemini API key is no longer stored or editable here — it's read only from the
+            <code style="background:var(--bg);padding:1px 6px;border-radius:4px;">GEMINI_API_KEY</code>
+            environment variable on the Netlify server, so it's never sent to or stored in the browser/database.
+            Free API keys are available from <a href="https://aistudio.google.com/" target="_blank" style="color:var(--accent);text-decoration:underline;font-weight:600;"><i class="fas fa-external-link-alt" style="font-size:0.85em;"></i> Google AI Studio</a> —
+            set it under Site configuration &gt; Environment variables in the Netlify dashboard.
           </div>
         </div>
 
@@ -623,16 +614,6 @@ async function saveBillingSettings() {
   toast('Billing settings saved!');
 }
 
-async function saveGeminiSettings() {
-  const geminiKey = document.getElementById('s-gemini-key')?.value.trim();
-  if (geminiKey !== undefined) {
-    await DB.setSetting('gemini_api_key', geminiKey);
-  }
-  await DB.setSetting('ai_provider', 'gemini');
-  await DB.logAction('Settings Updated', 'Updated Gemini AI settings', {}, 'System');
-  toast('Gemini AI settings saved!');
-}
-
 async function saveCompanySettings() {
   const fields = { company_name:'s-company', address:'s-address', phone:'s-phone', email:'s-email', invoice_prefix:'s-prefix', footer_message:'s-footer' };
   for (const [key, id] of Object.entries(fields)) {
@@ -697,12 +678,14 @@ async function removeLogo() {
 // DATABASE & BACKUP ACTIONS
 // ─────────────────────────────────────────────
 async function exportDatabase() {
+  if (!requireAdmin()) return;
   const data = await DB.exportAll();
   downloadJSON(data, 'sagacious_washing_backup.json');
   toast('Database backup downloaded!');
 }
 
 async function importDatabase(event) {
+  if (!requireAdmin()) return;
   const file = event.target.files[0]; if (!file) return;
   const reader = new FileReader();
   reader.onload = async (e) => {
@@ -719,6 +702,7 @@ async function importDatabase(event) {
 }
 
 async function uploadToCloud() {
+  if (!requireAdmin()) return;
   const endpoint = prompt('Enter cloud endpoint URL:', 'https://your-server.com/upload-database');
   if (!endpoint) return;
   if (!endpoint.toLowerCase().startsWith('https://')) {
@@ -732,6 +716,7 @@ async function uploadToCloud() {
 }
 
 async function importFromCloud() {
+  if (!requireAdmin()) return;
   const endpoint = prompt('Enter cloud database URL:', 'https://your-server.com/database.json');
   if (!endpoint) return;
   if (!endpoint.toLowerCase().startsWith('https://')) {

@@ -324,11 +324,11 @@ async function runGlobalSearch() {
                 <i class="fas ${r.icon}"></i>
               </div>
               <div style="overflow:hidden;flex:1;">
-                <div style="font-weight:700;font-size:0.88em;color:var(--text);white-space:nowrap;overflow:hidden;text-overflow:ellipsis;">${r.title}</div>
-                <div style="font-size:0.75em;color:var(--text-muted);white-space:nowrap;overflow:hidden;text-overflow:ellipsis;">${r.subtitle}</div>
+                <div style="font-weight:700;font-size:0.88em;color:var(--text);white-space:nowrap;overflow:hidden;text-overflow:ellipsis;">${escapeHtml(r.title)}</div>
+                <div style="font-size:0.75em;color:var(--text-muted);white-space:nowrap;overflow:hidden;text-overflow:ellipsis;">${escapeHtml(r.subtitle)}</div>
               </div>
             </div>
-            <span style="font-size:0.68em;padding:2px 7px;border-radius:99px;font-weight:700;background:${r.badgeColor}18;color:${r.badgeColor};border:1px solid ${r.badgeColor}30;white-space:nowrap;flex-shrink:0;">${r.badge}</span>
+            <span style="font-size:0.68em;padding:2px 7px;border-radius:99px;font-weight:700;background:${r.badgeColor}18;color:${r.badgeColor};border:1px solid ${r.badgeColor}30;white-space:nowrap;flex-shrink:0;">${escapeHtml(r.badge)}</span>
           </div>`;
       }).join('')}
     `).join('')}

@@ -117,7 +117,7 @@ function toast(message, type = 'success', duration = 3000) {
   if (!container) return;
   const el = document.createElement('div');
   el.className = `toast ${type}`;
-  el.innerHTML = `<i class="fas ${icons[type]||icons.info}" style="color:${colors[type]};font-size:1.1em;"></i><span>${message}</span>`;
+  el.innerHTML = `<i class="fas ${icons[type]||icons.info}" style="color:${colors[type]};font-size:1.1em;"></i><span>${escapeHtml(message)}</span>`;
   container.appendChild(el);
   setTimeout(() => { el.style.opacity='0'; el.style.transform='translateX(40px)'; el.style.transition='0.3s'; setTimeout(()=>el.remove(),400); }, duration);
 }
@@ -128,7 +128,7 @@ function showLoading(containerId = 'content', message = 'Loading...') {
   if (!el) return;
   el.innerHTML = `<div style="text-align:center;padding:48px 20px;color:var(--text-muted);">
     <i class="fas fa-spinner fa-spin" style="font-size:2em;color:var(--primary);margin-bottom:12px;"></i>
-    <div style="font-size:0.9em;font-weight:500;">${message}</div>
+    <div style="font-size:0.9em;font-weight:500;">${escapeHtml(message)}</div>
   </div>`;
 }
 
@@ -218,7 +218,7 @@ function confirmDialog(message,onConfirm,confirmLabel='Confirm',danger=true) {
   overlay.innerHTML=`<div class="modal" style="max-width:400px;" onclick="event.stopPropagation()">
     <div style="text-align:center;padding:10px 0 20px;">
       <div style="font-size:2.5em;color:#f59e0b;margin-bottom:14px;"><i class="fas fa-exclamation-triangle"></i></div>
-      <div style="font-size:1em;font-weight:600;margin-bottom:24px;line-height:1.5;">${message}</div>
+      <div style="font-size:1em;font-weight:600;margin-bottom:24px;line-height:1.5;">${escapeHtml(message)}</div>
       <div style="display:flex;gap:12px;justify-content:center;">
         <button class="btn btn-secondary" style="min-width:90px;" onclick="document.getElementById('confirm-modal').remove()">Cancel</button>
         <button class="btn ${danger?'btn-danger':'btn-primary'}" style="min-width:90px;" id="confirm-ok-btn">${confirmLabel}</button>
@@ -275,19 +275,28 @@ function filterSearchPicker(id) {
 function _renderPickerList(id, items) {
   const p = window._pickers[id]; if(!p) return;
   const dd = document.getElementById(id+'-dropdown'); if(!dd) return;
+  // Items are looked up by index at selection time (rather than inlined into
+  // the onmouseup attribute as escaped strings) so a name containing a quote
+  // or `<` can't break out of the attribute or render as markup.
+  p._visible = items;
   dd.innerHTML = items.length
-    ? items.map(item=>`<div style="padding:10px 14px;cursor:pointer;font-size:0.9em;border-bottom:1px solid var(--border);"
+    ? items.map((item,idx)=>`<div style="padding:10px 14px;cursor:pointer;font-size:0.9em;border-bottom:1px solid var(--border);"
         onmousedown="window._pickerClicking=true"
-        onmouseup="window._pickerClicking=false;selectSearchPicker('${id}','${String(p.valueFn(item)).replace(/'/g,"\\'")}','${p.labelFn(item).replace(/'/g,"\\'")}')">
-        ${p.labelFn(item)}</div>`).join('')
+        onmouseup="window._pickerClicking=false;selectSearchPickerByIndex('${id}',${idx})">
+        ${escapeHtml(p.labelFn(item))}</div>`).join('')
     : `<div style="padding:12px 14px;color:var(--text-muted);font-size:0.88em;">No results</div>`;
+}
+function selectSearchPickerByIndex(id, idx) {
+  const p = window._pickers[id]; if(!p || !p._visible) return;
+  const item = p._visible[idx]; if(item === undefined) return;
+  selectSearchPicker(id, p.valueFn(item), p.labelFn(item));
 }
 function selectSearchPicker(id, value, label) {
   window._pickerClicking = false;
   const input=document.getElementById(id+'-input'); const hidden=document.getElementById(id+'-value');
   if(input) input.value=label; if(hidden) hidden.value=value;
   hideSearchPicker(id);
-  
+
   if (id === 'ao-cust' || id === 'eo-cust' || id === 'cb-cust') {
     if (typeof window.onCustomerPickerChange === 'function') {
       window.onCustomerPickerChange(id, value);

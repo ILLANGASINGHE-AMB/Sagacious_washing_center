@@ -916,6 +916,23 @@ const DB = {
         await _q(_sb.from('trash').insert(chunk));
       }
     }
+
+    // 20. Resync id_counters from whatever batch/invoice/trip numbers just
+    // came back in. importAll never restores id_counters itself, and the
+    // restored rows can carry higher numbers than the counter currently
+    // holds — without this, the very next order/invoice/trip created after
+    // a restore could mint an ID that collides with one just imported.
+    // Best-effort: an older database that hasn't run
+    // supabase_duplicate_id_hardening_migration.sql yet won't have this
+    // RPC, and the restore itself has already fully succeeded by this
+    // point, so a missing function shouldn't be reported as a failed
+    // restore — just logged.
+    try {
+      const { error } = await _sb.rpc('sync_id_counters');
+      if (error) console.warn('sync_id_counters failed after restore:', error.message);
+    } catch (e) {
+      console.warn('sync_id_counters failed after restore:', e.message);
+    }
   },
 
   // ── Deductions ─────────────────────────────
