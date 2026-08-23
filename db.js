@@ -135,16 +135,14 @@ const DB = {
   },
 
   // ── Vehicles ──────────────────────────────
+  // No settings-table JSON mirror anymore (HighIssues.md H-04): it was
+  // write-only (its own read fallback could never trigger — an empty array
+  // is truthy, so `rows && rows.length >= 0` was always true and returned
+  // before the fallback ran) and it let a failed insert/update/delete
+  // report success while the real `vehicles` row never changed. Errors now
+  // propagate so the caller's own try/catch can surface them.
   async getVehicles() {
-    try {
-      const rows = await _qAll(() => _sb.from('vehicles').select('*').order('vehicle_no').order('id'));
-      if (rows && rows.length >= 0) return rows;
-    } catch(e) {}
-    try {
-      const val = await DB.getSetting('transport_vehicles_records');
-      if (val) return JSON.parse(val);
-    } catch(e) {}
-    return [];
+    return _qAll(() => _sb.from('vehicles').select('*').order('vehicle_no').order('id'));
   },
   async addVehicle(data) {
     const record = {
@@ -155,61 +153,28 @@ const DB = {
       initial_km: parseFloat(data.initial_km) || 0,
       created_at: new Date().toISOString()
     };
-    try {
-      const rows = await _q(_sb.from('vehicles').insert(record).select());
-      if (rows && rows[0]) {
-        return rows[0].id;
-      }
-    } catch(e) {}
-
-    // Fallback in settings
-    const vehicles = await DB.getVehicles();
-    const fakeId = Date.now();
-    const newVeh = { id: fakeId, ...record };
-    vehicles.push(newVeh);
-    await DB.setSetting('transport_vehicles_records', JSON.stringify(vehicles));
-    return fakeId;
+    const rows = await _q(_sb.from('vehicles').insert(record).select());
+    return rows[0].id;
   },
   async updateVehicle(id, data) {
     const updateData = { ...data };
     if (updateData.vehicle_no) {
       updateData.vehicle_no = updateData.vehicle_no.toUpperCase().trim();
     }
-    try {
-      await _q(_sb.from('vehicles').update(updateData).eq('id', id));
-    } catch(e) {}
-    const vehicles = await DB.getVehicles();
-    const idx = vehicles.findIndex(v => String(v.id) === String(id) || v.vehicle_no === id);
-    if (idx >= 0) {
-      vehicles[idx] = { ...vehicles[idx], ...updateData };
-      await DB.setSetting('transport_vehicles_records', JSON.stringify(vehicles));
-    }
+    await _q(_sb.from('vehicles').update(updateData).eq('id', id));
   },
   async deleteVehicle(id) {
-    try {
-      await _q(_sb.from('vehicles').delete().eq('id', id));
-    } catch(e) {}
-    const vehicles = await DB.getVehicles();
-    const filtered = vehicles.filter(v => String(v.id) !== String(id) && v.vehicle_no !== id);
-    await DB.setSetting('transport_vehicles_records', JSON.stringify(filtered));
+    await _q(_sb.from('vehicles').delete().eq('id', id));
   },
   async getVehicle(id) {
-    try {
-      const rows = await _q(_sb.from('vehicles').select('*').eq('id', id).limit(1));
-      if (rows && rows[0]) return rows[0];
-    } catch(e) {}
-    const vehicles = await DB.getVehicles();
-    return vehicles.find(v => String(v.id) === String(id) || v.vehicle_no === id) || null;
+    const rows = await _q(_sb.from('vehicles').select('*').eq('id', id).limit(1));
+    return rows[0] || null;
   },
   async getVehicleByNo(vehicleNo) {
     if (!vehicleNo) return null;
     const vNo = String(vehicleNo).toUpperCase().trim();
-    try {
-      const rows = await _q(_sb.from('vehicles').select('*').eq('vehicle_no', vNo).limit(1));
-      if (rows && rows[0]) return rows[0];
-    } catch(e) {}
-    const vehicles = await DB.getVehicles();
-    return vehicles.find(v => (v.vehicle_no || '').toUpperCase().trim() === vNo) || null;
+    const rows = await _q(_sb.from('vehicles').select('*').eq('vehicle_no', vNo).limit(1));
+    return rows[0] || null;
   },
 
   // ── Orders ────────────────────────────────
@@ -257,6 +222,18 @@ const DB = {
   // Full snapshot of everything deleteOrder() would remove, in the same
   // shape restoreOrder() (Trash) puts back — used to back up an order
   // before deleting it, not just for display.
+  //
+  // order_item_flags is deliberately included (HighIssues.md H-03):
+  // order_item_flags_order_id_fkey is ON DELETE CASCADE, so deleting the
+  // order silently took every pending/returned flag raised against it with
+  // it — restoring the order from Trash put back the money but lost the
+  // outstanding-items ledger for that customer. Two different things need
+  // capturing here, because the two FKs on this table behave differently
+  // on delete: flags this order OWNS (order_id = id) are the ones that get
+  // deleted outright and need reinserting; flags this order CLEARED on an
+  // older order (cleared_in_order_id = id) aren't deleted, just detached
+  // (SET NULL) — only their id is needed, to re-link cleared_in_order_id
+  // once this order exists again.
   async getOrderFullSnapshot(id) {
     const order = await DB.getOrder(id);
     if (!order) return null;
@@ -267,7 +244,13 @@ const DB = {
       const payments = await _q(_sb.from('payments').select('*').eq('invoice_id', inv.id));
       invoices.push({ ...inv, payments: payments || [] });
     }
-    return { order, items: items || [], invoices };
+    const ownFlags = await _q(_sb.from('order_item_flags').select('*').eq('order_id', id));
+    const clearedFlags = await _q(_sb.from('order_item_flags').select('id').eq('cleared_in_order_id', id));
+    return {
+      order, items: items || [], invoices,
+      order_item_flags: ownFlags || [],
+      cleared_flag_ids: (clearedFlags || []).map(f => f.id)
+    };
   },
   // Reverse of getOrderFullSnapshot/deleteOrder — re-inserts everything
   // with its original ids (safe: the id sequence has already moved past
@@ -283,6 +266,13 @@ const DB = {
       if (payments && payments.length) {
         await _q(_sb.from('payments').insert(payments));
       }
+    }
+    // Pending/Returned ledger (HighIssues.md H-03) — see getOrderFullSnapshot.
+    if (payload.order_item_flags && payload.order_item_flags.length) {
+      await _q(_sb.from('order_item_flags').insert(payload.order_item_flags));
+    }
+    if (payload.cleared_flag_ids && payload.cleared_flag_ids.length) {
+      await _q(_sb.from('order_item_flags').update({ cleared_in_order_id: payload.order.id }).in('id', payload.cleared_flag_ids));
     }
   },
   async getOrder(id) {
@@ -574,7 +564,12 @@ const DB = {
     // are managed exclusively through Settings > User Management, which calls
     // the admin-only Netlify function. This avoids ever putting credentials
     // in a downloadable backup file.
-    const [customers, drivers, vehicles, orders, order_items, invoices, payments, settings, items, deductions, expense_categories, expense_types, expense_entries, expense_amounts, trips] = await Promise.all([
+    //
+    // order_item_flags and trash were missing from both this export and
+    // importAll's restore (HighIssues.md H-02) — a restore silently dropped
+    // the pending/returned ledger and the Trash tab's contents. Both are
+    // included now.
+    const [customers, drivers, vehicles, orders, order_items, invoices, payments, settings, items, deductions, expense_categories, expense_types, expense_entries, expense_amounts, trips, order_item_flags, trash] = await Promise.all([
       DB.getCustomers(), DB.getDrivers(), DB.getVehicles(), DB.getOrders(),
       _q(_sb.from('order_items').select('*')),
       DB.getInvoices(), DB.getPayments(),
@@ -585,9 +580,11 @@ const DB = {
       DB.getExpenseTypes(),
       DB.getExpenseEntries(),
       DB.getExpenseAmounts(),
-      DB.getTrips()
+      DB.getTrips(),
+      DB.getAllFlags(),
+      DB.getTrash()
     ]);
-    return { customers, drivers, vehicles, orders, order_items, invoices, payments, settings, items, deductions, expense_categories, expense_types, expense_entries, expense_amounts, trips, exported_at: new Date().toISOString() };
+    return { customers, drivers, vehicles, orders, order_items, invoices, payments, settings, items, deductions, expense_categories, expense_types, expense_entries, expense_amounts, trips, order_item_flags, trash, exported_at: new Date().toISOString() };
   },
   async addOrderItemsBatch(dataArray) {
     if (!dataArray || dataArray.length === 0) return [];
@@ -616,16 +613,35 @@ const DB = {
     return { data: data || [], count: count || 0 };
   },
   async importAll(data) {
-    // 1. Delete all existing data in proper dependency order to avoid FK violation errors
+    // 1. Delete all existing data in proper dependency order to avoid FK
+    // violation errors. HighIssues.md H-02/H-08: this list used to stop at
+    // deductions/payments/invoices/order_items/orders/customers/drivers/
+    // items/settings — every expense table, every trip, every vehicle,
+    // every order flag and the whole Trash table survived a "restore" (and
+    // survived "Reset All Data", which routes through importAll({}) with no
+    // data to reinsert), left referencing customers/orders that had just
+    // been replaced with fresh ids or deleted outright.
+    await _q(_sb.from('order_item_flags').delete().neq('id', 0));
     await _q(_sb.from('deductions').delete().neq('id', 0));
     await _q(_sb.from('payments').delete().neq('id', 0));
     await _q(_sb.from('invoices').delete().neq('id', 0));
     await _q(_sb.from('order_items').delete().neq('id', 0));
+    await _q(_sb.from('trash').delete().neq('id', 0));
     await _q(_sb.from('orders').delete().neq('id', 0));
+    await _q(_sb.from('expense_amounts').delete().neq('id', 0));
+    await _q(_sb.from('expense_entries').delete().neq('id', 0));
+    await _q(_sb.from('expense_types').delete().neq('id', 0));
+    await _q(_sb.from('expense_categories').delete().neq('id', 0));
+    await _q(_sb.from('trips').delete().neq('id', ''));
+    await _q(_sb.from('vehicles').delete().neq('id', 0));
     await _q(_sb.from('customers').delete().neq('id', 0));
     await _q(_sb.from('drivers').delete().neq('id', 0));
     await _q(_sb.from('items').delete().neq('id', 0));
-    await _q(_sb.from('settings').delete().neq('key', 'DOES_NOT_EXIST'));
+    // `.neq('key', 'DOES_NOT_EXIST')` never matched rows whose key is NULL
+    // (NULL <> anything is NULL, not true, in SQL) — settings.key is
+    // nullable, so those rows survived every "delete everything" call.
+    // Deleting by the table's own `id` (never null) has no such gap.
+    await _q(_sb.from('settings').delete().neq('id', 0));
     // Note: the legacy `users` table is no longer touched here — it's RLS-locked
     // post-migration and login accounts live in Supabase Auth now, managed only
     // via Settings > User Management (admin-users.js), never via backup/restore.
@@ -636,6 +652,9 @@ const DB = {
     const itemMap = {};
     const orderMap = {};
     const invoiceMap = {};
+    const vehicleMap = {};
+    const orderItemMap = {};
+    const expenseEntryMap = {};
 
     // 3. Settings
     if (data.settings?.length) {
@@ -657,7 +676,20 @@ const DB = {
       }
     }
 
-    // 6. Customers
+    // 6. Vehicles — no other table's FK points at vehicles.id (trips.vehicle_id
+    // is a loosely-typed text column, not an FK), so this only needs a map for
+    // remapping trips.vehicle_id below; nothing else depends on ordering here.
+    if (data.vehicles?.length) {
+      const sortedVehicles = [...data.vehicles].sort((a, b) => a.id - b.id);
+      for (const v of sortedVehicles) {
+        const copy = { ...v };
+        delete copy.id;
+        const inserted = await _q(_sb.from('vehicles').insert(copy).select());
+        vehicleMap[v.id] = inserted[0].id;
+      }
+    }
+
+    // 7. Customers
     if (data.customers?.length) {
       const sortedCustomers = [...data.customers].sort((a, b) => a.id - b.id);
       for (const c of sortedCustomers) {
@@ -681,7 +713,7 @@ const DB = {
       }
     }
 
-    // 7. Drivers
+    // 8. Drivers
     if (data.drivers?.length) {
       const sortedDrivers = [...data.drivers].sort((a, b) => a.id - b.id);
       for (const d of sortedDrivers) {
@@ -692,7 +724,7 @@ const DB = {
       }
     }
 
-    // 8. Orders
+    // 9. Orders
     if (data.orders?.length) {
       const sortedOrders = [...data.orders].sort((a, b) => a.id - b.id);
       for (const o of sortedOrders) {
@@ -711,25 +743,29 @@ const DB = {
       }
     }
 
-    // 9. Order Items
+    // 10. Order Items — builds orderItemMap (old id -> new id) so Order Item
+    // Flags below can re-link to the item it was raised against. Each chunk
+    // is a single INSERT ... RETURNING, so the returned rows come back in
+    // the same order the chunk was given in — safe to correlate by index.
     if (data.order_items?.length) {
-      const orderItemsToInsert = data.order_items.map(oi => {
+      const orderItemPairs = data.order_items.map(oi => {
         const copy = { ...oi };
         delete copy.id;
         copy.order_id = orderMap[oi.order_id] || null;
         if (oi.catalog_item_id) {
           copy.catalog_item_id = itemMap[oi.catalog_item_id] || null;
         }
-        return copy;
-      }).filter(oi => oi.order_id !== null);
-      
-      for (let i = 0; i < orderItemsToInsert.length; i += 50) {
-        const chunk = orderItemsToInsert.slice(i, i + 50);
-        await _q(_sb.from('order_items').insert(chunk));
+        return { oldId: oi.id, copy };
+      }).filter(x => x.copy.order_id !== null);
+
+      for (let i = 0; i < orderItemPairs.length; i += 50) {
+        const chunk = orderItemPairs.slice(i, i + 50);
+        const inserted = await _q(_sb.from('order_items').insert(chunk.map(x => x.copy)).select());
+        chunk.forEach((x, idx) => { if (inserted[idx]) orderItemMap[x.oldId] = inserted[idx].id; });
       }
     }
 
-    // 10. Invoices
+    // 11. Invoices
     if (data.invoices?.length) {
       const sortedInvoices = [...data.invoices].sort((a, b) => a.id - b.id);
       for (const inv of sortedInvoices) {
@@ -749,7 +785,7 @@ const DB = {
       }
     }
 
-    // 11. Payments
+    // 12. Payments
     if (data.payments?.length) {
       const paymentsToInsert = data.payments.map(p => {
         const copy = { ...p };
@@ -764,7 +800,7 @@ const DB = {
       }
     }
 
-    // 12. Deductions
+    // 13. Deductions
     if (data.deductions?.length) {
       const deductionsToInsert = data.deductions.map(d => {
         const copy = { ...d };
@@ -776,6 +812,108 @@ const DB = {
       for (let i = 0; i < deductionsToInsert.length; i += 50) {
         const chunk = deductionsToInsert.slice(i, i + 50);
         await _q(_sb.from('deductions').insert(chunk));
+      }
+    }
+
+    // 14. Order Item Flags (Pending/Returned ledger) — HighIssues.md H-02.
+    // order_item_id/cleared_in_order_id are nullable on the live schema (SET
+    // NULL on delete), so a flag whose linked order/item didn't come back
+    // (e.g. a partial backup) degrades to an unlinked-but-present row
+    // instead of being dropped outright.
+    if (data.order_item_flags?.length) {
+      const flagsToInsert = data.order_item_flags.map(f => {
+        const copy = { ...f };
+        delete copy.id;
+        copy.order_id = orderMap[f.order_id] || null;
+        copy.customer_id = customerMap[f.customer_id] || null;
+        copy.order_item_id = f.order_item_id != null ? (orderItemMap[f.order_item_id] || null) : null;
+        copy.cleared_in_order_id = f.cleared_in_order_id != null ? (orderMap[f.cleared_in_order_id] || null) : null;
+        return copy;
+      }).filter(f => f.order_id !== null && f.customer_id !== null);
+
+      for (let i = 0; i < flagsToInsert.length; i += 50) {
+        const chunk = flagsToInsert.slice(i, i + 50);
+        await _q(_sb.from('order_item_flags').insert(chunk));
+      }
+    }
+
+    // 15. Expense Categories / Types — category_id and expense_type_id are
+    // the actual business keys other rows reference (expense_types.category_id
+    // and expense_amounts.expense_type_id are TEXT columns holding these, not
+    // the synthetic `id`), so they're preserved as-is; only the bigint `id`
+    // is dropped and left to the identity default.
+    if (data.expense_categories?.length) {
+      const catsToInsert = data.expense_categories.map(c => { const copy = { ...c }; delete copy.id; return copy; });
+      await _q(_sb.from('expense_categories').insert(catsToInsert));
+    }
+    if (data.expense_types?.length) {
+      const typesToInsert = data.expense_types.map(t => { const copy = { ...t }; delete copy.id; return copy; });
+      await _q(_sb.from('expense_types').insert(typesToInsert));
+    }
+
+    // 16. Expense Entries — id IS the synthetic key expense_amounts.entry_id
+    // points at, so this does need a map, same as Order Items above.
+    if (data.expense_entries?.length) {
+      const sortedEntries = [...data.expense_entries].sort((a, b) => a.id - b.id);
+      for (const e of sortedEntries) {
+        const copy = { ...e };
+        delete copy.id;
+        const inserted = await _q(_sb.from('expense_entries').insert(copy).select());
+        expenseEntryMap[e.id] = inserted[0].id;
+      }
+    }
+
+    // 17. Expense Amounts (Cash Book cells)
+    if (data.expense_amounts?.length) {
+      const amountsToInsert = data.expense_amounts.map(a => {
+        const copy = { ...a };
+        delete copy.id;
+        copy.entry_id = expenseEntryMap[a.entry_id] || null;
+        return copy;
+      }).filter(a => a.entry_id !== null);
+
+      for (let i = 0; i < amountsToInsert.length; i += 50) {
+        const chunk = amountsToInsert.slice(i, i + 50);
+        await _q(_sb.from('expense_amounts').insert(chunk));
+      }
+    }
+
+    // 18. Trips — id/trip_id are meaningful, already-unique text keys and
+    // nothing else references them, so they're kept as exported (the table
+    // was just fully wiped, so there's no collision risk). driver_id is
+    // remapped through driverMap (real FK, ON DELETE SET NULL); vehicle_id
+    // is a text column holding the vehicle's id as a string with no FK, so
+    // it's remapped through vehicleMap for consistency but not filtered out
+    // if the vehicle wasn't in this backup.
+    if (data.trips?.length) {
+      const tripsToInsert = data.trips.map(t => {
+        const copy = { ...t };
+        if (t.driver_id != null) copy.driver_id = driverMap[t.driver_id] || null;
+        if (t.vehicle_id != null) {
+          const remapped = vehicleMap[t.vehicle_id] ?? vehicleMap[String(t.vehicle_id)];
+          copy.vehicle_id = remapped != null ? String(remapped) : t.vehicle_id;
+        }
+        return copy;
+      });
+
+      for (let i = 0; i < tripsToInsert.length; i += 50) {
+        const chunk = tripsToInsert.slice(i, i + 50);
+        await _q(_sb.from('trips').insert(chunk));
+      }
+    }
+
+    // 19. Trash — restored as opaque historical snapshots. Its `payload`
+    // holds a deleted record's own id/foreign-key values from before this
+    // restore, which this pass has just replaced everywhere else, so trying
+    // to rewrite ids inside an arbitrary per-entity-type payload isn't
+    // attempted here; entity_type/entity_label/payload/deleted_by/deleted_at
+    // are preserved so the Trash tab and audit trail aren't silently
+    // emptied by a restore (HighIssues.md H-02). Only `id` is dropped.
+    if (data.trash?.length) {
+      const trashToInsert = data.trash.map(t => { const copy = { ...t }; delete copy.id; return copy; });
+      for (let i = 0; i < trashToInsert.length; i += 50) {
+        const chunk = trashToInsert.slice(i, i + 50);
+        await _q(_sb.from('trash').insert(chunk));
       }
     }
   },
@@ -1107,16 +1245,13 @@ const DB = {
   },
 
   // ── Transport & Trips ─────────────────────
+  // No settings-table JSON mirror anymore (HighIssues.md H-04) — same
+  // reasoning as Vehicles above: it was write-only (its read fallback was
+  // dead — a non-null `rows` array from a successful query, even empty,
+  // short-circuited the fallback every time) and swallowed real insert/
+  // update/delete failures behind a fake success.
   async getTrips() {
-    try {
-      const rows = await _qAll(() => _sb.from('trips').select('*').order('start_date', { ascending: false }).order('created_at', { ascending: false }).order('id', { ascending: false }));
-      if (rows) return rows;
-    } catch(e) {}
-    try {
-      const val = await DB.getSetting('transport_trips_records');
-      if (val) return JSON.parse(val);
-    } catch(e) {}
-    return [];
+    return _qAll(() => _sb.from('trips').select('*').order('start_date', { ascending: false }).order('created_at', { ascending: false }).order('id', { ascending: false }));
   },
   async getTrip(id) {
     const trips = await DB.getTrips();
@@ -1143,34 +1278,14 @@ const DB = {
       status: data.status || 'In Progress', // 'In Progress' | 'Completed'
       created_at: new Date().toISOString()
     };
-
-    try {
-      await _q(_sb.from('trips').insert(nullEmptyDates(record)));
-    } catch(e) {}
-
-    const trips = await DB.getTrips();
-    trips.unshift(record);
-    await DB.setSetting('transport_trips_records', JSON.stringify(trips));
+    await _q(_sb.from('trips').insert(nullEmptyDates(record)));
     return record;
   },
   async updateTrip(id, data) {
-    try {
-      await _q(_sb.from('trips').update(nullEmptyDates(data)).eq('id', id));
-    } catch(e) {}
-    const trips = await DB.getTrips();
-    const idx = trips.findIndex(t => t.id === id || t.trip_id === id);
-    if (idx >= 0) {
-      trips[idx] = { ...trips[idx], ...data };
-      await DB.setSetting('transport_trips_records', JSON.stringify(trips));
-    }
+    await _q(_sb.from('trips').update(nullEmptyDates(data)).eq('id', id));
   },
   async deleteTrip(id) {
-    try {
-      await _q(_sb.from('trips').delete().eq('id', id));
-    } catch(e) {}
-    const trips = await DB.getTrips();
-    const filtered = trips.filter(t => t.id !== id && t.trip_id !== id);
-    await DB.setSetting('transport_trips_records', JSON.stringify(filtered));
+    await _q(_sb.from('trips').delete().eq('id', id));
   },
   async generateTripId() {
     // Atomic RPC (supabase_driver_app_migration.sql) — a client-side

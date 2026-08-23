@@ -1385,13 +1385,14 @@ async function generateInvoiceForOrder(orderId) {
   if (!inv) {
     const itemsSubtotal = items.reduce((s, i) => s + (i.subtotal || 0), 0);
     const invNum = await DB.generateInvoiceNumber();
-    const invType = order.status === 'Credits' ? 'Credit' : 'Standard';
+    // Credit Bills were removed (HighIssues.md H-01) — every invoice
+    // generated here is Standard.
     const invId = await DB.addInvoice({
       order_id: orderId,
       invoice_number: invNum,
       issue_date: new Date().toISOString(),
       delivery_date: order.delivery_date,
-      invoice_type: invType,
+      invoice_type: 'Standard',
       total_amount: order.total_amount || 0,
       advance_payment: order.advance_payment || 0,
       balance: Math.max(0, (order.total_amount || 0) - (order.advance_payment || 0)),
@@ -1560,6 +1561,25 @@ function recalcDeductionBalance(balance) {
   if(lblCalcFinal) lblCalcFinal.textContent = `LKR ${finalAmount.toFixed(2)}`;
 }
 
+// A "Single Invoice" batch payment stores every order it covers in
+// batch_order_ids and only the first in order_id (see invoice creation in
+// processBatchPayment) — updating just inv.order_id left every other order
+// in the batch stuck Unpaid in the Orders list and Pay Now even though the
+// invoice covering them was fully paid (HighIssues.md H-09). Push the same
+// order fields to every order the invoice actually covers.
+async function _applyOrderUpdateForInvoice(inv, orderData) {
+  if (inv.batch_order_ids) {
+    const orderIds = inv.batch_order_ids.split(',').map(Number);
+    for (const oId of orderIds) {
+      await DB.updateOrder(oId, orderData);
+      refreshCustomerDetailForOrder(oId);
+    }
+  } else {
+    await DB.updateOrder(inv.order_id, orderData);
+    refreshCustomerDetailForOrder(inv.order_id);
+  }
+}
+
 async function submitRecordedPayment(invoiceId, balance) {
   let paymentDateISO;
   try {
@@ -1588,7 +1608,7 @@ async function submitRecordedPayment(invoiceId, balance) {
       paid_status: paidStatus,
       payment_date: paymentDateISO
     });
-    await DB.updateOrder(inv.order_id, {
+    await _applyOrderUpdateForInvoice(inv, {
       status: paidStatus,
       payment_date: paymentDateISO
     });
@@ -1596,7 +1616,6 @@ async function submitRecordedPayment(invoiceId, balance) {
     hideModal('payment-modal');
     toast(`Payment of ${formatCurrency(amount)} recorded!`);
     _refreshInvoicesTable();
-    refreshCustomerDetailForOrder(inv.order_id);
 
     if (paidStatus === 'Paid') {
       setTimeout(() => printInvoice(invoiceId), 300);
@@ -1640,7 +1659,7 @@ async function submitRecordedPayment(invoiceId, balance) {
       payment_date: paymentDateISO
     });
 
-    await DB.updateOrder(inv.order_id, {
+    await _applyOrderUpdateForInvoice(inv, {
       status: 'Paid',
       payment_date: paymentDateISO
     });
@@ -1648,7 +1667,6 @@ async function submitRecordedPayment(invoiceId, balance) {
     hideModal('payment-modal');
     toast('Recorded deduction and finalized invoice payment!');
     _refreshInvoicesTable();
-    refreshCustomerDetailForOrder(inv.order_id);
 
     setTimeout(() => printInvoice(invoiceId), 300);
   }
@@ -1667,10 +1685,24 @@ async function undoPaymentForInvoice(invoiceId, onDone) {
       // Delete payments
       await DB.deletePaymentsForInvoice(invoiceId);
 
+      // Undo any "Pay with Deductions" applied to this invoice too
+      // (HighIssues.md H-05) — leaving deduction_amount in place understated
+      // the restored balance by exactly that amount (the invoice could never
+      // be collected in full again through the UI), and the Deductions
+      // Register kept showing a deduction against an invoice that's back to
+      // Unpaid. Undoing every payment restores the invoice to its
+      // pre-deduction state, same as pre-payment.
+      const allDeductions = await DB.getDeductions();
+      const invDeductions = allDeductions.filter(d => String(d.invoice_id) === String(invoiceId));
+      for (const d of invDeductions) {
+        await DB.deleteDeduction(d.id);
+      }
+      inv.deduction_amount = 0;
+
       // Restore invoice balance and status — canonical calc, so any
-      // deduction_amount/discount/delivery/extra already on this invoice is
-      // still accounted for, and 'Partially Paid' is recognized rather than
-      // only Paid/Unpaid. Payments are already gone at this point, so only
+      // discount/delivery/extra already on this invoice is still accounted
+      // for, and 'Partially Paid' is recognized rather than only Paid/Unpaid.
+      // Payments and deductions are already gone at this point, so only
       // advance_payment counts toward what's still considered paid.
       const fin = Financials.computeInvoiceFinancials(inv, [], []);
       const balance = fin.balance;
@@ -1678,7 +1710,8 @@ async function undoPaymentForInvoice(invoiceId, onDone) {
 
       await DB.updateInvoice(invoiceId, {
         balance: balance,
-        paid_status: paidStatus
+        paid_status: paidStatus,
+        deduction_amount: 0
       });
 
       // Push the reversal to every order this invoice covers, or Orders/Pay

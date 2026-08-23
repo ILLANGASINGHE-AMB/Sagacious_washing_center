@@ -1128,7 +1128,7 @@ async function openCustomerDetail(customerId, tab = 'orders') {
           </div>
         </div>
         <div class="value" style="color:#9333ea;">${(orders || []).length} <span style="font-size:0.6em;font-weight:600;">Orders</span></div>
-        <div class="sub">${(orders || []).filter(o => o.status === 'Completed' || o.status === 'Delivered').length} completed</div>
+        <div class="sub">${(orders || []).filter(o => o.delivery_status === 'delivered').length} completed</div>
       </div>
     </div>
 
@@ -2845,10 +2845,16 @@ async function cycleVehicleStatus(id, current) {
   const currentNorm = (current || 'available').toLowerCase() === 'on-trip' ? 'busy' : (current || 'available').toLowerCase();
   const statuses = ['available', 'busy', 'maintenance'];
   const nextStatus = statuses[(statuses.indexOf(currentNorm) + 1) % statuses.length];
-  await DB.updateVehicle(id, { status: nextStatus });
-  const veh = await DB.getVehicle(id);
-  await DB.logAction('Edit Vehicle', `Changed vehicle "${veh?.vehicle_no || '#' + id}" status to "${nextStatus}"`, { id, status: nextStatus }, 'Vehicle');
-  toast(`Status changed to ${nextStatus === 'available' ? 'Available' : nextStatus === 'busy' ? 'On Trip' : 'Maintenance'}`);
+  try {
+    await DB.updateVehicle(id, { status: nextStatus });
+    const veh = await DB.getVehicle(id);
+    await DB.logAction('Edit Vehicle', `Changed vehicle "${veh?.vehicle_no || '#' + id}" status to "${nextStatus}"`, { id, status: nextStatus }, 'Vehicle');
+    toast(`Status changed to ${nextStatus === 'available' ? 'Available' : nextStatus === 'busy' ? 'On Trip' : 'Maintenance'}`);
+  } catch (err) {
+    console.error('cycleVehicleStatus error:', err);
+    toast('Failed to change vehicle status: ' + (err.message || err), 'error');
+    return;
+  }
   if (currentDetailVehicleId === id) {
     openVehicleDetail(id, currentVehicleDetailTab);
   } else {
@@ -3219,12 +3225,17 @@ async function saveNewVehicle() {
   const dup = all.find(v => (v.vehicle_no || '').replace(/[\s-]/g, '').toUpperCase() === cleanPlate);
   if (dup) return toast(`Vehicle No "${vehicleNo}" is already registered`, 'error');
 
-  const newId = await DB.addVehicle({ vehicle_no: vehicleNo, category, model, status, initial_km: initialKm });
-  await DB.logAction('Add Vehicle', `Added vehicle "${vehicleNo}" (${category}, ${model || 'N/A'})`, { id: newId, vehicle_no: vehicleNo, category, model, status, initial_km: initialKm, undo: { type: 'delete_record', entity_type: 'Vehicle', id: newId } }, 'Vehicle');
+  try {
+    const newId = await DB.addVehicle({ vehicle_no: vehicleNo, category, model, status, initial_km: initialKm });
+    await DB.logAction('Add Vehicle', `Added vehicle "${vehicleNo}" (${category}, ${model || 'N/A'})`, { id: newId, vehicle_no: vehicleNo, category, model, status, initial_km: initialKm, undo: { type: 'delete_record', entity_type: 'Vehicle', id: newId } }, 'Vehicle');
 
-  hideModal('add-veh-modal');
-  toast('Vehicle added successfully!');
-  renderVehicles();
+    hideModal('add-veh-modal');
+    toast('Vehicle added successfully!');
+    renderVehicles();
+  } catch (err) {
+    console.error('saveNewVehicle error:', err);
+    toast('Failed to add vehicle: ' + (err.message || err), 'error');
+  }
 }
 
 async function showEditVehicleModal(id) {
@@ -3288,16 +3299,21 @@ async function saveEditVehicle(id) {
 
   const oldVehicle = all.find(v => String(v.id) === String(id));
 
-  await DB.updateVehicle(id, { vehicle_no: vehicleNo, category, model, status, initial_km: initialKm });
-  await DB.logAction('Edit Vehicle', `Updated vehicle "${vehicleNo}"`, { id, vehicle_no: vehicleNo, category, model, status, initial_km: initialKm,
-    undo: oldVehicle ? { type: 'revert_edit', entity_type: 'Vehicle', id, previous: { vehicle_no: oldVehicle.vehicle_no, category: oldVehicle.category, model: oldVehicle.model, status: oldVehicle.status, initial_km: oldVehicle.initial_km } } : undefined }, 'Vehicle');
+  try {
+    await DB.updateVehicle(id, { vehicle_no: vehicleNo, category, model, status, initial_km: initialKm });
+    await DB.logAction('Edit Vehicle', `Updated vehicle "${vehicleNo}"`, { id, vehicle_no: vehicleNo, category, model, status, initial_km: initialKm,
+      undo: oldVehicle ? { type: 'revert_edit', entity_type: 'Vehicle', id, previous: { vehicle_no: oldVehicle.vehicle_no, category: oldVehicle.category, model: oldVehicle.model, status: oldVehicle.status, initial_km: oldVehicle.initial_km } } : undefined }, 'Vehicle');
 
-  hideModal('edit-veh-modal');
-  toast('Vehicle updated successfully!');
-  if (currentDetailVehicleId === id) {
-    openVehicleDetail(id, currentVehicleDetailTab);
-  } else {
-    _refreshVehiclesGrid();
+    hideModal('edit-veh-modal');
+    toast('Vehicle updated successfully!');
+    if (currentDetailVehicleId === id) {
+      openVehicleDetail(id, currentVehicleDetailTab);
+    } else {
+      _refreshVehiclesGrid();
+    }
+  } catch (err) {
+    console.error('saveEditVehicle error:', err);
+    toast('Failed to update vehicle: ' + (err.message || err), 'error');
   }
 }
 
@@ -4203,7 +4219,9 @@ async function showBatchPayConfirmModal() {
         invoice_number: null,
         issue_date: new Date().toISOString(),
         delivery_date: o.delivery_date,
-        invoice_type: o.status === 'Credits' ? 'Credit' : 'Standard',
+        // Credit Bills were removed (HighIssues.md H-01) — every invoice
+        // built here is Standard.
+        invoice_type: 'Standard',
         total_amount: o.total_amount || 0,
         advance_payment: o.advance_payment || 0,
         balance: Math.max(0, (o.total_amount || 0) - (o.advance_payment || 0)),

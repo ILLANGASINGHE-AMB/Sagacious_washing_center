@@ -248,7 +248,7 @@ SAGABot._intents.push({
 SAGABot._intents.push({
   name: 'howToCreateOrder',
   test: t => /how (do i|to|can i|would i).{0,15}(create|add|make|place|start).{0,15}order|new order.{0,10}(work|steps)|steps? to (create|place) an? order/.test(t),
-  run: async () => `**Creating an order**\n• Go to Orders → New Order\n• Pick a customer (and optionally a driver)\n• Add items from the catalog — pick a service type (Dry Clean / Wash & Press / Wash & Dry) and the price auto-fills\n• Set pickup/delivery dates, and optionally a delivery charge, discount, or advance payment\n• Click Create\n\nEditing works the same way via the row's Edit button. Two special flows also exist: Quick Pick-Up (a bare pickup request, no items/invoice yet) and Credit Bill (a deferred-payment order with a due date that auto-generates a Credit invoice).`
+  run: async () => `**Creating an order**\n• Go to Orders → New Order\n• Pick a customer (and optionally a driver)\n• Add items from the catalog — pick a service type (Dry Clean / Wash & Press / Wash & Dry) and the price auto-fills\n• Set pickup/delivery dates, and optionally a delivery charge, discount, or advance payment\n• Click Create\n\nEditing works the same way via the row's Edit button.`
 });
 
 SAGABot._intents.push({
@@ -260,7 +260,7 @@ SAGABot._intents.push({
 SAGABot._intents.push({
   name: 'howToPayment',
   test: t => /how (do i|to|can i).{0,20}(record|log|add|take).{0,10}payment|how (do i|to|can i).{0,20}invoice/.test(t),
-  run: async () => `**Recording a payment**\n• Go to Invoices, find the order's invoice, and click Record Payment\n• Choose Standard Payment (cash/card against the balance) or Pay with Deductions (reduces what's owed by a reason-tagged deduction, e.g. a damaged-item discount)\n\nInvoices are generated automatically for Credit Bills, or on demand for standard orders. View opens/prints an invoice; the Deductions tab shows deduction history and lets an admin undo one.`
+  run: async () => `**Recording a payment**\n• Go to Invoices, find the order's invoice, and click Record Payment\n• Choose Standard Payment (cash/card against the balance) or Pay with Deductions (reduces what's owed by a reason-tagged deduction, e.g. a damaged-item discount)\n\nInvoices are generated on demand for orders. View opens/prints an invoice; the Deductions tab shows deduction history and lets an admin undo one.`
 });
 
 SAGABot._intents.push({

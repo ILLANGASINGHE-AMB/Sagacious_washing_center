@@ -412,8 +412,6 @@ document.addEventListener('keydown', e => {
 
     // Orders page shortcuts
     case 'n': if (e.altKey && currentPage === 'orders') { e.preventDefault(); showAddOrderModal(); } break;
-    case 'P': if (e.altKey && currentPage === 'orders') { e.preventDefault(); showPickupModal(); } break;
-    case 'C': if (e.altKey && currentPage === 'orders') { e.preventDefault(); showCreditBillPrompt(); } break;
 
     // Pagination — left/right arrows
     case 'ArrowLeft':

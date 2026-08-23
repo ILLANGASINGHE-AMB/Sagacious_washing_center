@@ -568,318 +568,11 @@ async function quickPayForOrder(orderId) {
 }
 
 
-// ─────────────────────────────────────────────
-// QUICK PICK-UP MODAL
-// ─────────────────────────────────────────────
-async function showPickupModal() {
-  const [customers,drivers]=await Promise.all([DB.getCustomers(),DB.getDrivers()]);
-  createModal('pickup-modal','Quick Pick-Up Request',`
-    <p style="font-size:0.88em;color:var(--text-muted);margin-bottom:16px;">Creates a pickup request. Invoice generated only after items are added.</p>
-    <div class="form-group"><label class="form-label">Customer *</label>${pickerHTML('pu-cust','Type customer name...')}</div>
-    <div class="form-group"><label class="form-label">Driver</label>${pickerHTML('pu-drv','Type driver name...')}</div>
-    <div class="form-group"><label class="form-label">Pickup Date *</label>
-      <input type="date" class="form-input" id="pu-date" value="${today()}"/></div>
-    <div style="display:flex;gap:10px;justify-content:flex-end;margin-top:12px;">
-      <button class="btn btn-secondary" onclick="hideModal('pickup-modal')">Cancel [Esc]</button>
-      <button class="btn btn-primary" onclick="savePickupRequest()"><i class="fas fa-truck-loading"></i> Create [Enter]</button>
-    </div>`);
-  showModal('pickup-modal');
-  initSearchPicker('pu-cust',customers,c=>c.hotel_name,c=>c.id,'');
-  initSearchPicker('pu-drv',[{id:'',name:'-- Unassigned --'},...drivers],d=>d.name,d=>d.id,'');
-  setTimeout(()=>document.getElementById('pu-cust-input')?.focus(),80);
-}
-
-async function savePickupRequest() {
-  const custId=getPickerValue('pu-cust');
-  const drvId=getPickerValue('pu-drv')||null;
-  const pickup=document.getElementById('pu-date')?.value;
-  if(!custId) return toast('Please select a customer','error');
-  if(!pickup) return toast('Please select a pickup date','error');
-  try {
-    const batchId=await DB.generateBatchId();
-    await DB.addOrder({customer_id:parseInt(custId),driver_id:drvId?parseInt(drvId):null,pickup_date:pickup,status:'Pickup Requested',total_amount:0,advance_payment:0,batch_id:batchId,is_pickup_only:true});
-    hideModal('pickup-modal');
-    toast(`Pickup request ${batchId} created!`);
-    renderOrders();
-    refreshCustomerDetailIfOpen(parseInt(custId));
-  } catch(err){toast('Failed: '+(err.message||err),'error');}
-}
-
-// ─────────────────────────────────────────────
-// CREDIT BILL MODAL
-// Full order dialog with credit-specific fields.
-// Saves order with status="Credits" + auto-generates
-// a Credit invoice with due date printed on the PDF.
-// ─────────────────────────────────────────────
-async function showCreditBillModal() {
-  const [customers, drivers] = await Promise.all([DB.getCustomers(), DB.getDrivers()]);
-  window._aoCustomersList = customers;
-  window._cbMinDiscount = parseFloat(await DB.getSetting('min_discount_amount')||'0') || 0;
-
-  // Quick-pick due date helpers
-  const d7=new Date(); d7.setDate(d7.getDate()+7);
-  const d14=new Date(); d14.setDate(d14.getDate()+14);
-  const d30=new Date(); d30.setDate(d30.getDate()+30);
-  const iso=d=>d.toISOString().split('T')[0];
-
-  createModal('credit-bill-modal','Credit Bill',`
-    <!-- Purple header banner -->
-    <div style="background:linear-gradient(135deg,#7c3aed,#5b21b6);color:#fff;padding:14px 18px;border-radius:10px;margin-bottom:20px;display:flex;align-items:center;gap:12px;">
-      <i class="fas fa-credit-card" style="font-size:1.5em;opacity:0.9;"></i>
-      <div>
-        <div style="font-weight:700;font-size:1em;">Credit Bill</div>
-        <div style="font-size:0.82em;opacity:0.85;">Deferred payment — due date and credit amount printed on the bill</div>
-      </div>
-    </div>
-
-    <!-- Customer + Driver + Dates -->
-    <div style="display:grid;grid-template-columns:1fr 1fr;gap:14px;">
-      <div class="form-group"><label class="form-label">Customer *</label>
-        ${pickerHTML('cb-cust','Type customer name...')}
-      </div>
-      <div class="form-group"><label class="form-label">Driver</label>
-        ${pickerHTML('cb-drv','Type driver name...')}
-      </div>
-      <div class="form-group"><label class="form-label">Pickup Date *</label>
-        <input type="date" class="form-input" id="cb-pickup" value="${today()}"/>
-      </div>
-      <div class="form-group"><label class="form-label">Delivery Date</label>
-        <input type="date" class="form-input" id="cb-delivery"/>
-      </div>
-
-      <!-- Due date -->
-      <div class="form-group" style="grid-column:1/-1;">
-        <label class="form-label" style="color:#7c3aed;font-weight:700;">
-          <i class="fas fa-calendar-alt"></i> Payment Due Date *
-        </label>
-        <div style="display:flex;gap:6px;margin-bottom:8px;">
-          <button class="btn btn-sm" onclick="setCbDue('${iso(d7)}')"
-            style="background:#7c3aed;color:#fff;border-color:#6d28d9;font-size:0.8em;padding:4px 10px;">7 days</button>
-          <button class="btn btn-sm" onclick="setCbDue('${iso(d14)}')"
-            style="background:#7c3aed;color:#fff;border-color:#6d28d9;font-size:0.8em;padding:4px 10px;">14 days</button>
-          <button class="btn btn-sm" onclick="setCbDue('${iso(d30)}')"
-            style="background:#7c3aed;color:#fff;border-color:#6d28d9;font-size:0.8em;padding:4px 10px;">30 days</button>
-        </div>
-        <input type="date" class="form-input" id="cb-due-date" value="${iso(d14)}" min="${today()}"
-          style="border-color:#c4b5fd;"/>
-      </div>
-    </div>
-
-    <!-- Order Items -->
-    <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:8px;">
-      <span style="font-family:'Playfair Display',serif;font-size:1em;font-weight:700;color:#7c3aed;">
-        <i class="fas fa-list"></i> Order Items
-      </span>
-      <div style="display:flex;gap:8px;">
-        <button class="btn btn-sm" onclick="showQuickAddItemModal('credit-bill')" style="background:#7c3aed;color:#fff;border-color:#6d28d9;">
-          <i class="fas fa-box-open"></i> Add New Item
-        </button>
-        <button class="btn btn-sm" onclick="addCbItemRow()" style="background:#7c3aed;color:#fff;border-color:#6d28d9;">
-          <i class="fas fa-plus"></i> Add Row
-        </button>
-      </div>
-    </div>
-    <div style="display:grid;grid-template-columns:2.5fr 1.6fr 0.8fr 1.2fr auto;gap:8px;margin-bottom:4px;padding:0 2px;">
-      <span class="form-label">Item</span>
-      <span class="form-label">Service Type</span>
-      <span class="form-label">Qty</span>
-      <span class="form-label">Price (LKR)</span>
-      <span></span>
-    </div>
-    <div id="cb-items-container"></div>
-
-    <!-- Delivery + Discount + Total -->
-    <div style="border-top:1px solid var(--border);margin-top:10px;padding-top:12px;display:grid;grid-template-columns:1fr 1fr;gap:12px;">
-      <div class="form-group" style="margin:0;">
-        <label class="form-label">Delivery Charge (LKR)</label>
-        <input type="number" class="form-input" id="cb-delivery-charge" value="0" min="0" step="0.01" oninput="calcCbItemTotal()"/>
-      </div>
-      <div class="form-group" id="cb-discount-wrap" style="margin:0;display:none;">
-        <label class="form-label" style="color:#16a34a;font-weight:700;">
-          <i class="fas fa-tag"></i> Discount %
-          <span id="cb-discount-hint" style="font-weight:400;font-size:0.78em;color:var(--text-muted);margin-left:4px;"></span>
-        </label>
-        <input type="number" class="form-input" id="cb-discount" value="0" min="0" max="100" step="0.1" oninput="calcCbItemTotal()"/>
-      </div>
-    </div>
-    <div style="display:flex;justify-content:space-between;align-items:center;padding:12px 0 0;margin-top:8px;">
-      <div>
-        <div style="font-size:0.82em;color:var(--text-muted);" id="cb-breakdown"></div>
-        <strong style="font-size:1.15em;">Grand Total: <span id="cb-total">LKR 0.00</span></strong>
-      </div>
-      <div style="display:flex;gap:10px;">
-        <button class="btn btn-secondary" onclick="hideModal('credit-bill-modal')">Cancel [Esc]</button>
-        <button class="btn" onclick="saveCreditBill()"
-          style="background:#7c3aed;color:#fff;border-color:#6d28d9;font-weight:700;">
-          <i class="fas fa-credit-card"></i> Save Credit Bill [Enter]
-        </button>
-      </div>
-    </div>`, 'modal-lg');
-
-  showModal('credit-bill-modal');
-  initSearchPicker('cb-cust', customers, c=>c.hotel_name, c=>c.id, '');
-  initSearchPicker('cb-drv',  [{id:'',name:'-- Unassigned --'},...drivers], d=>d.name, d=>d.id, '');
-  addCbItemRow();
-  setTimeout(()=>document.getElementById('cb-cust-input')?.focus(), 80);
-}
-
-function setCbDue(dateStr) {
-  const el = document.getElementById('cb-due-date');
-  if(el) el.value = dateStr;
-}
-
-// Item rows for Credit Bill (use cb- prefix to avoid conflicts)
-async function addCbItemRow() {
-  const container = document.getElementById('cb-items-container');
-  const row = document.createElement('div');
-  row.className = 'cb-item-row';
-  row.style.cssText = 'display:grid;grid-template-columns:2.5fr 1.6fr 0.8fr 1.2fr auto;gap:8px;margin-bottom:6px;align-items:center;';
-  row.innerHTML = `${buildItemPickerHTML()}
-    <select class="form-input form-select cb-svc" onchange="onCbSvcChange(this)" style="font-size:0.82em;padding:6px 8px;">
-      <option value="Dry Clean">Dry Clean</option>
-      <option value="Wash &amp; Press" selected>Wash &amp; Press</option>
-      <option value="Wash &amp; Dry">Wash &amp; Dry</option>
-    </select>
-    <input type="number" class="form-input cb-qty" value="1" min="1" oninput="calcCbItemTotal()"/>
-    <input type="number" class="form-input cb-price" value="0" min="0" oninput="calcCbItemTotal()" placeholder="Price"/>
-    <button class="btn btn-danger btn-icon btn-sm" onclick="this.parentElement.remove();calcCbItemTotal()"><i class="fas fa-trash"></i></button>`;
-  container.appendChild(row);
-}
-
-function calcCbItemTotal() {
-  let subtotal = 0;
-  document.querySelectorAll('.cb-item-row').forEach(row => {
-    const qty   = parseFloat(row.querySelector('.cb-qty')?.value)   || 0;
-    const price = parseFloat(row.querySelector('.cb-price')?.value) || 0;
-    subtotal += qty * price;
-  });
-  const delivery     = parseFloat(document.getElementById('cb-delivery-charge')?.value)||0;
-  const runningTotal = subtotal + delivery;
-
-  // Show/hide discount row based on min_discount_amount setting
-  const minDisc  = window._cbMinDiscount || 0;
-  const discWrap = document.getElementById('cb-discount-wrap');
-  if(discWrap) {
-    const eligible = minDisc > 0 && runningTotal >= minDisc;
-    discWrap.style.display = eligible ? '' : 'none';
-    const hint = document.getElementById('cb-discount-hint');
-    if(hint) hint.textContent = eligible ? `(min. ${formatCurrency(minDisc)} reached)` : '';
-    if(!eligible) { const d=document.getElementById('cb-discount'); if(d) d.value='0'; }
-  }
-
-  const discRate = parseFloat(document.getElementById('cb-discount')?.value)||0;
-  const fin = Financials.computeOrderFinancials(
-    { discount_rate: discRate, delivery_charge: delivery, extra_payment: 0 },
-    [{ subtotal }]
-  );
-  const discAmt = fin.discountAmount;
-  const grand   = fin.grandTotal;
-  const el = document.getElementById('cb-total');
-  if(el) el.textContent = formatCurrency(grand);
-  const bd = document.getElementById('cb-breakdown');
-  if(bd) {
-    let parts=[];
-    if(delivery>0) parts.push(`Delivery: +${formatCurrency(delivery)}`);
-    if(discRate>0) parts.push(`Discount ${discRate}%: -${formatCurrency(discAmt)}`);
-    bd.textContent = parts.join('  |  ');
-  }
-}
-
-
-async function saveCreditBill() {
-  const custId  = parseInt(getPickerValue('cb-cust'));
-  const drvRaw  = getPickerValue('cb-drv');
-  const drvId   = drvRaw ? parseInt(drvRaw) : null;
-  const pickup  = document.getElementById('cb-pickup')?.value;
-  const delivery= document.getElementById('cb-delivery')?.value;
-  const dueDate = document.getElementById('cb-due-date')?.value;
-  if(!custId)  return toast('Please select a customer', 'error');
-  if(!pickup)  return toast('Please select a pickup date', 'error');
-  if(!dueDate) return toast('Please select a payment due date', 'error');
-
-  const billSvc        = 'Wash & Press'; // kept for compat; actual svc is per-row
-  const deliveryCharge = parseFloat(document.getElementById('cb-delivery-charge')?.value)||0;
-  const discRate       = parseFloat(document.getElementById('cb-discount')?.value)||0;
-
-  // Collect items
-  const orderItems = []; let itemsSubtotal = 0; let valid = true;
-  document.querySelectorAll('.cb-item-row').forEach(row => {
-    const wrap   = row.querySelector('.item-picker-wrap');
-    const itemId = parseInt(wrap?.dataset.selectedId);
-    const itemTxt= wrap?.querySelector('.item-picker-input')?.value || '';
-    const svc    = row.querySelector('.cb-svc')?.value || 'Wash & Press';
-    const qty    = parseFloat(row.querySelector('.cb-qty')?.value)   || 0;
-    const price  = parseFloat(row.querySelector('.cb-price')?.value) || 0;
-    if(!itemId) { valid = false; return; }
-    const subtotal = qty * price;
-    orderItems.push({ catalog_item_id:itemId, item_name:itemTxt.split('—')[1]?.trim()||itemTxt, quantity:qty, service_type:svc, price, subtotal });
-    itemsSubtotal += subtotal;
-  });
-
-  if(!valid)             return toast('Please select an item for every row', 'error');
-  if(!orderItems.length) return toast('Add at least one item', 'error');
-
-  const cbFin = Financials.computeOrderFinancials(
-    { discount_rate: discRate, delivery_charge: deliveryCharge, extra_payment: 0 },
-    orderItems
-  );
-  const discAmt   = cbFin.discountAmount;
-  const billTotal = cbFin.grandTotal;
-
-  try {
-    showProcessingOverlay('Generating Bill', 'Saving credit bill details...');
-    const batchId = await DB.generateBatchId();
-    const orderId = await DB.createOrderWithItems({
-      customer_id:     custId,
-      driver_id:       drvId,
-      pickup_date:     pickup,
-      delivery_date:   delivery,
-      status:          'Credits',
-      advance_payment: 0,
-      total_amount:    billTotal,
-      batch_id:        batchId
-    }, orderItems);
-
-    // Auto-generate the Credit invoice immediately
-    const invNum = await DB.generateInvoiceNumber();
-    const invId  = await DB.addInvoice({
-      order_id:                 orderId,
-      invoice_number:           invNum,
-      issue_date:               new Date().toISOString(),
-      delivery_date:            delivery,
-      invoice_type:             'Credit',
-      credit_due_date:          dueDate,
-      total_amount:             billTotal,
-      advance_payment:          0,
-      balance:                  billTotal,
-      paid_status:              'Unpaid',
-      discount_rate:            discRate,
-      discount_amount:          discAmt,
-      delivery_charge:          deliveryCharge,
-      // Items subtotal ONLY — no delivery charge folded in.
-      // Financials.computeInvoiceFinancials reads this column as the
-      // pre-discount ITEMS total and then adds delivery_charge itself:
-      //   gross = (subtotal_before_discount - discount) + delivery + extra
-      // Including delivery here billed it twice on the printed credit bill
-      // (and let the discount rate eat into the delivery fee as well).
-      subtotal_before_discount: itemsSubtotal
-    });
-
-    clearItemsCache();
-    hideModal('credit-bill-modal');
-    toast(`Credit Bill ${batchId} saved!`, 'success');
-    refreshCustomerDetailIfOpen(custId);
-
-    // Navigate to invoice so they can print it immediately
-    navigate('invoices');
-    setTimeout(() => viewInvoice(invId), 200);
-  } catch(err) {
-    console.error(err);
-    toast('Failed to save: ' + (err.message || err), 'error');
-  } finally {
-    hideProcessingOverlay();
-  }
-}
+// Quick Pick-Up and Credit Bill order flows were removed here (both were
+// unreachable — no button called them, and the keyboard shortcut for Credit
+// Bill referenced a function that never existed). Existing Credit invoices
+// still view/print correctly — invoice_type is stored on the invoice row
+// itself, independent of this removal. See HighIssues.md H-01.
 
 // ─────────────────────────────────────────────
 // ADD ORDER MODAL
@@ -980,14 +673,6 @@ function onEoSvcChange(sel) {
   if(wrap && priceInput) _applyServicePrice(wrap, sel.value, priceInput);
   calcEditOrderTotal();
 }
-function onCbSvcChange(sel) {
-  const row = sel.closest('.cb-item-row');
-  if(!row) return;
-  const wrap = row.querySelector('.item-picker-wrap');
-  const priceInput = row.querySelector('.cb-price');
-  if(wrap && priceInput) _applyServicePrice(wrap, sel.value, priceInput);
-  calcCbItemTotal();
-}
 function _applyServicePrice(wrap, svc, priceInput) {
   if(svc==='Dry Clean')      priceInput.value = parseFloat(wrap.dataset.dryClean)  || 0;
   else if(svc==='Wash & Press') priceInput.value = parseFloat(wrap.dataset.washPress) || 0;
@@ -996,7 +681,6 @@ function _applyServicePrice(wrap, svc, priceInput) {
 // Stubs — global service toggle removed; kept for safety
 function setAoBillSvc(){}
 function setEoBillSvc(){}
-function setCbBillSvc(){}
 
 // ─────────────────────────────────────────────
 // ITEM SEARCH AUTOCOMPLETE
@@ -1052,14 +736,6 @@ function applyItemToWrap(wrap, itemId, itemLabel, dryCleanPrice, washPressPrice,
   const dropdown = wrap.querySelector('.item-picker-dropdown');
   if (dropdown) dropdown.style.display = 'none';
 
-  // Credit Bill rows
-  const cbRow = wrap.closest('.cb-item-row');
-  if (cbRow) {
-    const svc = cbRow.querySelector('.cb-svc')?.value || 'Dry Clean';
-    const priceInput = cbRow.querySelector('.cb-price');
-    if (priceInput) _applyServicePrice(wrap, svc, priceInput);
-    calcCbItemTotal(); return;
-  }
   // Standard add row
   const aoRow = wrap.closest('.ao-item-row');
   if (aoRow) {
@@ -1166,10 +842,6 @@ async function saveQuickAddItem(context = 'new-order') {
     await addEditOrderItemRow();
     containerId = '#eo-items-container';
     rowClass = '.eo-item-row';
-  } else if (context === 'credit-bill') {
-    await addCbItemRow();
-    containerId = '#cb-items-container';
-    rowClass = '.cb-item-row';
   } else if (context === 'debug-order') {
     await addDebugOrderItemRow();
     containerId = '#dbo-items-container';
@@ -1399,7 +1071,6 @@ async function showEditOrderModal(id){
       <button class="btn btn-danger btn-icon btn-sm" onclick="this.closest('.eo-item-row').remove();calcEditOrderTotal()"><i class="fas fa-trash"></i></button>
     </div>`;
   }).join('');
-  const wasPickupOnly=order.is_pickup_only&&order.status==='Pickup Requested';
   const delCharge = invoice ? (invoice.delivery_charge || 0) : 0;
   
   createModal('edit-order-modal',`Edit Order: ${order.batch_id}`,`
@@ -1419,7 +1090,6 @@ async function showEditOrderModal(id){
         <input type="number" class="form-input" id="eo-extra-payment" value="${order.extra_payment||0}" min="0" ${ro?'disabled':''} oninput="calcEditOrderTotal()"/></div>
     </div>
     ${ro?`<div style="font-size:0.8em;color:var(--text-muted);margin-bottom:8px;"><i class="fas fa-info-circle"></i> Staff can only edit Status and Order Items.</div>`:''}
-    ${wasPickupOnly?`<div style="font-size:0.82em;background:#fef9c3;color:#92400e;padding:8px 12px;border-radius:8px;margin-bottom:10px;"><i class="fas fa-info-circle"></i> Adding items will automatically set status to <strong>Received</strong>.</div>`:''}
 
     <!-- Items — per-row service type -->
     <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:8px;">
@@ -1452,7 +1122,7 @@ async function showEditOrderModal(id){
       </div>
       <div style="display:flex;gap:10px;">
         <button class="btn btn-secondary" onclick="hideModal('edit-order-modal')">Cancel [Esc]</button>
-        <button class="btn btn-primary" onclick="saveEditOrder(${id},${wasPickupOnly})"><i class="fas fa-save"></i> Save [Enter]</button>
+        <button class="btn btn-primary" onclick="saveEditOrder(${id})"><i class="fas fa-save"></i> Save [Enter]</button>
       </div>
     </div>`,'modal-lg');
   showModal('edit-order-modal');
@@ -1840,7 +1510,7 @@ function calcEditOrderTotal(){
     bd.textContent = parts.join('  |  ');
   }
 }
-async function saveEditOrder(orderId,wasPickupOnly=false){
+async function saveEditOrder(orderId){
   const ro=!isAdmin();
   const originalOrder=await DB.getOrder(orderId);
   // Snapshot pre-edit state for Undo — captured now, before anything below
@@ -2003,14 +1673,11 @@ async function saveSignature(orderId){
 function getCurrentSelectedCustomerId() {
   const addModal = document.getElementById('add-order-modal');
   const editModal = document.getElementById('edit-order-modal');
-  const cbModal = document.getElementById('credit-bill-modal');
-  
+
   if (addModal) {
     return document.getElementById('ao-cust-value')?.value || '';
   } else if (editModal) {
     return document.getElementById('eo-cust-value')?.value || window._editOrderCustomerId || '';
-  } else if (cbModal) {
-    return document.getElementById('cb-cust-value')?.value || '';
   }
   return '';
 }
@@ -2047,8 +1714,6 @@ window.onCustomerPickerChange = function(pickerId, customerId) {
     loadOpenFlagsForAddOrder(customerId);
   } else if (pickerId === 'eo-cust') {
     reapplyPricesForOrderRows('.eo-item-row', customerId, calcEditOrderTotal);
-  } else if (pickerId === 'cb-cust') {
-    reapplyPricesForOrderRows('.cb-item-row', customerId, calcCbItemTotal);
   }
 };
 
@@ -2084,7 +1749,7 @@ async function reapplyPricesForOrderRows(rowSelector, customerId, totalCallback)
     wrap.dataset.washDry = wd;
 
     const svcSel = row.querySelector('select');
-    const priceInput = row.querySelector('input[type="number"].ao-price, input[type="number"].eo-price, input[type="number"].cb-price');
+    const priceInput = row.querySelector('input[type="number"].ao-price, input[type="number"].eo-price');
     if (svcSel && priceInput) {
       const svc = svcSel.value;
       if (svc === 'Dry Clean') priceInput.value = dc;

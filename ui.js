@@ -97,7 +97,13 @@ async function withProcessingOverlay(asyncFn, label, sublabel) {
 // ──────────────────────────────────────────────────────────────────
 
 
-let currentUser = null;
+// `var`, not `let` — a top-level `let` lives in the global declarative
+// record, not as a `window` property, so `window.currentUser` (read by
+// db.js's audit-log/trip-name fallbacks) was always undefined and every
+// action got signed "Administrator" (HighIssues.md H-07). `var` at top
+// level of a classic script IS a `window` property, and every later plain
+// assignment (`currentUser = …` in app.js) writes straight through to it.
+var currentUser = null;
 function isAdmin() { return currentUser?.role === 'admin'; }
 function requireAdmin() {
   if (!isAdmin()) { toast('Access denied — Admin only', 'error'); return false; }
@@ -172,15 +178,17 @@ function getOrderCustomerName(order, cMap = {}, deletedMap = window._deletedCust
   return '—';
 }
 
-// 6 statuses only
+// Reachable values only: 'Paid' / 'Partially Paid' / (default gray) 'Unpaid'
+// come from order.status (see normalizeOrderStatus in db.js); 'Out for
+// Delivery' / 'Delivered' come from order.delivery_status, not order.status
+// — both are read explicitly by name in orders.js, never through this map's
+// key matching order.status. 'Pickup Requested', 'Received', 'Completed' and
+// 'Credits' were dropped with the Quick Pick-Up / Credit Bill order flows
+// (see HighIssues.md H-01) — order.status can never hold those values.
 const STATUS_COLORS = {
-  'Pickup Requested':'badge-yellow',
-  'Received':        'badge-purple',
-  'Completed':       'badge-green',
   'Out for Delivery':'badge-blue',
   'Delivered':       'badge-cyan',
   'Paid':            'badge-green',
-  'Credits':         'badge-credits',
   'Partially Paid':  'badge-orange'
 };
 function statusBadge(status) { return `<span class="badge ${STATUS_COLORS[status]||'badge-gray'}">${status||'—'}</span>`; }

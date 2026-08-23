@@ -756,19 +756,24 @@ const TransportModule = {
     const notesInput = document.getElementById('trip-notes-input');
     const notes = notesInput ? notesInput.value : '';
 
-    await DB.updateTrip(tripDbId, {
-      selected_customers: this.selectedCustomerSeq,
-      notes: notes
-    });
+    try {
+      await DB.updateTrip(tripDbId, {
+        selected_customers: this.selectedCustomerSeq,
+        notes: notes
+      });
 
-    const trip = await DB.getTrip(tripDbId);
-    await DB.logAction('Set Trip Customers', `Updated customer sequence for ${trip ? trip.trip_id : tripDbId}`, { selected_customers: this.selectedCustomerSeq }, 'Transport');
+      const trip = await DB.getTrip(tripDbId);
+      await DB.logAction('Set Trip Customers', `Updated customer sequence for ${trip ? trip.trip_id : tripDbId}`, { selected_customers: this.selectedCustomerSeq }, 'Transport');
 
-    const modal = document.getElementById('cust-select-modal');
-    if (modal) modal.remove();
+      const modal = document.getElementById('cust-select-modal');
+      if (modal) modal.remove();
 
-    showToast('Customer visit sequence saved!');
-    await this.renderTripsList();
+      showToast('Customer visit sequence saved!');
+      await this.renderTripsList();
+    } catch (err) {
+      console.error('saveCustomerSelection error:', err);
+      showToast('Failed to save customer sequence: ' + (err.message || err), 'error');
+    }
   },
 
   // ──────────────────────────────────────────
