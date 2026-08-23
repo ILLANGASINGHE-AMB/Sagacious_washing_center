@@ -54,7 +54,7 @@ async function renderOrders() {
           <input class="form-input" id="orders-search-input"
             placeholder="Search order ID, customer, driver..."
             autocomplete="off" spellcheck="false"
-            oninput="ordersSearch=this.value;ordersPage=1;_refreshOrdersTable()"/>
+            oninput="onOrdersSearchInput(this.value)"/>
         </div>
         <button class="btn btn-secondary btn-sm" id="orders-filter-btn" onclick="toggleOrdersFilter()">
           <i class="fas fa-filter"></i> Filter
@@ -122,10 +122,24 @@ async function renderOrders() {
           <tbody id="orders-table-body"></tbody>
         </table>
       </div>
+      <div id="orders-pagination"></div>
     </div>`;
 
   await _refreshOrdersTable();
   document.getElementById('orders-search-input')?.focus();
+}
+
+// Debounced like keyboard.js's global search — each keystroke otherwise
+// re-fetches all orders + invoices (a paginated full-table scan) via
+// _refreshOrdersTable.
+let _ordersSearchDebounce = null;
+function onOrdersSearchInput(val) {
+  clearTimeout(_ordersSearchDebounce);
+  _ordersSearchDebounce = setTimeout(() => {
+    ordersSearch = val;
+    ordersPage = 1;
+    _refreshOrdersTable();
+  }, 300);
 }
 
 // ── Only updates tbody + count — never touches the search input ──
@@ -173,8 +187,10 @@ async function _refreshOrdersTable() {
   }
   filtered.sort((a,b)=>new Date(b.created_at)-new Date(a.created_at));
 
-  const items = filtered;
   const total = filtered.length;
+  const totalPages = Math.max(1, Math.ceil(total / ordersPerPage));
+  if (ordersPage > totalPages) ordersPage = totalPages;
+  const { items } = paginateData(filtered, ordersPage, ordersPerPage);
 
   // Update count
   const countEl = document.getElementById('orders-count');
@@ -234,6 +250,9 @@ async function _refreshOrdersTable() {
   // Sync the header toggle icon
   const toggleBtn = document.getElementById('orders-actions-toggle');
   if (toggleBtn) toggleBtn.innerHTML = ordersActionsVisible ? '<i class="fas fa-eye"></i>' : '<i class="fas fa-eye-slash"></i>';
+
+  const pagEl = document.getElementById('orders-pagination');
+  if (pagEl) pagEl.innerHTML = renderPagination(ordersPage, totalPages, 'changeOrdersPage');
 
   _updateOrdersSelectionBar();
 }
@@ -1031,6 +1050,7 @@ async function saveNewOrder(){
 // EDIT ORDER MODAL
 // ─────────────────────────────────────────────
 let _editOrderCatalog=[];
+let _editOrderDiscountRate=0;
 async function showEditOrderModal(id){
   if (!canEditOrders()) return toast('Staff or Admin permission required to edit orders', 'error');
   const [order,customers,drivers,existingItems,allCatalog,invoice,itemFlags]=await Promise.all([
@@ -1046,7 +1066,7 @@ async function showEditOrderModal(id){
   window._aoCustomersList = customers;
   window._editOrderCustomerId = order.customer_id;
   _editOrderCatalog=allCatalog;
-  const statusOpts=ORDER_STATUSES.map(s=>`<option value="${s}" ${s===order.status?'selected':''}>${s}</option>`).join('');
+  _editOrderDiscountRate=invoice?(invoice.discount_rate||0):0;
   const ro=!isAdmin();
   const itemRows=existingItems.map(item=>{
     const cat=allCatalog.find(c=>c.id===item.catalog_item_id);
@@ -1492,19 +1512,23 @@ async function addEditOrderItemRow(){
 }
 
 function calcEditOrderTotal(){
-  let subtotal=0;
+  const orderItems=[];
   document.querySelectorAll('.eo-item-row').forEach(row=>{
     const qty   = parseFloat(row.querySelector('.eo-qty')?.value)   || 0;
     const price = parseFloat(row.querySelector('.eo-price')?.value) || 0;
-    subtotal += qty * price;
+    orderItems.push({quantity:qty,price,subtotal:qty*price});
   });
   const delivery = parseFloat(document.getElementById('eo-delivery-charge')?.value)||0;
   const extra = parseFloat(document.getElementById('eo-extra-payment')?.value)||0;
-  const total = subtotal + delivery + extra;
-  const el=document.getElementById('eo-total'); if(el)el.textContent=formatCurrency(total);
+  const fin = Financials.computeOrderFinancials(
+    { discount_rate: _editOrderDiscountRate, delivery_charge: delivery, extra_payment: extra },
+    orderItems
+  );
+  const el=document.getElementById('eo-total'); if(el)el.textContent=formatCurrency(fin.grandTotal);
   const bd=document.getElementById('eo-breakdown');
   if(bd) {
     let parts=[];
+    if(fin.discountAmount>0) parts.push(`Discount: -${formatCurrency(fin.discountAmount)}`);
     if(delivery>0) parts.push(`Delivery: +${formatCurrency(delivery)}`);
     if(extra>0) parts.push(`Extra Payment: +${formatCurrency(extra)}`);
     bd.textContent = parts.join('  |  ');
@@ -1561,7 +1585,7 @@ async function saveEditOrder(orderId){
       payments
     );
     const newBalance = invFin.balance;
-    status = invFin.isPaid ? 'Paid' : 'Unpaid';
+    status = invFin.status;
     await DB.updateInvoice(existingInv.id,{total_amount:eoGrandTotal,advance_payment:advance,extra_payment:extra,balance:newBalance,paid_status:status,delivery_date:delivery,subtotal_before_discount:total,discount_amount:discAmt,delivery_charge:eoDelivery});
   } else {
     status = advance>=eoGrandTotal?'Paid':'Unpaid';
@@ -1671,12 +1695,15 @@ async function saveSignature(orderId){
 }
 
 function getCurrentSelectedCustomerId() {
+  // hideModal() only sets display:none — the modal node stays in the DOM for
+  // the rest of the session — so an existence check can't tell which modal
+  // is actually open once both have been shown once. Check visibility instead.
   const addModal = document.getElementById('add-order-modal');
   const editModal = document.getElementById('edit-order-modal');
 
-  if (addModal) {
+  if (addModal && addModal.style.display !== 'none') {
     return document.getElementById('ao-cust-value')?.value || '';
-  } else if (editModal) {
+  } else if (editModal && editModal.style.display !== 'none') {
     return document.getElementById('eo-cust-value')?.value || window._editOrderCustomerId || '';
   }
   return '';

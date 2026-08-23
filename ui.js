@@ -147,7 +147,14 @@ function createModal(id, title, bodyHTML, size='') {
 function formatCurrency(amount) { return 'LKR '+Number(amount||0).toLocaleString('en-LK',{minimumFractionDigits:2,maximumFractionDigits:2}); }
 function formatDate(d) { if(!d)return'—'; return new Date(d).toLocaleDateString('en-GB',{day:'2-digit',month:'short',year:'numeric'}); }
 function formatDateTime(d) { if(!d)return'—'; return new Date(d).toLocaleString('en-GB',{day:'2-digit',month:'short',year:'numeric',hour:'2-digit',minute:'2-digit'}); }
-function today() { return new Date().toISOString().split('T')[0]; }
+function today() { return toLocalISODate(new Date()); }
+// Formats a Date as 'YYYY-MM-DD' using its local calendar fields (not UTC) —
+// use this anywhere a JS Date needs to become a date-only string; plain
+// toISOString().split('T')[0] shifts the date across midnight in timezones
+// ahead of UTC (e.g. Sri Lanka, UTC+5:30).
+function toLocalISODate(d) {
+  return `${d.getFullYear()}-${String(d.getMonth()+1).padStart(2,'0')}-${String(d.getDate()).padStart(2,'0')}`;
+}
 function todayDisplay() { return new Date().toLocaleDateString('en-GB',{weekday:'long',day:'numeric',month:'long',year:'numeric'}); }
 
 // Reads a `<input type="date" id="{dateInputId}">` (a 'YYYY-MM-DD' string) and
@@ -238,8 +245,8 @@ function filterData(data,query,fields) {
 function downloadJSON(data,filename) { const blob=new Blob([JSON.stringify(data,null,2)],{type:'application/json'}); const a=document.createElement('a'); a.href=URL.createObjectURL(blob); a.download=filename; a.click(); }
 function downloadFile(content,filename,type) { const blob=new Blob([content],{type}); const a=document.createElement('a'); a.href=URL.createObjectURL(blob); a.download=filename; a.click(); }
 
-const SERVICE_TYPES  = ['Wash','Dry'];
-const ORDER_STATUSES = ['Paid', 'Unpaid'];
+const SERVICE_TYPES  = ['Dry Clean','Wash & Press','Wash & Dry'];
+const ORDER_STATUSES = ['Paid', 'Partially Paid', 'Unpaid'];
 const PAYMENT_METHODS = ['Cash','Bank Transfer','Credit','Monthly Billing'];
 
 // ─── Generic searchable picker (Customer/Driver dropdowns) ───

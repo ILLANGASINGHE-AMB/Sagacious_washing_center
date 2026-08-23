@@ -234,9 +234,14 @@ function doLogout() {
 // ─────────────────────────────────────────────
 // INIT
 // ─────────────────────────────────────────────
+let _topbarDateInterval = null;
 async function initApp() {
   updateTopbarDate();
-  setInterval(updateTopbarDate, 60000);
+  // Guard against a second timer stacking up — initApp() runs on every
+  // enterAppWithSession, i.e. every login, and the handle was never kept
+  // around to clear.
+  if (_topbarDateInterval) clearInterval(_topbarDateInterval);
+  _topbarDateInterval = setInterval(updateTopbarDate, 60000);
   // Navigate immediately — don't block on seed/settings. Guarded so this boot-time default
   // doesn't clobber a page the user already clicked into during the async gap before initApp()
   // ran (see _hasNavigatedOnce).
@@ -316,7 +321,7 @@ function navigate(page) {
 
   const titles = {
     dashboard: 'Dashboard', customers: 'Customers', drivers: 'Drivers', vehicles: 'Vehicles', transport: 'Transport & Trip Management',
-    orders: 'Orders', paynow: 'Pay Now', invoices: 'Invoices', payments: 'Payments',
+    orders: 'Orders', paynow: 'Pay Now', invoices: 'Invoices',
     items: 'Items', expenses: 'Expenses', analytics: 'Data Analytics', reports: 'Reports', settings: 'Settings', deductions: 'Deductions',
     pendings: 'Pendings & Returns',
     'recent-actions': 'Recent Actions',
@@ -333,7 +338,6 @@ function navigate(page) {
     orders:    renderOrders,
     paynow:    renderPayNow,
     invoices:  renderInvoices,
-    payments:  renderInvoices,
     items:     renderItems,
     expenses:  renderExpensesPage,
     analytics: () => { if (!isAdmin()) { navigate('dashboard'); } else { renderAnalytics(); } },
@@ -708,6 +712,7 @@ function getGreeting() {
 // Shared colour per order status — used by both dashboard charts so they stay consistent.
 const STATUS_CHART_COLORS = {
   'Paid':             '#22c55e', // green
+  'Partially Paid':   '#f59e0b', // orange
   'Unpaid':           '#ef4444'  // red
 };
 function statusChartColor(status) { return STATUS_CHART_COLORS[status] || '#94a3b8'; }
@@ -739,7 +744,7 @@ const EXPENSE_CAT_COLORS = [
 async function renderDashCharts(orders, payments, expenseCategories = [], expenseTypes = [], expenseAmounts = [], expenseEntries = []) {
   const days = Array.from({ length: 14 }, (_, i) => {
     const d = new Date(); d.setDate(d.getDate() - (13 - i));
-    return d.toISOString().split('T')[0];
+    return toLocalISODate(d);
   });
   const isDark = document.documentElement.classList.contains('dark');
   const gridColor = isDark ? 'rgba(255,255,255,0.07)' : 'rgba(0,0,0,0.07)';
@@ -961,6 +966,7 @@ async function renderCustomers() {
           <tbody id="cust-table-body"></tbody>
         </table>
       </div>
+      <div id="cust-pagination"></div>
     </div>`;
   await _refreshCustomersTable();
   document.getElementById('cust-search-input')?.focus();
@@ -972,14 +978,16 @@ async function _refreshCustomersTable() {
   const customers = await DB.getCustomers();
   let filtered = filterData(customers, custSearch, ['hotel_name','contact_person','phone','email','address']);
   filtered = filtered.sort((a,b) => (a.hotel_name||'').localeCompare(b.hotel_name||''));
-  const items = filtered;
   const total = filtered.length;
+  const totalPages = Math.max(1, Math.ceil(total / custPerPage));
+  if (custPage > totalPages) custPage = totalPages;
+  const { items } = paginateData(filtered, custPage, custPerPage);
   const countEl = document.getElementById('cust-count');
   if(countEl) countEl.textContent = total+' customer'+(total!==1?'s':'');
   tbody.innerHTML = items.length===0
     ? `<tr><td colspan="3" style="text-align:center;padding:32px;color:var(--text-muted);">No customers found</td></tr>`
     : items.map((c, idx) => {
-        const rowNum = String(idx + 1).padStart(2, '0');
+        const rowNum = String((custPage - 1) * custPerPage + idx + 1).padStart(2, '0');
         return `<tr>
           <td style="text-align:center;font-weight:700;color:var(--text-muted);font-family:monospace;font-size:1.05em;">${rowNum}</td>
           <td>
@@ -993,7 +1001,10 @@ async function _refreshCustomersTable() {
           </td>
         </tr>`;
       }).join('');
+  const pagEl = document.getElementById('cust-pagination');
+  if (pagEl) pagEl.innerHTML = renderPagination(custPage, totalPages, 'changeCustPage');
 }
+function changeCustPage(p) { custPage = p; _refreshCustomersTable(); }
 
 async function openCustomerDetail(customerId, tab = 'orders') {
   currentDetailCustomerId = customerId;
@@ -1863,6 +1874,7 @@ async function renderDrivers() {
           <tbody id="drv-table-body"></tbody>
         </table>
       </div>
+      <div id="drv-pagination"></div>
     </div>`;
   await _refreshDriversGrid();
   document.getElementById('drv-search-input')?.focus();
@@ -1874,15 +1886,17 @@ async function _refreshDriversGrid() {
   const drivers = await DB.getDrivers();
   let filtered = filterData(drivers, drvSearch, ['name','nickname','phone','phone2','nic','vehicle','email','address']);
   filtered = filtered.sort((a,b) => (a.name||'').localeCompare(b.name||''));
-  const items = filtered;
   const total = filtered.length;
+  const totalPages = Math.max(1, Math.ceil(total / drvPerPage));
+  if (drvPage > totalPages) drvPage = totalPages;
+  const { items } = paginateData(filtered, drvPage, drvPerPage);
   const countEl = document.getElementById('drv-count');
   if(countEl) countEl.textContent = total+' driver'+(total!==1?'s':'');
 
   tbody.innerHTML = items.length === 0
     ? `<tr><td colspan="4" style="text-align:center;padding:32px;color:var(--text-muted);">No drivers found</td></tr>`
     : items.map((d, idx) => {
-        const rowNum = String(idx + 1).padStart(2, '0');
+        const rowNum = String((drvPage - 1) * drvPerPage + idx + 1).padStart(2, '0');
         const statusVal = (d.status || 'available').toLowerCase();
         const stBadgeClass = statusVal === 'available' ? 'badge-green' : (statusVal === 'busy' || statusVal === 'on-trip') ? 'badge-yellow' : 'badge-gray';
         const stLabel = statusVal === 'available' ? 'Available' : (statusVal === 'busy' || statusVal === 'on-trip') ? 'Busy' : 'Off Duty';
@@ -1907,7 +1921,10 @@ async function _refreshDriversGrid() {
           </td>
         </tr>`;
       }).join('');
+  const pagEl = document.getElementById('drv-pagination');
+  if (pagEl) pagEl.innerHTML = renderPagination(drvPage, totalPages, 'changeDrvPage');
 }
+function changeDrvPage(p) { drvPage = p; _refreshDriversGrid(); }
 
 async function cycleDriverStatus(id, current) {
   const currentNorm = (current || 'available').toLowerCase() === 'on-trip' ? 'busy' : (current || 'available').toLowerCase();
@@ -2776,6 +2793,7 @@ async function renderVehicles() {
           <tbody id="veh-table-body"></tbody>
         </table>
       </div>
+      <div id="veh-pagination"></div>
     </div>`;
 
   await _refreshVehiclesGrid();
@@ -2802,8 +2820,10 @@ async function _refreshVehiclesGrid() {
   let filtered = filterData(vehicles, vehSearch, ['vehicle_no', 'category', 'model', 'status']);
   filtered = filtered.sort((a, b) => (a.vehicle_no || '').localeCompare(b.vehicle_no || ''));
 
-  const items = filtered;
   const total = filtered.length;
+  const totalPages = Math.max(1, Math.ceil(total / vehPerPage));
+  if (vehPage > totalPages) vehPage = totalPages;
+  const { items } = paginateData(filtered, vehPage, vehPerPage);
   const countEl = document.getElementById('veh-count');
   if (countEl) countEl.textContent = total + ' vehicle' + (total !== 1 ? 's' : '');
 
@@ -2823,7 +2843,7 @@ async function _refreshVehiclesGrid() {
   tbody.innerHTML = items.length === 0
     ? `<tr><td colspan="7" style="text-align:center;padding:32px;color:var(--text-muted);">No vehicles found</td></tr>`
     : items.map((v, idx) => {
-        const rowNum = String(idx + 1).padStart(2, '0');
+        const rowNum = String((vehPage - 1) * vehPerPage + idx + 1).padStart(2, '0');
         const vNo = (v.vehicle_no || '').toUpperCase().trim();
         const vDist = distMap[vNo] || distMap[String(v.id)] || 0;
         const statusVal = (v.status || 'available').toLowerCase();
@@ -2849,7 +2869,10 @@ async function _refreshVehiclesGrid() {
           </td>
         </tr>`;
       }).join('');
+  const pagEl = document.getElementById('veh-pagination');
+  if (pagEl) pagEl.innerHTML = renderPagination(vehPage, totalPages, 'changeVehPage');
 }
+function changeVehPage(p) { vehPage = p; _refreshVehiclesGrid(); }
 
 async function cycleVehicleStatus(id, current) {
   const currentNorm = (current || 'available').toLowerCase() === 'on-trip' ? 'busy' : (current || 'available').toLowerCase();

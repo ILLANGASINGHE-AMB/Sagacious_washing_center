@@ -669,8 +669,8 @@ const ExpensesModule = {
   // ──────────────────────────────────────────
   renderCategoryView(container) {
     const today = new Date();
-    if (!this._catViewFrom) this._catViewFrom = new Date(today.getFullYear(), today.getMonth(), 1).toISOString().split('T')[0];
-    if (!this._catViewTo) this._catViewTo = today.toISOString().split('T')[0];
+    if (!this._catViewFrom) this._catViewFrom = toLocalISODate(new Date(today.getFullYear(), today.getMonth(), 1));
+    if (!this._catViewTo) this._catViewTo = toLocalISODate(today);
 
     const catOptions = [...this._categories].sort((a, b) => (a.sort_order || 0) - (b.sort_order || 0))
       .map(c => `<option value="${c.category_id}" ${this._catViewCategory === c.category_id ? 'selected' : ''}>${escapeHtml(c.name)}</option>`).join('');

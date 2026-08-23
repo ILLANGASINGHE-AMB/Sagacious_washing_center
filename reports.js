@@ -191,7 +191,7 @@ function exportCustomerBilling(type) { exportData(window._reportData||[],'custom
 // ─────────────────────────────────────────────
 async function showDriverReportModal() {
   const firstDay = new Date(); firstDay.setDate(1);
-  const from = firstDay.toISOString().split('T')[0];
+  const from = toLocalISODate(firstDay);
   const to   = today();
 
   const drivers = await DB.getDrivers();
@@ -271,7 +271,7 @@ async function generateDriverReport() {
       if (d && (d < from || d > to)) return;
       drvSummary[o.driver_id].trips++;
       drvSummary[o.driver_id].total+=o.total_amount||0;
-      if(['Delivered','Paid'].includes(o.status)) drvSummary[o.driver_id].delivered++;
+      if(o.delivery_status==='delivered') drvSummary[o.driver_id].delivered++;
     });
 
     summaryList = Object.values(drvSummary).sort((a,b)=>b.total-a.total);
@@ -391,7 +391,7 @@ async function printDriverReport() {
 // ─────────────────────────────────────────────
 function showFullReportModal() {
   const firstDay = new Date(); firstDay.setDate(1);
-  const from = firstDay.toISOString().split('T')[0];
+  const from = toLocalISODate(firstDay);
   const to   = today();
 
   createModal('full-report-modal','Full Report',`
@@ -1543,7 +1543,7 @@ async function printExpensesReport() {
 // ─────────────────────────────────────────────
 async function showVehicleReportModal() {
   const firstDay = new Date(); firstDay.setDate(1);
-  const from = firstDay.toISOString().split('T')[0];
+  const from = toLocalISODate(firstDay);
   const to   = today();
 
   const vehicles = await DB.getVehicles();

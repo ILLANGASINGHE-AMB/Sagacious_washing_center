@@ -180,7 +180,7 @@ const DB = {
   // ── Orders ────────────────────────────────
   async getOrders() {
     const [rows, deletedMap] = await Promise.all([
-      _qAll(() => _sb.from('orders').select('*').order('created_at', { ascending: false })),
+      _qAll(() => _sb.from('orders').select('*').order('created_at', { ascending: false }).order('id', { ascending: false })),
       DB.getDeletedCustomerOrders()
     ]);
     window._deletedCustOrders = deletedMap || {};
@@ -342,7 +342,7 @@ const DB = {
     return _q(_sb.from('order_item_flags').select('*').eq('cleared_in_order_id', orderId).order('created_at', { ascending: true }));
   },
   async getAllFlags() {
-    return _qAll(() => _sb.from('order_item_flags').select('*').order('created_at', { ascending: false }));
+    return _qAll(() => _sb.from('order_item_flags').select('*').order('created_at', { ascending: false }).order('id', { ascending: false }));
   },
   async updateFlagStatus(id, status) {
     const data = { status };
@@ -1099,7 +1099,7 @@ const DB = {
   async getTrash() {
     const cutoff = new Date(Date.now() - 7 * 24 * 60 * 60 * 1000).toISOString();
     try { await _q(_sb.from('trash').delete().lt('deleted_at', cutoff)); } catch (e) { console.warn('trash purge failed:', e); }
-    return _qAll(() => _sb.from('trash').select('*').order('deleted_at', { ascending: false }));
+    return _qAll(() => _sb.from('trash').select('*').order('deleted_at', { ascending: false }).order('id', { ascending: false }));
   },
   async addTrash({ entity_type, entity_label, payload, deleted_by }) {
     const rows = await _q(_sb.from('trash').insert({ entity_type, entity_label, payload, deleted_by }).select());

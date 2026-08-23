@@ -381,7 +381,7 @@ const TransportModule = {
   // ──────────────────────────────────────────
   async openStartTripModal() {
     if (!canEditTransport()) return showToast('Driver or Admin permission required to start trips');
-    const todayDate = new Date().toISOString().split('T')[0];
+    const todayDate = today();
     const defaultTime = new Date().toLocaleTimeString([], { hour: '2-digit', minute: '2-digit', hour12: true });
 
     const [tripId, trips, drivers, vehicles] = await Promise.all([
@@ -791,7 +791,7 @@ const TransportModule = {
     this.allCustomersCache = await this._scopeCustomersToDriver(customers || []);
     this.selectedCustomerSeq = trip.selected_customers ? [...trip.selected_customers] : [];
 
-    const todayDate = new Date().toISOString().split('T')[0];
+    const todayDate = today();
     const defaultEndTime = new Date().toLocaleTimeString([], { hour: '2-digit', minute: '2-digit', hour12: true });
 
     const html = `
