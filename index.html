@@ -74,6 +74,11 @@
       overflow: hidden;
     }
     #sidebar.collapsed { width: 64px; }
+    #sidebar.collapsed .sidebar-logo .logo-text,
+    #sidebar.collapsed nav a span,
+    #sidebar.collapsed .sidebar-footer button span { display: none; }
+    #sidebar.collapsed .sidebar-logo { justify-content: center; padding-left: 0; padding-right: 0; }
+    #sidebar.collapsed nav.sidebar-nav a { justify-content: center; padding-left: 0; padding-right: 0; margin-right: 0; border-radius: 0; }
     .sidebar-logo {
       display: flex; align-items: center; gap: 12px;
       padding: 22px 18px 18px;
@@ -868,6 +873,9 @@
     <div id="main">
       <div id="topbar">
         <div style="display:flex;align-items:center;gap:14px;">
+          <button id="sidebar-toggle-btn" onclick="toggleSidebar()" class="btn btn-secondary btn-icon" title="Collapse Navigation" aria-label="Toggle Navigation">
+            <i class="fas fa-bars" id="sidebar-toggle-icon"></i>
+          </button>
           <h1 id="page-title">Dashboard</h1>
         </div>
         <!-- Global Search -->

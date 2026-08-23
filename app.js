@@ -372,6 +372,16 @@ function toggleDark() {
   if (icon) icon.className = isDark ? 'fas fa-sun' : 'fas fa-moon';
 }
 
+function toggleSidebar() {
+  const sidebar = document.getElementById('sidebar');
+  const main = document.getElementById('main');
+  if (!sidebar) return;
+  const collapsed = sidebar.classList.toggle('collapsed');
+  if (main) main.classList.toggle('collapsed', collapsed);
+  const btn = document.getElementById('sidebar-toggle-btn');
+  if (btn) btn.title = collapsed ? 'Expand Navigation' : 'Collapse Navigation';
+}
+
 // ─────────────────────────────────────────────
 // DASHBOARD
 // ─────────────────────────────────────────────
