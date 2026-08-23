@@ -43,6 +43,34 @@ function normalizeOrderStatus(status) {
   return 'Unpaid';
 }
 
+// An empty `<input type="date">` reads back as '' — never as null — so any
+// form field the user left blank arrives here as an empty string. Postgres
+// rejects '' for a date/timestamp column ("invalid input syntax for type
+// date"), and the atomic order RPCs make that worse: they build their SQL
+// with format('%L', value) off jsonb_each_text, so '' becomes a literal ''
+// in the INSERT rather than a bound null. Saving an order with no delivery
+// date therefore failed outright.
+//
+// Rather than patch each of the ~10 call sites (and re-break on the next
+// one added), every write that can carry a date goes through here first.
+// Only these exact columns are touched, so the text-typed payment_date
+// columns and anything else keep their current behaviour untouched.
+const _DATE_COLUMNS = new Set([
+  'pickup_date', 'delivery_date', 'credit_due_date', 'issue_date',
+  'created_at', 'driver_assigned_at', 'debug_edited_at',
+  'start_date', 'end_date', 'date', 'cleared_at', 'deleted_at'
+]);
+function nullEmptyDates(data) {
+  if (!data || typeof data !== 'object' || Array.isArray(data)) return data;
+  const out = { ...data };
+  for (const key of Object.keys(out)) {
+    if (_DATE_COLUMNS.has(key) && (out[key] === '' || out[key] === undefined)) {
+      out[key] = null;
+    }
+  }
+  return out;
+}
+
 const DB = {
   // ── Settings ──────────────────────────────
   async getSetting(key) {
@@ -194,22 +222,22 @@ const DB = {
     return (rows || []).map(r => { r.status = normalizeOrderStatus(r.status); return r; });
   },
   async addOrder(data) {
-    const rows = await _q(_sb.from('orders').insert({ ...data, created_at: new Date().toISOString() }).select());
+    const rows = await _q(_sb.from('orders').insert(nullEmptyDates({ ...data, created_at: new Date().toISOString() })).select());
     return rows[0].id;
   },
-  async updateOrder(id, data) { await _q(_sb.from('orders').update(data).eq('id', id)); },
+  async updateOrder(id, data) { await _q(_sb.from('orders').update(nullEmptyDates(data)).eq('id', id)); },
   // Atomic order+items create/update: order row and its line items are
   // written in one Postgres transaction (RPC), so a failed items insert
   // can never leave behind an order with zero items. See
   // supabase_atomic_order_rpc_migration.sql. Fails loudly on error —
   // no silent fallback — same reasoning as _generateSequentialId below.
   async createOrderWithItems(orderData, items) {
-    const { data, error } = await _sb.rpc('create_order_with_items', { p_order: orderData, p_items: items || [] });
+    const { data, error } = await _sb.rpc('create_order_with_items', { p_order: nullEmptyDates(orderData), p_items: items || [] });
     if (error) { console.error('create_order_with_items failed:', error); throw error; }
     return data;
   },
   async updateOrderWithItems(orderId, orderData, items) {
-    const { error } = await _sb.rpc('update_order_with_items', { p_order_id: orderId, p_order: orderData, p_items: items || [] });
+    const { error } = await _sb.rpc('update_order_with_items', { p_order_id: orderId, p_order: nullEmptyDates(orderData), p_items: items || [] });
     if (error) { console.error('update_order_with_items failed:', error); throw error; }
   },
   async deleteOrder(id) {
@@ -310,7 +338,7 @@ const DB = {
     if (error) { console.error('flag_order_items failed:', error); throw error; }
   },
   async createOrderWithItemsAndClearFlags(orderData, items, clears) {
-    const { data, error } = await _sb.rpc('create_order_with_items_and_clear_flags', { p_order: orderData, p_items: items || [], p_clears: clears || [] });
+    const { data, error } = await _sb.rpc('create_order_with_items_and_clear_flags', { p_order: nullEmptyDates(orderData), p_items: items || [], p_clears: clears || [] });
     if (error) { console.error('create_order_with_items_and_clear_flags failed:', error); throw error; }
     return data;
   },
@@ -338,10 +366,10 @@ const DB = {
   // ── Invoices ──────────────────────────────
   async getInvoices() { return _qAll(() => _sb.from('invoices').select('*').order('id', { ascending: false })); },
   async addInvoice(data) {
-    const rows = await _q(_sb.from('invoices').insert(data).select());
+    const rows = await _q(_sb.from('invoices').insert(nullEmptyDates(data)).select());
     return rows[0].id;
   },
-  async updateInvoice(id, data) { await _q(_sb.from('invoices').update(data).eq('id', id)); },
+  async updateInvoice(id, data) { await _q(_sb.from('invoices').update(nullEmptyDates(data)).eq('id', id)); },
   async getInvoice(id) {
     const rows = await _q(_sb.from('invoices').select('*').eq('id', id).limit(1));
     return rows[0] || null;
@@ -358,7 +386,7 @@ const DB = {
     // `date` may be caller-supplied (user-editable "paying date" from the
     // payment modals) — only default to now when none was given, never
     // overwrite a provided one.
-    const rows = await _q(_sb.from('payments').insert({ ...data, date: data.date || new Date().toISOString() }).select());
+    const rows = await _q(_sb.from('payments').insert(nullEmptyDates({ ...data, date: data.date || new Date().toISOString() })).select());
     return rows[0].id;
   },
   async getPaymentsByInvoice(invoiceId) {
@@ -366,6 +394,24 @@ const DB = {
   },
   async deletePaymentsForInvoice(invoiceId) {
     await _q(_sb.from('payments').delete().eq('invoice_id', invoiceId));
+  },
+  // Moves a settled invoice's payment history onto another invoice instead
+  // of destroying it. Used when a "Single Invoice" batch payment folds
+  // several standalone invoices into one consolidated invoice: the money
+  // was really received, so the payments (and the deductions below) have to
+  // survive the merge or every revenue figure that sums the payments table
+  // silently drops by whatever had already been collected.
+  async reassignPaymentsToInvoice(fromInvoiceId, toInvoiceId) {
+    await _q(_sb.from('payments').update({ invoice_id: toInvoiceId }).eq('invoice_id', fromInvoiceId));
+  },
+  // Same reasoning for the deduction ledger. deductions.invoice_id is
+  // ON DELETE CASCADE, so these rows would otherwise vanish the moment the
+  // old invoice row is removed. invoice_number is a denormalised copy shown
+  // in the Deductions register, so it moves to the surviving number too.
+  async reassignDeductionsToInvoice(fromInvoiceId, toInvoiceId, toInvoiceNumber) {
+    const patch = { invoice_id: toInvoiceId };
+    if (toInvoiceNumber) patch.invoice_number = toInvoiceNumber;
+    await _q(_sb.from('deductions').update(patch).eq('invoice_id', fromInvoiceId));
   },
 
   // ── Items Catalog ─────────────────────────
@@ -1099,7 +1145,7 @@ const DB = {
     };
 
     try {
-      await _q(_sb.from('trips').insert(record));
+      await _q(_sb.from('trips').insert(nullEmptyDates(record)));
     } catch(e) {}
 
     const trips = await DB.getTrips();
@@ -1109,7 +1155,7 @@ const DB = {
   },
   async updateTrip(id, data) {
     try {
-      await _q(_sb.from('trips').update(data).eq('id', id));
+      await _q(_sb.from('trips').update(nullEmptyDates(data)).eq('id', id));
     } catch(e) {}
     const trips = await DB.getTrips();
     const idx = trips.findIndex(t => t.id === id || t.trip_id === id);
