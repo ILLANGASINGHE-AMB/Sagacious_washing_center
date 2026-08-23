@@ -846,7 +846,13 @@ async function saveCreditBill() {
       discount_rate:            discRate,
       discount_amount:          discAmt,
       delivery_charge:          deliveryCharge,
-      subtotal_before_discount: itemsSubtotal+deliveryCharge
+      // Items subtotal ONLY — no delivery charge folded in.
+      // Financials.computeInvoiceFinancials reads this column as the
+      // pre-discount ITEMS total and then adds delivery_charge itself:
+      //   gross = (subtotal_before_discount - discount) + delivery + extra
+      // Including delivery here billed it twice on the printed credit bill
+      // (and let the discount rate eat into the delivery fee as well).
+      subtotal_before_discount: itemsSubtotal
     });
 
     clearItemsCache();
@@ -1902,7 +1908,12 @@ async function saveEditOrder(orderId,wasPickupOnly=false){
 
   await DB.updateOrderWithItems(orderId,{
     customer_id:     custId,
-    driver_id:       null,
+    // This modal has no driver field, so the edit must carry the existing
+    // assignment forward. Writing null here detached the order from its
+    // driver on every save — it dropped off that driver's "Assigned to Me"
+    // list, reappeared as unassigned to everyone, and silently zeroed the
+    // Driver Report, which aggregates on driver_id.
+    driver_id:       originalOrder ? (originalOrder.driver_id ?? null) : null,
     pickup_date:     pickup,
     delivery_date:   delivery,
     status,

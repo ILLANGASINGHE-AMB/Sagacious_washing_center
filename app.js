@@ -4475,6 +4475,15 @@ async function processBatchPayment(method = 'Cash', notes = 'Paid fully via Batc
       const primaryOrderId = computed[0].oId;
       const primaryOrder = computed[0].order;
 
+      // Any order in this batch may already carry a deduction from an
+      // earlier Pay Now settlement. Those deduction rows get moved onto the
+      // consolidated invoice below (rather than being cascade-deleted with
+      // their old invoice), so its deduction_amount has to carry them too —
+      // otherwise the invoice's own recomputed balance won't come back to
+      // zero. See the reconciliation note by the fold-in loop.
+      const carriedDeduction = computed.reduce(
+        (s, c) => s + (parseFloat(c.existingInv?.deduction_amount) || 0), 0);
+
       const newInvId = await DB.addInvoice({
         order_id:         primaryOrderId,
         invoice_number:   singleInvoiceNumber,
@@ -4485,7 +4494,7 @@ async function processBatchPayment(method = 'Cash', notes = 'Paid fully via Batc
         advance_payment:  singleInvoiceAdvance,
         balance:          0,
         paid_status:      'Paid',
-        deduction_amount: deductionAmount,
+        deduction_amount: deductionAmount + carriedDeduction,
         payment_date:     paymentDateISO,
         batch_order_ids:      computed.map(c => c.oId).join(','),
         batch_invoice_details: JSON.stringify(singleInvoiceDetails)
@@ -4515,11 +4524,31 @@ async function processBatchPayment(method = 'Cash', notes = 'Paid fully via Batc
       }
 
       // Consolidated invoice is safely written — now fold in each order:
-      // drop its old standalone invoice (can't be reused once merged) and
+      // retire its old standalone invoice (can't be reused once merged) and
       // mark it Paid.
+      //
+      // The old invoice ROW goes, but its money does not. Payments and
+      // deductions are re-pointed at the consolidated invoice first;
+      // deleting them (as this used to) permanently erased cash that had
+      // genuinely been collected through Pay Now, so every report summing
+      // the payments table — including "Monthly Cash Collected" for months
+      // already closed — retroactively dropped by that amount. Deductions
+      // would have gone the same way via the ON DELETE CASCADE on
+      // deductions.invoice_id.
+      //
+      // Carrying both across is also what makes the consolidated invoice
+      // internally consistent. With P = prior payments, D = prior
+      // deductions and A = advances:
+      //   netPayable = Σ orderTotal − (newDeduction + D)
+      //   totalPaid  = Σ A + Σ P + (batchDue − newDeduction)
+      // and since each orderBalance already equals
+      // orderTotal − A − P − D, the two sides cancel and the recomputed
+      // balance lands on exactly 0 — matching the balance:0 / Paid we
+      // write above. Deleting the history left it short by Σ P.
       for (const c of computed) {
         if (c.existingInv) {
-          await DB.deletePaymentsForInvoice(c.existingInv.id);
+          await DB.reassignPaymentsToInvoice(c.existingInv.id, newInvId);
+          await DB.reassignDeductionsToInvoice(c.existingInv.id, newInvId, singleInvoiceNumber);
           await DB.deleteInvoice(c.existingInv.id);
         }
         await DB.updateOrder(c.oId, { status: 'Paid', payment_date: paymentDateISO });
