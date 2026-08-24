@@ -33,7 +33,7 @@ let _invCache = { invoices: [], oMap: {}, cMap: {}, filteredInvoices: [], invoic
 // saved so I can refer them easily."
 async function _getPendingItemIdsForOrder(orderId) {
   let flags = [];
-  try { flags = await DB.getFlagsBySourceOrder(orderId); } catch (e) { return new Set(); }
+  try { flags = await _billDB.getFlagsBySourceOrder(orderId); } catch (e) { return new Set(); }
   return new Set(
     flags.filter(f => f.flag_type === 'pending' && f.status === 'pending' && f.order_item_id != null)
          .map(f => String(f.order_item_id))
@@ -45,8 +45,8 @@ async function _buildPendingReturnSummaryHtml(order) {
   let ownFlags = [], clearedFlags = [];
   try {
     [ownFlags, clearedFlags] = await Promise.all([
-      DB.getFlagsBySourceOrder(order.id),
-      DB.getFlagsClearedByOrder(order.id)
+      _billDB.getFlagsBySourceOrder(order.id),
+      _billDB.getFlagsClearedByOrder(order.id)
     ]);
   } catch (e) { return ''; }
 
@@ -506,9 +506,9 @@ function getSortIcon(field) {
 // then finds nothing for those other orders; this fallback finds the shared
 // invoice by scanning for the order id inside `batch_order_ids`.
 async function _findInvoiceForOrder(orderId) {
-  const direct = await DB.getInvoiceByOrder(orderId);
+  const direct = await _billDB.getInvoiceByOrder(orderId);
   if (direct) return direct;
-  const invoices = await DB.getInvoices();
+  const invoices = await _billDB.getInvoices();
   return invoices.find(i => i.batch_order_ids &&
     i.batch_order_ids.split(',').map(Number).includes(Number(orderId))) || null;
 }
@@ -521,12 +521,15 @@ async function _findInvoiceForOrder(orderId) {
 async function _resolveInvoiceItemGroups(inv, fallbackOrder) {
   if (inv.batch_order_ids) {
     const orderIds = inv.batch_order_ids.split(',').map(Number);
-    const ordersList = await Promise.all(orderIds.map(oid => DB.getOrder(oid)));
+    const ordersList = await Promise.all(orderIds.map(oid => _billDB.getOrder(oid)));
     const activeOrders = ordersList.filter(Boolean);
+    // Item lists are fetched in parallel; the groups are still assembled in
+    // activeOrders order so the bill's per-order sections keep their sequence.
+    const perOrderItems = await Promise.all(activeOrders.map(o => _billDB.getOrderItems(o.id)));
     const items = [];
     const groups = [];
-    for (const o of activeOrders) {
-      const orderItems = await DB.getOrderItems(o.id);
+    activeOrders.forEach((o, idx) => {
+      const orderItems = perOrderItems[idx];
       orderItems.forEach(item => { item.order_batch_id = o.batch_id; });
       items.push(...orderItems);
       groups.push({
@@ -535,10 +538,11 @@ async function _resolveInvoiceItemGroups(inv, fallbackOrder) {
         qtyTotal: orderItems.reduce((s, i) => s + (parseFloat(i.quantity) || 0), 0),
         subtotalTotal: orderItems.reduce((s, i) => s + (parseFloat(i.subtotal) || 0), 0)
       });
-    }
+    });
     return { items, groups, orders: activeOrders };
   }
-  const items = fallbackOrder ? await DB.getOrderItems(fallbackOrder.id) : (inv.order_id ? await DB.getOrderItems(inv.order_id) : []);
+  const itemsOrderId = fallbackOrder ? fallbackOrder.id : inv.order_id;
+  const items = itemsOrderId ? await _billDB.getOrderItems(itemsOrderId) : [];
   return { items, groups: [], orders: fallbackOrder ? [fallbackOrder] : [] };
 }
 
@@ -826,28 +830,121 @@ async function _getBillSettings(useCache = false) {
   if (useCache) _billSettingsCache = resolved;
   return resolved;
 }
-function clearBillSettingsCache() { _billSettingsCache = null; }
+
+// ── Batch bill lookup memo ────────────────────────────────────────────
+// Building one bill costs a chain of round trips (its invoice, its order, its
+// customer, its items, its pending/returned flags). Printing N bills used to
+// pay that chain N times over, in series — which is what made Batch Print
+// slow. Between beginBillBatch()/endBillBatch():
+//
+//   • primeBillBatch() fetches invoices, items and flags for the WHOLE
+//     selection in one bulk query each, and seeds them per order id;
+//   • anything not pre-seeded is memoised by id on first use, so a row is
+//     fetched at most once per run however many bills reference it;
+//   • which in turn makes it safe to build bills in parallel — concurrency
+//     no longer multiplies the queries.
+//
+// Outside a batch every wrapper is a straight pass-through to DB, so
+// single-bill printing issues exactly the queries it always did.
+let _billBatch = null;   // Map<string, Promise> | null
+
+function beginBillBatch() { _billBatch = new Map(); }
+function endBillBatch() { _billBatch = null; _billSettingsCache = null; }
+
+function _memo(key, fetch) {
+  if (!_billBatch) return fetch();
+  if (!_billBatch.has(key)) _billBatch.set(key, fetch());
+  return _billBatch.get(key);
+}
+function _seed(key, value) { if (_billBatch) _billBatch.set(key, Promise.resolve(value)); }
+
+// Replaces the per-bill query storm with four bulk reads. `orders` is the
+// caller's already-loaded order list (the Orders tab has one), so those rows
+// cost nothing extra. Failures here are non-fatal: an unseeded key simply
+// falls back to its per-order query.
+async function primeBillBatch(orderIds, orders) {
+  if (!_billBatch) return;
+  (orders || []).forEach(o => { if (o && o.id != null) _seed('order:' + o.id, o); });
+  if (!orderIds || !orderIds.length) return;
+
+  const group = (rows, key) => {
+    const map = new Map();
+    (rows || []).forEach(r => {
+      const k = r[key];
+      if (k == null) return;
+      if (!map.has(Number(k))) map.set(Number(k), []);
+      map.get(Number(k)).push(r);
+    });
+    return map;
+  };
+
+  try {
+    const [invoices, items, flagsSrc, flagsClr] = await Promise.all([
+      DB.getInvoicesByOrders(orderIds),
+      DB.getOrderItemsByOrders(orderIds),
+      DB.getFlagsBySourceOrders(orderIds),
+      DB.getFlagsClearedByOrders(orderIds),
+      _getBillSettings(true)   // warms the shared company-header cache too
+    ]);
+    const invByOrder = group(invoices, 'order_id');
+    const itemsByOrder = group(items, 'order_id');
+    const srcByOrder = group(flagsSrc, 'order_id');
+    const clrByOrder = group(flagsClr, 'cleared_in_order_id');
+
+    orderIds.forEach(id => {
+      const n = Number(id);
+      // Seeding the empty cases matters as much as the populated ones —
+      // that's what stops a bill with no items or no flags from firing its
+      // own query to rediscover that.
+      _seed('invByOrder:' + id, (invByOrder.get(n) || [])[0] || null);
+      _seed('items:' + id, itemsByOrder.get(n) || []);
+      _seed('flagSrc:' + id, srcByOrder.get(n) || []);
+      _seed('flagClr:' + id, clrByOrder.get(n) || []);
+    });
+  } catch (err) {
+    // Nothing seeded → every lookup just takes its normal per-order path.
+    console.warn('primeBillBatch: bulk prefetch failed, falling back to per-bill queries', err);
+  }
+}
+
+const _billDB = {
+  getOrder:                id => _memo('order:' + id,      () => DB.getOrder(id)),
+  getCustomer:             id => _memo('cust:' + id,       () => DB.getCustomer(id)),
+  getOrderItems:           id => _memo('items:' + id,      () => DB.getOrderItems(id)),
+  getInvoiceByOrder:       id => _memo('invByOrder:' + id, () => DB.getInvoiceByOrder(id)),
+  getPaymentsByInvoice:    id => _memo('pay:' + id,        () => DB.getPaymentsByInvoice(id)),
+  getFlagsBySourceOrder:   id => _memo('flagSrc:' + id,    () => DB.getFlagsBySourceOrder(id)),
+  getFlagsClearedByOrder:  id => _memo('flagClr:' + id,    () => DB.getFlagsClearedByOrder(id)),
+  // The full-table scan behind the batch_order_ids fallback below. Only
+  // reached when an order has no invoice of its own, and memoised so a run
+  // pays for it at most once instead of once per bill.
+  getInvoices:             () => _memo('invoices',         () => DB.getInvoices())
+};
 
 // ── Bill body builder ─────────────────────────────────────────────────
 // Returns ONLY the bill <div> (no <html>/<head>/<body> wrapper) so the same
 // markup can be dropped into a single-invoice print window (printInvoice)
 // or repeated, one per page, inside a batch print window
-// (runBatchPrint in orders.js). Anything that changes here changes
+// (batchPrintSelectedOrders in orders.js). Anything that changes here changes
 // every bill the app prints — that is the point.
 // `includePayments` mirrors the old printInvoice behaviour: a caller that
 // hands over an already-resolved invoice OBJECT (Orders tab → Print) prints
 // the bill without re-listing individual payment rows, while a caller that
 // passes an invoice id (Invoices tab) gets them.
 async function buildInvoiceBillHtml(inv, { includePayments = true, cacheSettings = false } = {}) {
-  const order = await DB.getOrder(inv.order_id);
-  const customerRaw = (order && order.customer_id) ? await DB.getCustomer(order.customer_id) : null;
+  const order = await _billDB.getOrder(inv.order_id);
+  // Everything below depends only on `order`, not on each other, so the
+  // customer / payments / item lookups go out together rather than in series.
+  // For a "Single Invoice" batch, _resolveInvoiceItemGroups pulls items from
+  // every order the invoice covers, grouped per order (batchItemGroups),
+  // instead of just `inv.order_id`'s items.
+  const [customerRaw, payments, itemGroups] = await Promise.all([
+    (order && order.customer_id) ? _billDB.getCustomer(order.customer_id) : Promise.resolve(null),
+    (inv.id && includePayments) ? _billDB.getPaymentsByInvoice(inv.id) : Promise.resolve([]),
+    _resolveInvoiceItemGroups(inv, order)
+  ]);
   const customer = customerRaw || (order ? { hotel_name: getOrderCustomerName(order) } : null);
-  const payments = (inv.id && includePayments) ? await DB.getPaymentsByInvoice(inv.id) : [];
-  
-  // For a "Single Invoice" batch this pulls items from every order the
-  // invoice covers, grouped per order (batchItemGroups), instead of just
-  // `inv.order_id`'s items.
-  const { items, groups: batchItemGroups, orders: activeOrders } = await _resolveInvoiceItemGroups(inv, order);
+  const { items, groups: batchItemGroups, orders: activeOrders } = itemGroups;
 
   let orderInfoHTML = '';
   if (inv.batch_order_ids) {
@@ -894,10 +991,16 @@ async function buildInvoiceBillHtml(inv, { includePayments = true, cacheSettings
     const uniqueOrderIds = [...new Set(items.map(i => i.order_id).filter(Boolean))];
     const sets = await Promise.all(uniqueOrderIds.map(oid => _getPendingItemIdsForOrder(oid)));
     sets.forEach(s => s.forEach(v => pendingItemIds.add(v)));
-  } else if (order) {
-    pendingItemIds = await _getPendingItemIdsForOrder(order.id);
   }
-  const pendingReturnSummaryHtml = (!inv.batch_order_ids && order) ? await _buildPendingReturnSummaryHtml(order) : '';
+  // The single-order path needs both of these and neither depends on the
+  // other; the memo also collapses their shared getFlagsBySourceOrder call.
+  let pendingReturnSummaryHtml = '';
+  if (!inv.batch_order_ids && order) {
+    [pendingItemIds, pendingReturnSummaryHtml] = await Promise.all([
+      _getPendingItemIdsForOrder(order.id),
+      _buildPendingReturnSummaryHtml(order)
+    ]);
+  }
 
   const _itemRowHTMLPrint = (i, idx) => `
     <tr style="${idx % 2 === 1 ? 'background:#fafafa;' : ''}">

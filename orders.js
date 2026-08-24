@@ -1871,7 +1871,7 @@ async function _resolveInvoiceForOrderPrint(order) {
   const existing = await _findInvoiceForOrder(order.id);
   if (existing) return existing;
 
-  const orderItems = await DB.getOrderItems(order.id);
+  const orderItems = await _billDB.getOrderItems(order.id);
   const itemsSubtotal = orderItems.reduce((s, i) => s + (i.subtotal || 0), 0);
 
   return {
@@ -1903,150 +1903,124 @@ async function printInvoiceByOrder(orderId) {
 
 // ─────────────────────────────────────────────
 // BATCH PRINT — tick orders in the Orders table, then print each ticked
-// order as its OWN bill. Two modes, because "separate PDFs" means two
-// different things depending on how the user saves them:
+// order as its OWN separate bill.
 //
-//   combined — one print window holding every bill, each forced onto its
-//              own page. One dialog, one "Save as PDF" → a single file
-//              whose pages are the individual bills. Popup-blocker safe.
-//   separate — one print window (and so one Save-as-PDF dialog) PER order,
-//              giving a genuinely separate PDF file per bill. Needs
-//              pop-ups allowed, so the count is capped and confirmed.
+// One pop-up window opens, holding every selected bill, and it fires one
+// print dialog PER bill — so each bill is saved as its own PDF file (named
+// after its order number) without needing one pop-up per order, which is
+// what pop-up blockers choke on and what made this slow. The window is
+// opened synchronously inside the user's click, before any awaiting, so the
+// blocker sees it as user-initiated.
 //
-// Both reuse buildInvoiceBillHtml (invoice.js), so a batch-printed bill is
+// Bills reuse buildInvoiceBillHtml (invoice.js), so a batch-printed bill is
 // byte-for-byte the same document as the row's own Print button produces.
 // ─────────────────────────────────────────────
-const BATCH_PRINT_SEPARATE_LIMIT = 20;
 
-function batchPrintSelectedOrders() {
-  const ids = Array.from(ordersSelectedIds);
+// Selection is a Set, so its natural order is whatever sequence the user
+// happened to tick boxes in. Bills print in the order the rows appear in the
+// table instead, which is what the user is actually looking at; anything
+// selected but no longer visible (filtered out since) keeps its tick and goes
+// on the end rather than being silently dropped.
+function _batchPrintOrderIds() {
+  const onScreen = Array.from(document.querySelectorAll('.orders-row-check'))
+    .map(cb => parseInt(cb.dataset.orderId, 10))
+    .filter(id => ordersSelectedIds.has(id));
+  const seen = new Set(onScreen);
+  return onScreen.concat(Array.from(ordersSelectedIds).filter(id => !seen.has(id)));
+}
+
+async function batchPrintSelectedOrders() {
+  const ids = _batchPrintOrderIds();
   if (!ids.length) return toast('Select at least one order to print', 'error');
 
-  createModal('batch-print-modal', `Batch Print ${ids.length} Bill(s)`, `
-    <div style="font-size:0.9em;color:var(--text-muted);margin-bottom:14px;">
-      Each selected order prints as its own separate bill. Choose how you want to save them.
-    </div>
-    <div class="form-group">
-      <label style="display:flex;gap:10px;align-items:flex-start;padding:12px;border:1px solid var(--border);border-radius:8px;cursor:pointer;margin-bottom:10px;">
-        <input type="radio" name="bp-mode" value="combined" checked style="margin-top:3px;"/>
-        <span>
-          <strong>One PDF, one bill per page</strong>
-          <div style="font-size:0.82em;color:var(--text-muted);margin-top:3px;">
-            A single print dialog. Save as PDF and you get one file with ${ids.length} page-separated bill(s).
-          </div>
-        </span>
-      </label>
-      <label style="display:flex;gap:10px;align-items:flex-start;padding:12px;border:1px solid var(--border);border-radius:8px;cursor:pointer;">
-        <input type="radio" name="bp-mode" value="separate" style="margin-top:3px;"/>
-        <span>
-          <strong>Separate PDF file per bill</strong>
-          <div style="font-size:0.82em;color:var(--text-muted);margin-top:3px;">
-            Opens ${ids.length} print window(s) — one Save-as-PDF dialog each. Pop-ups must be allowed for this site.
-          </div>
-        </span>
-      </label>
-    </div>
-    <div style="display:flex;gap:10px;justify-content:flex-end;margin-top:16px;">
-      <button class="btn btn-secondary" onclick="hideModal('batch-print-modal')">Cancel</button>
-      <button class="btn btn-primary" id="bp-submit-btn"><i class="fas fa-print"></i> Print</button>
-    </div>`);
-  showModal('batch-print-modal');
-  document.getElementById('bp-submit-btn').onclick = () => {
-    const mode = document.querySelector('input[name="bp-mode"]:checked')?.value || 'combined';
-    hideModal('batch-print-modal');
-    runBatchPrint(ids, mode);
-  };
-}
+  // Opened now, empty, for the reason above — populated once the bills are built.
+  const win = window.open('', '_blank');
+  if (!win) return toast('Please allow pop-ups for this site to batch print', 'warning');
+  win.document.write('<title>Preparing bills…</title><body style="font-family:sans-serif;padding:40px;color:#64748b;">Preparing bills…</body>');
+  win.document.close();
 
-// Builds every selected order's bill up front. Orders that fail to build
-// are collected rather than aborting the run — one bad order shouldn't cost
-// the user the other nineteen.
-async function _buildBatchBills(orderIds) {
-  const bills = [], failed = [];
-  // Fetch the order list once, and let the first bill's company-header
-  // lookup be reused by the rest (cacheSettings) — otherwise a 20-bill run
-  // repeats the same six settings queries 20 times over.
-  clearBillSettingsCache();
-  const allOrders = await DB.getOrders();
-  const orderMap = Object.fromEntries(allOrders.map(o => [o.id, o]));
-
-  for (let i = 0; i < orderIds.length; i++) {
-    const id = orderIds[i];
-    const order = orderMap[id];
-    const subEl = document.getElementById('processing-sublabel');
-    if (subEl) subEl.textContent = `Building bill ${i + 1} of ${orderIds.length}...`;
-    if (!order) { failed.push(`#${id} (not found)`); continue; }
-    try {
-      const inv = await _resolveInvoiceForOrderPrint(order);
-      // includePayments:false keeps a batch-printed bill identical to the
-      // one the row's Print button produces for the same order.
-      const { html } = await buildInvoiceBillHtml(inv, { includePayments: false, cacheSettings: true });
-      bills.push({ orderId: id, batchId: order.batch_id || `#${id}`, html });
-    } catch (err) {
-      console.error('batch print: failed to build bill for order', id, err);
-      failed.push(order.batch_id || `#${id}`);
-    }
-  }
-  clearBillSettingsCache();
-  return { bills, failed };
-}
-
-async function runBatchPrint(orderIds, mode) {
-  if (mode === 'separate' && orderIds.length > BATCH_PRINT_SEPARATE_LIMIT) {
-    return toast(`Separate-file printing is capped at ${BATCH_PRINT_SEPARATE_LIMIT} orders at a time (${orderIds.length} selected). Deselect some, or use the one-PDF option.`, 'error');
-  }
-
-  // Pop-up blockers only trust window.open() calls made in the same task as
-  // the user's click, and building the bills is async — so for separate-file
-  // mode every window is opened NOW, blank, and written into once its bill
-  // is ready. Opening them afterwards would get all but the first blocked.
-  let preOpened = null;
-  if (mode === 'separate') {
-    preOpened = orderIds.map(() => window.open('', '_blank'));
-    if (preOpened.some(w => !w)) {
-      preOpened.forEach(w => { try { w && w.close(); } catch (e) {} });
-      return toast('Please allow pop-ups for this site to print separate PDF files', 'warning');
-    }
-    preOpened.forEach(w => {
-      w.document.write('<title>Preparing bill…</title><body style="font-family:sans-serif;padding:40px;color:#64748b;">Preparing bill…</body>');
-      w.document.close();
-    });
-  }
-
-  showProcessingOverlay('Batch Printing', `Preparing ${orderIds.length} bill(s)...`);
+  showProcessingOverlay('Batch Printing', `Preparing ${ids.length} bill(s)...`);
   let bills, failed;
   try {
-    ({ bills, failed } = await _buildBatchBills(orderIds));
+    ({ bills, failed } = await _buildBatchBills(ids));
   } catch (err) {
     console.error('batch print failed:', err);
-    preOpened?.forEach(w => { try { w.close(); } catch (e) {} });
+    try { win.close(); } catch (e) {}
     return toast('Batch print failed: ' + (err.message || err), 'error');
   } finally {
     hideProcessingOverlay();
   }
 
   if (!bills.length) {
-    preOpened?.forEach(w => { try { w.close(); } catch (e) {} });
+    try { win.close(); } catch (e) {}
     return toast('No bills could be generated for the selected orders', 'error');
   }
 
-  if (mode === 'separate') {
-    // One window per successfully built bill; any window left over (an order
-    // whose bill couldn't be built) is closed rather than left hanging.
-    bills.forEach((b, i) => Print.openPrintWindow(b.html, `Order_Print_${b.batchId}`, preOpened[i]));
-    preOpened.slice(bills.length).forEach(w => { try { w.close(); } catch (e) {} });
-  } else {
-    // page-break-after on every bill but the last: N bills → exactly N
-    // pages' worth of breaks, with no trailing blank page.
-    const combined = bills.map((b, idx) => `
-      <div style="${idx < bills.length - 1 ? 'page-break-after:always;break-after:page;' : ''}">
-        ${b.html}
-      </div>`).join('');
-    const win = Print.openPrintWindow(combined, `Batch_Print_${bills.length}_Bills`);
-    if (!win) return;
-  }
+  Print.openSequentialPrintWindow(
+    bills.map(b => ({ title: `Order_Print_${b.batchId}`, html: b.html })),
+    `Batch Print — ${bills.length} Bill(s)`,
+    win
+  );
 
-  const msg = `Printing ${bills.length} bill(s)` + (failed.length ? ` — skipped ${failed.length} (${failed.join(', ')})` : '');
+  const msg = `Printing ${bills.length} bill(s) separately` + (failed.length ? ` — skipped ${failed.length} (${failed.join(', ')})` : '');
   toast(msg, failed.length ? 'warning' : 'success');
 }
+
+// How many bills are built at once. The lookups behind a bill are memoised
+// per run (beginBillBatch in invoice.js), so this is about not opening 50
+// simultaneous connections, not about avoiding duplicate work.
+const BATCH_PRINT_CONCURRENCY = 6;
+
+// Builds every selected order's bill. Orders that fail to build are collected
+// rather than aborting the run — one bad order shouldn't cost the user the
+// other nineteen. Results stay in the caller's selection order regardless of
+// which build finishes first.
+async function _buildBatchBills(orderIds) {
+  const bills = new Array(orderIds.length).fill(null);
+  const failed = [];
+
+  // One memo for the whole run: each order, customer, invoice list, item list
+  // and flag set is fetched once no matter how many bills reference it.
+  beginBillBatch();
+  try {
+    const allOrders = await DB.getOrders();
+    const orderMap = Object.fromEntries(allOrders.map(o => [o.id, o]));
+    // Four bulk reads for the whole selection before any bill is built, so
+    // the builds below mostly hit memory instead of the network.
+    await primeBillBatch(orderIds.filter(id => orderMap[id]), allOrders);
+
+    let done = 0;
+    const subEl = document.getElementById('processing-sublabel');
+    const tick = () => { if (subEl) subEl.textContent = `Building bill ${++done} of ${orderIds.length}...`; };
+
+    let cursor = 0;
+    const worker = async () => {
+      while (cursor < orderIds.length) {
+        const idx = cursor++;
+        const id = orderIds[idx];
+        const order = orderMap[id];
+        if (!order) { failed.push(`#${id} (not found)`); tick(); continue; }
+        try {
+          const inv = await _resolveInvoiceForOrderPrint(order);
+          // includePayments:false keeps a batch-printed bill identical to the
+          // one the row's Print button produces for the same order.
+          const { html } = await buildInvoiceBillHtml(inv, { includePayments: false, cacheSettings: true });
+          bills[idx] = { orderId: id, batchId: order.batch_id || `#${id}`, html };
+        } catch (err) {
+          console.error('batch print: failed to build bill for order', id, err);
+          failed.push(order.batch_id || `#${id}`);
+        }
+        tick();
+      }
+    };
+    await Promise.all(
+      Array.from({ length: Math.min(BATCH_PRINT_CONCURRENCY, orderIds.length) }, worker)
+    );
+  } finally {
+    endBillBatch();
+  }
+
+  return { bills: bills.filter(Boolean), failed };
+}
+
 

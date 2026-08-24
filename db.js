@@ -309,6 +309,14 @@ const DB = {
   // ── Order Items ───────────────────────────
   async getOrderItems(orderId) { return _q(_sb.from('order_items').select('*').eq('order_id', orderId).order('id', { ascending: true })); },
   async getAllOrderItems() { return _qAll(() => _sb.from('order_items').select('*').order('id', { ascending: true })); },
+  // Bulk variants used when several orders are processed in one go (Batch
+  // Print). One `.in()` query instead of one round trip per order — same rows,
+  // same ordering, so callers can group by order_id and get exactly what the
+  // per-order fetch would have returned.
+  async getOrderItemsByOrders(orderIds) {
+    if (!orderIds || !orderIds.length) return [];
+    return _qAll(() => _sb.from('order_items').select('*').in('order_id', orderIds).order('id', { ascending: true }));
+  },
   async addOrderItem(data) {
     const rows = await _q(_sb.from('order_items').insert(data).select());
     return rows[0].id;
@@ -341,6 +349,14 @@ const DB = {
   async getFlagsClearedByOrder(orderId) {
     return _q(_sb.from('order_item_flags').select('*').eq('cleared_in_order_id', orderId).order('created_at', { ascending: true }));
   },
+  async getFlagsBySourceOrders(orderIds) {
+    if (!orderIds || !orderIds.length) return [];
+    return _qAll(() => _sb.from('order_item_flags').select('*').in('order_id', orderIds).order('created_at', { ascending: true }));
+  },
+  async getFlagsClearedByOrders(orderIds) {
+    if (!orderIds || !orderIds.length) return [];
+    return _qAll(() => _sb.from('order_item_flags').select('*').in('cleared_in_order_id', orderIds).order('created_at', { ascending: true }));
+  },
   async getAllFlags() {
     return _qAll(() => _sb.from('order_item_flags').select('*').order('created_at', { ascending: false }).order('id', { ascending: false }));
   },
@@ -367,6 +383,13 @@ const DB = {
   async getInvoiceByOrder(orderId) {
     const rows = await _q(_sb.from('invoices').select('*').eq('order_id', orderId).limit(1));
     return rows[0] || null;
+  },
+  // Bulk sibling of getInvoiceByOrder — one indexed query for a whole batch
+  // instead of one per order. Ordered by id so a duplicate order_id resolves
+  // to the most recent invoice, deterministically.
+  async getInvoicesByOrders(orderIds) {
+    if (!orderIds || !orderIds.length) return [];
+    return _qAll(() => _sb.from('invoices').select('*').in('order_id', orderIds).order('id', { ascending: false }));
   },
   async deleteInvoice(id) { await _q(_sb.from('invoices').delete().eq('id', id)); },
 
