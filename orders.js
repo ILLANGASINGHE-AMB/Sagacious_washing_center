@@ -1905,12 +1905,11 @@ async function printInvoiceByOrder(orderId) {
 // BATCH PRINT — tick orders in the Orders table, then print each ticked
 // order as its OWN separate bill.
 //
-// One pop-up window opens, holding every selected bill, and it fires one
-// print dialog PER bill — so each bill is saved as its own PDF file (named
-// after its order number) without needing one pop-up per order, which is
-// what pop-up blockers choke on and what made this slow. The window is
-// opened synchronously inside the user's click, before any awaiting, so the
-// blocker sees it as user-initiated.
+// One pop-up window opens holding every selected bill, and fires ONE print
+// dialog for the lot — each bill forced onto its own page, so the dialog's
+// preview scrolls through all of them and Save-as-PDF gives one file with one
+// bill per page. The window is opened synchronously inside the user's click,
+// before any awaiting, so the pop-up blocker sees it as user-initiated.
 //
 // Bills reuse buildInvoiceBillHtml (invoice.js), so a batch-printed bill is
 // byte-for-byte the same document as the row's own Print button produces.
@@ -1956,13 +1955,13 @@ async function batchPrintSelectedOrders() {
     return toast('No bills could be generated for the selected orders', 'error');
   }
 
-  Print.openSequentialPrintWindow(
-    bills.map(b => ({ title: `Order_Print_${b.batchId}`, html: b.html })),
-    `Batch Print — ${bills.length} Bill(s)`,
+  Print.openBatchPrintWindow(
+    bills.map(b => ({ title: b.batchId, html: b.html })),
+    `Batch_Print_${bills.length}_Bills`,
     win
   );
 
-  const msg = `Printing ${bills.length} bill(s) separately` + (failed.length ? ` — skipped ${failed.length} (${failed.join(', ')})` : '');
+  const msg = `Printing ${bills.length} bill(s)` + (failed.length ? ` — skipped ${failed.length} (${failed.join(', ')})` : '');
   toast(msg, failed.length ? 'warning' : 'success');
 }
 

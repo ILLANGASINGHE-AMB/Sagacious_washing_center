@@ -51,24 +51,21 @@ ${_printHead(documentTitle)}
   },
 
   /**
-   * Opens ONE popup window holding several documents and prints them ONE AT A
-   * TIME — a separate print dialog (and so a separate saved PDF file) per
-   * document, without needing one pop-up window each.
-   *
-   * Only the bill currently being printed is visible to the print renderer
-   * (`.batch-doc.printing`), so each dialog sees exactly one bill. The chain is
-   * driven by `afterprint`, which fires when the dialog is dismissed whether the
-   * user saved or cancelled; browsers that don't fire it leave the on-screen
-   * "Print next" button as the manual fallback, which is also how a user
-   * re-prints one they cancelled by mistake.
+   * Opens ONE popup window holding several documents and prints them in ONE
+   * print dialog — each document forced onto its own page, so the dialog's
+   * preview pages through every bill and "Save as PDF" produces a single file
+   * with one bill per page.
    *
    * @param {{title: string, html: string}[]} docs - one entry per bill, in print order
-   * @param {string} windowTitle - title shown before the first bill starts printing
+   * @param {string} windowTitle - document title, i.e. the offered PDF filename
    * @param {Window} [existingWin] - window pre-opened inside the user's click
    */
-  openSequentialPrintWindow(docs, windowTitle = 'Batch Print', existingWin = null) {
-    const titles = JSON.stringify(docs.map(d => d.title));
-    const docsHTML = docs.map((d, i) => `<div class="batch-doc" id="batch-doc-${i}">${d.html}</div>`).join('');
+  openBatchPrintWindow(docs, windowTitle = 'Batch Print', existingWin = null) {
+    const docsHTML = docs.map((d, i) => `
+      <div class="batch-doc">
+        <div class="batch-doc-label no-print">Bill ${i + 1} of ${docs.length} — ${d.title}</div>
+        ${d.html}
+      </div>`).join('');
 
     const fullHTML = `<!DOCTYPE html>
 <html>
@@ -78,88 +75,31 @@ ${_printHead(windowTitle)}
     .batch-bar { position: sticky; top: 0; z-index: 10; display: flex; align-items: center; gap: 14px;
       padding: 12px 18px; background: #0f172a; color: #fff; font-size: 0.9rem; flex-wrap: wrap; }
     .batch-bar strong { font-weight: 600; }
+    .batch-bar .batch-status { flex: 1; min-width: 180px; color: #cbd5e1; }
     .batch-bar button { font: inherit; font-weight: 600; padding: 7px 14px; border: 0; border-radius: 7px; cursor: pointer; }
     .batch-bar .primary { background: #10b981; color: #fff; }
     .batch-bar .ghost { background: rgba(255,255,255,0.14); color: #fff; }
-    .batch-bar button[disabled] { opacity: 0.45; cursor: default; }
-    .batch-status { flex: 1; min-width: 180px; color: #cbd5e1; }
-    .batch-doc { border-bottom: 1px dashed #cbd5e1; padding-bottom: 24px; margin-bottom: 24px; }
-    .batch-doc:last-child { border-bottom: 0; }
+    .batch-doc-label { font-size: 0.78rem; font-weight: 700; letter-spacing: 0.04em; text-transform: uppercase;
+      color: #94a3b8; padding: 18px 4px 8px; }
     @media print {
-      /* One dialog sees exactly one bill. */
-      .batch-doc { display: none; border: 0; padding: 0; margin: 0; }
-      .batch-doc.printing { display: block; }
+      /* Every bill starts a fresh page; :not(:last-child) keeps the run from
+         ending on a trailing blank one. */
+      .batch-doc:not(:last-child) { page-break-after: always; break-after: page; }
     }
   </style>
 </head>
 <body>
   <div class="batch-bar no-print">
-    <strong id="batch-heading">Batch Print</strong>
-    <span class="batch-status" id="batch-status">Preparing…</span>
-    <button class="primary" id="batch-next" disabled>Print next</button>
+    <strong>Batch Print — ${docs.length} bill${docs.length === 1 ? '' : 's'}</strong>
+    <span class="batch-status">All ${docs.length} bill${docs.length === 1 ? '' : 's'} are in one print dialog, one per page — scroll the preview to see them all.</span>
+    <button class="primary" id="batch-print">Print again</button>
     <button class="ghost" id="batch-close">Close</button>
   </div>
   ${docsHTML}
   <script>
-    (function () {
-      var titles = ${titles};
-      var total = titles.length;
-      var next = 0;          // index of the bill the next dialog will print
-      var busy = false;      // guards against afterprint firing twice for one dialog
-      var auto = true;       // chain automatically until the user cancels out
-
-      var statusEl = document.getElementById('batch-status');
-      var nextBtn = document.getElementById('batch-next');
-      var headingEl = document.getElementById('batch-heading');
-      headingEl.textContent = 'Batch Print — ' + total + ' bill' + (total === 1 ? '' : 's');
-
-      function label() {
-        if (next >= total) return 'All ' + total + ' bill' + (total === 1 ? '' : 's') + ' printed. You can close this window.';
-        return 'Ready: bill ' + (next + 1) + ' of ' + total + ' (' + titles[next] + ')';
-      }
-      function refresh() {
-        statusEl.textContent = label();
-        nextBtn.disabled = next >= total;
-        nextBtn.textContent = next >= total ? 'Done' : 'Print bill ' + (next + 1) + ' of ' + total;
-      }
-
-      function printOne() {
-        if (busy || next >= total) return;
-        busy = true;
-        var i = next;
-        var docs = document.querySelectorAll('.batch-doc');
-        for (var d = 0; d < docs.length; d++) docs[d].classList.remove('printing');
-        docs[i].classList.add('printing');
-        // The document title is what the browser offers as the Save-as-PDF
-        // filename, so each bill saves under its own order number.
-        document.title = titles[i];
-        statusEl.textContent = 'Printing bill ' + (i + 1) + ' of ' + total + '…';
-        nextBtn.disabled = true;
-        window.print();
-      }
-
-      function finishedOne() {
-        if (!busy) return;
-        busy = false;
-        next++;
-        var docs = document.querySelectorAll('.batch-doc');
-        for (var d = 0; d < docs.length; d++) docs[d].classList.remove('printing');
-        document.title = ${JSON.stringify(windowTitle)};
-        refresh();
-        if (auto && next < total) {
-          // Chaining straight out of the afterprint handler is unreliable in
-          // some browsers; a short gap lets the previous dialog fully tear down.
-          setTimeout(printOne, 400);
-        }
-      }
-
-      window.addEventListener('afterprint', finishedOne);
-      nextBtn.addEventListener('click', function () { auto = true; printOne(); });
-      document.getElementById('batch-close').addEventListener('click', function () { window.close(); });
-
-      refresh();
-      document.fonts.ready.then(function () { setTimeout(printOne, 150); });
-    })();
+    document.getElementById('batch-print').addEventListener('click', function () { window.print(); });
+    document.getElementById('batch-close').addEventListener('click', function () { window.close(); });
+    document.fonts.ready.then(function () { setTimeout(function () { window.print(); }, 150); });
   <\/script>
 </body>
 </html>`;
