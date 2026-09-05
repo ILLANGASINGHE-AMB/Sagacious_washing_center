@@ -198,7 +198,11 @@
        `.scroll-host`, so the leftover height flows down the chain to the
        rows. Pages with no marker (Dashboard, Analytics, Reports, Settings)
        keep scrolling as a whole inside #content. */
-    #content.rows-only-scroll { overflow: hidden; display: flex; flex-direction: column; }
+    /* overflow-y is auto rather than hidden so that a page which simply
+       cannot fit — too much above the table, or a second section below it —
+       degrades into ordinary page scrolling instead of squeezing the rows
+       into an unusable sliver. */
+    #content.rows-only-scroll { overflow-y: auto; overflow-x: hidden; display: flex; flex-direction: column; }
     #content.rows-only-scroll > *,
     #content.rows-only-scroll .scroll-host > * { flex: 0 0 auto; }
     #content.rows-only-scroll .scroll-host {
@@ -206,7 +210,10 @@
       display: flex; flex-direction: column;
     }
     #content.rows-only-scroll .table-scroll {
-      flex: 1 1 auto; min-height: 0;
+      /* The floor keeps roughly six rows on screen even on a short window;
+         past that the page scrolls (see the overflow note above) rather than
+         the rows region shrinking any further. */
+      flex: 1 1 auto; min-height: 280px;
       overflow-y: auto; overflow-x: auto;
       /* Overrides the fixed max-heights a few pages set on their own
          wrappers — the height now comes from whatever the page leaves over. */
@@ -255,6 +262,12 @@
     td { padding: 12px 16px; border-top: 1px solid var(--border); font-size: 0.9em; color: var(--text); }
     tr:hover td { background: rgba(0,0,0,0.02); }
     html.dark tr:hover td { background: rgba(255,255,255,0.03); }
+
+    /* Tighter rows for a list whose whole page has to fit on screen at once
+       (the Items catalogue shows 15 per page). Only the vertical padding
+       changes, so the row content is untouched. */
+    table.rows-dense th { padding-top: 8px; padding-bottom: 8px; }
+    table.rows-dense td { padding-top: 6px; padding-bottom: 6px; }
 
     /* Badge */
     .badge { display: inline-block; padding: 3px 10px; border-radius: 99px; font-size: 0.75em; font-weight: 700; }

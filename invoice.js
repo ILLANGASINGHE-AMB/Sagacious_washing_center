@@ -89,30 +89,29 @@ async function renderInvoices() {
   
   // Build page shell
   document.getElementById('content').innerHTML = `
-    <div class="section-header">
-      <span class="section-title">Invoice Management</span>
-    </div>
+    <!-- No in-page heading: the top bar already reads "Invoice Management",
+         and the row it used to occupy is worth another invoice on screen. -->
 
     <!-- Summary Cards -->
-    <div style="display:grid;grid-template-columns:repeat(auto-fit,minmax(220px,1fr));gap:16px;margin-bottom:20px;">
+    <div style="display:grid;grid-template-columns:repeat(auto-fit,minmax(200px,1fr));gap:12px;margin-bottom:12px;">
       ${renderInvStatCard("Total Invoices", "0", "fa-file-invoice", "#3b82f6", "#dbeafe", '<span id="card-total-invoices-sub">Across current filter</span>', "card-total-invoices")}
       ${renderInvStatCard("Total Revenue Collected", "LKR 0.00", "fa-hand-holding-dollar", "#22c55e", "#dcfce7", "Calculated from payments", "card-total-revenue")}
       ${renderInvStatCard("Outstanding Balance", "LKR 0.00", "fa-file-invoice-dollar", "#ef4444", "#fee2e2", '<span id="card-outstanding-balance-sub">Awaiting payment</span>', "card-outstanding-balance")}
     </div>
 
     <!-- Filters & Search -->
-    <div class="card" style="margin-bottom:18px;padding:20px;">
+    <div class="card" style="margin-bottom:12px;padding:11px 14px;">
       <!-- Top Row: Search and Quick Buttons -->
-      <div style="display:flex;gap:12px;flex-wrap:wrap;align-items:center;justify-content:space-between;width:100%;">
+      <div style="display:flex;gap:10px;flex-wrap:wrap;align-items:center;justify-content:space-between;width:100%;">
         <div class="search-wrap" style="flex:1;min-width:200px;margin:0;">
           <i class="fas fa-search"></i>
           <input class="form-input" id="inv-search-input" placeholder="Search invoice #, customer, order batch..."
-            value="${escapeHtml(invoiceSearch)}"
+            value="${escapeHtml(invoiceSearch)}" style="padding-top:7px;padding-bottom:7px;"
             autocomplete="off" spellcheck="false"
             oninput="invoiceSearch=this.value;invoicePage=1;_refreshInvoicesTable()"/>
         </div>
         <div style="display:flex;gap:8px;align-items:center;flex-wrap:wrap;">
-          <button class="btn btn-secondary" id="invoices-filter-btn" onclick="toggleInvoicesFilter()">
+          <button class="btn btn-secondary btn-sm" id="invoices-filter-btn" onclick="toggleInvoicesFilter()">
             <i class="fas fa-filter"></i> Filter
           </button>
           <span id="inv-count" style="font-size:0.82em;color:var(--text-muted);font-weight:600;margin-left:8px;"></span>
@@ -215,17 +214,20 @@ async function renderInvoices() {
   if (searchInput) searchInput.focus();
 }
 
+// Deliberately compact: every pixel this summary row gives up becomes
+// another visible invoice, and the numbers stay perfectly readable at this
+// size. Shared with the Deductions page, which has the same trade-off.
 function renderInvStatCard(label, value, icon, color, bgColor, sub, id, containerId = '') {
   return `
-    <div class="stat-card" id="${containerId || id + '-container'}" style="transition:all 0.3s; margin:0;">
-      <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:10px;">
-        <div class="label" style="font-size:0.8em;font-weight:600;color:var(--text-muted);text-transform:uppercase;letter-spacing:0.5px;">${label}</div>
-        <div style="background:${bgColor};color:${color};width:40px;height:40px;border-radius:10px;display:flex;align-items:center;justify-content:center;">
+    <div class="stat-card" id="${containerId || id + '-container'}" style="transition:all 0.3s;margin:0;padding:11px 14px;gap:1px;">
+      <div style="display:flex;align-items:center;justify-content:space-between;gap:8px;">
+        <div class="label" style="font-size:0.68em;font-weight:700;color:var(--text-muted);text-transform:uppercase;letter-spacing:0.5px;">${label}</div>
+        <div style="background:${bgColor};color:${color};width:26px;height:26px;border-radius:7px;font-size:0.8em;flex-shrink:0;display:flex;align-items:center;justify-content:center;">
           <i class="fas ${icon}"></i>
         </div>
       </div>
-      <div class="value" id="${id}">${value}</div>
-      <div class="sub">${sub}</div>
+      <div class="value" id="${id}" style="font-size:1.1em;line-height:1.25;">${value}</div>
+      <div class="sub" style="font-size:0.68em;margin-top:0;">${sub}</div>
     </div>`;
 }
 

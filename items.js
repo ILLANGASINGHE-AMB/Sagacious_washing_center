@@ -18,8 +18,8 @@ async function renderItems() {
 
   showLoading('content', 'Loading Catalog...');
   document.getElementById('content').innerHTML = `
-    <div class="section-header">
-      <span class="section-title">Items Catalog</span>
+    <div class="section-header" style="margin-bottom:12px;">
+      <span class="section-title" style="font-size:1.25em;">Items Catalog</span>
       <div style="display:flex;gap:8px;flex-wrap:wrap;">
         ${canUseQuotation()?'<button class="btn btn-primary" onclick="showGenerateQuotationModal()"><i class="fas fa-file-invoice"></i> Generate Quotation</button>':''}
         ${canUseQuotation()?'<button class="btn btn-secondary" onclick="showDefaultTermsModal()"><i class="fas fa-file-contract"></i> Terms &amp; Conditions</button>':''}
@@ -30,12 +30,14 @@ async function renderItems() {
         ${canEditItems()?'<button class="btn btn-primary" onclick="showAddItemModal()"><i class="fas fa-plus"></i> Add Item</button>':''}
       </div>
     </div>
-    <div id="items-stats" style="display:grid;grid-template-columns:repeat(auto-fit,minmax(180px,1fr));gap:14px;margin-bottom:22px;"></div>
-    <div class="card" style="margin-bottom:18px;">
-      <div style="display:flex;gap:12px;align-items:center;">
+    <!-- The "Total Items" card used to sit here. It only repeated the count
+         already shown beside the search box, and the catalogue needs the room. -->
+    <div class="card" style="margin-bottom:12px;padding:11px 14px;">
+      <div style="display:flex;gap:10px;align-items:center;">
         <div class="search-wrap" style="flex:1;">
           <i class="fas fa-search"></i>
           <input class="form-input" id="items-search-input" placeholder="Search item ID, name..."
+            style="padding-top:7px;padding-bottom:7px;"
             autocomplete="off" spellcheck="false"
             oninput="itemsSearch=this.value;itemsPage=1;_refreshItemsTable()"/>
         </div>
@@ -43,8 +45,8 @@ async function renderItems() {
       </div>
     </div>
     <div class="card" style="padding:0;">
-      <div class="table-wrap" data-rows-scroll>
-        <table>
+      <div class="table-wrap">
+        <table class="rows-dense">
           <thead><tr>
             <th>Item ID</th>
             <th>Item Name</th>
@@ -61,8 +63,8 @@ async function renderItems() {
     </div>
 
     <!-- QUOTATIONS GENERATED HISTORY SECTION -->
-    <div class="card" style="margin-top:28px;">
-      <div class="section-header" style="margin-bottom:14px;">
+    <div class="card" style="margin-top:18px;">
+      <div class="section-header" style="margin-bottom:10px;">
         <span class="section-title" style="font-size:1.1em;"><i class="fas fa-history"></i> Quotations Generated History</span>
       </div>
       <div class="table-wrap">
@@ -98,11 +100,6 @@ async function _refreshItemsTable() {
   if (itemsPage > totalPages) itemsPage = totalPages;
   const { items } = paginateData(filtered, itemsPage, itemsPerPage);
 
-  const statsEl = document.getElementById('items-stats');
-  if(statsEl) {
-    statsEl.innerHTML =
-      `<div class="stat-card"><div class="label">Total Items</div><div class="value">${allItems.length}</div><div class="sub">In catalog</div></div>`;
-  }
   const countEl = document.getElementById('items-count');
   if(countEl) countEl.textContent = total+' item'+(total!==1?'s':'');
 
