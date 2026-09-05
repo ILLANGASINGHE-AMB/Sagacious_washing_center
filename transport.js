@@ -349,7 +349,7 @@ const TransportModule = {
           </div>
         </div>
 
-        <div class="overflow-x-auto">
+        <div class="overflow-x-auto" data-rows-scroll>
           <table class="w-full text-left border-collapse min-w-[700px]">
             <thead>
               <tr class="bg-slate-50 dark:bg-slate-900 border-b border-slate-200 dark:border-slate-700 text-xs font-bold text-slate-600 dark:text-slate-400 uppercase tracking-wider">

@@ -94,7 +94,7 @@ const PendingsModule = {
         </div>
 
         <div class="bg-white dark:bg-slate-800 rounded-2xl shadow-sm border border-slate-200 dark:border-slate-700 overflow-hidden">
-          <div class="table-wrap">
+          <div class="table-wrap" data-rows-scroll>
             <table>
               <thead>
                 <tr>

@@ -105,7 +105,7 @@ async function renderOrders() {
     </div>
 
     <div class="card" style="padding:0;">
-      <div class="table-wrap">
+      <div class="table-wrap" data-rows-scroll>
         <table>
           <thead><tr>
             <th style="width:36px;text-align:center;"><input type="checkbox" id="orders-select-all" onchange="toggleAllOrdersSelection(this)" title="Select all shown orders"/></th>

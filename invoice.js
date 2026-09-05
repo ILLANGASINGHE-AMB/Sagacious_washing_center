@@ -173,7 +173,7 @@ async function renderInvoices() {
 
     <!-- Invoices Table -->
     <div class="card" style="padding:0;overflow:hidden;">
-      <div class="table-wrap" style="overflow-x:auto;">
+      <div class="table-wrap" style="overflow-x:auto;" data-rows-scroll>
         <table style="min-width:1300px;border-collapse:collapse;">
           <thead>
             <tr>
@@ -185,7 +185,7 @@ async function renderInvoices() {
               <th onclick="sortInvoices('paid')" style="cursor:pointer;text-align:right;user-select:none;">Amount Paid ${getSortIcon('paid')}</th>
               <th>Deduction</th>
               <th onclick="sortInvoices('balance')" style="cursor:pointer;text-align:right;user-select:none;">Remaining Balance ${getSortIcon('balance')}</th>
-              <th style="position:sticky;right:0;background:var(--card-bg);box-shadow:-2px 0 5px rgba(0,0,0,0.05);z-index:5;white-space:nowrap;">
+              <th style="position:sticky;right:0;top:0;background:var(--card-bg);box-shadow:-2px 0 5px rgba(0,0,0,0.05);z-index:7;white-space:nowrap;">
                 Actions
                 <button id="inv-actions-toggle" onclick="_toggleAllInvoiceActions()" title="Show / Hide action buttons"
                   style="margin-left:6px;padding:2px 7px;font-size:0.85em;cursor:pointer;border-radius:5px;border:1px solid var(--border);background:var(--bg);color:var(--text-muted);vertical-align:middle;">
@@ -1878,7 +1878,7 @@ async function renderDeductions() {
 
     <!-- Table Container -->
     <div class="card" style="padding:0;overflow:hidden;">
-      <div style="overflow-x:auto;">
+      <div style="overflow-x:auto;" data-rows-scroll>
         <table class="table" style="width:100%;border-collapse:collapse;margin:0;">
           <thead>
             <tr>

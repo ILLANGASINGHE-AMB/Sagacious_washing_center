@@ -954,7 +954,7 @@ async function renderCustomers() {
       </div>
     </div>
     <div class="card" style="padding:0;">
-      <div class="table-wrap">
+      <div class="table-wrap" data-rows-scroll>
         <table>
           <thead>
             <tr>
@@ -1861,7 +1861,7 @@ async function renderDrivers() {
       </div>
     </div>
     <div class="card" style="padding:0;">
-      <div class="table-wrap">
+      <div class="table-wrap" data-rows-scroll>
         <table>
           <thead>
             <tr>
@@ -2777,7 +2777,7 @@ async function renderVehicles() {
     </div>
 
     <div class="card" style="padding:0;">
-      <div class="table-wrap">
+      <div class="table-wrap" data-rows-scroll>
         <table>
           <thead>
             <tr>
@@ -3459,7 +3459,7 @@ async function renderPayNow() {
       </div>
     </div>
     <div class="card" style="padding:0;">
-      <div class="table-wrap">
+      <div class="table-wrap" data-rows-scroll>
         <table>
           <thead>
             <tr>
@@ -5117,7 +5117,7 @@ async function renderRecentActions() {
 
     <!-- Table Card -->
     <div class="card" style="padding:0;">
-      <div class="table-wrap">
+      <div class="table-wrap" data-rows-scroll>
         <table>
           <thead>
             <tr>
@@ -5558,7 +5558,7 @@ async function renderTrash() {
       <div style="font-size:0.83em;color:var(--text-muted);margin-top:2px;">Deleted records are kept here for 7 days before being permanently removed.</div>
     </div>
     <div class="card" style="padding:0;">
-      <div class="table-wrap">
+      <div class="table-wrap" data-rows-scroll>
         <table>
           <thead><tr><th>Type</th><th>Item</th><th>Deleted By</th><th>Deleted At</th><th>Days Left</th><th style="text-align:center;">Actions</th></tr></thead>
           <tbody>${rows || `<tr><td colspan="6" style="text-align:center;padding:40px;color:var(--text-muted);"><div style="font-size:2em;margin-bottom:8px;">🗑️</div>Trash is empty</td></tr>`}</tbody>

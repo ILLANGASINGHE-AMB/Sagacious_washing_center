@@ -709,7 +709,7 @@ const ExpensesModule = {
         </div>
 
         <div class="bg-white dark:bg-slate-800 rounded-2xl shadow-sm border border-slate-200 dark:border-slate-700 overflow-hidden">
-          <div class="overflow-auto max-h-[50vh]" id="cv-table-wrapper">
+          <div class="overflow-auto max-h-[50vh]" id="cv-table-wrapper" data-rows-scroll>
             <table class="w-full text-left border-separate border-spacing-0">
               <thead>
                 <tr class="bg-slate-50 dark:bg-slate-900">

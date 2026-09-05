@@ -43,7 +43,7 @@ async function renderItems() {
       </div>
     </div>
     <div class="card" style="padding:0;">
-      <div class="table-wrap">
+      <div class="table-wrap" data-rows-scroll>
         <table>
           <thead><tr>
             <th>Item ID</th>

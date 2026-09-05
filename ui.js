@@ -313,3 +313,63 @@ function pickerHTML(id, placeholder) {
     <div id="${id}-dropdown" style="display:none;position:absolute;top:100%;left:0;right:0;z-index:9999;background:var(--card-bg);border:1px solid var(--border);border-radius:8px;box-shadow:0 8px 24px rgba(0,0,0,0.15);max-height:220px;overflow-y:auto;margin-top:2px;"></div>
   </div>`;
 }
+
+// ── Rows-only page scrolling ──────────────────────────────────────────────
+// The shell is a fixed-height flex column (see index.html), so a data page
+// can hand every pixel it does not need to its table: the heading, stat
+// cards, search bar, filter panel and pagination hold their place while only
+// the rows move under pinned column headers.
+//
+// A page opts in with data-rows-scroll on the element wrapping its table.
+// The wiring is done here rather than in each page's CSS because the number
+// of elements between that wrapper and #content differs per page, and each
+// one has to become a flex column for the leftover height to reach the
+// bottom of the chain.
+function syncRowsOnlyScroll() {
+  const content = document.getElementById('content');
+  if (!content) return;
+
+  // Only ever act on a marker inside the page itself. Modals are appended to
+  // <body>, so a table in one can never be mistaken for the page's table.
+  const host = content.querySelector('[data-rows-scroll]');
+
+  const wantHosts = new Set();
+  for (let el = host?.parentElement; el && el !== content; el = el.parentElement) {
+    wantHosts.add(el);
+  }
+
+  // Every write is guarded so that a run which changes nothing touches no
+  // attributes at all — this is called on every #content mutation.
+  const setClass = (el, cls, on) => {
+    if (el.classList.contains(cls) !== on) el.classList.toggle(cls, on);
+  };
+
+  content.querySelectorAll('.scroll-host').forEach(el => setClass(el, 'scroll-host', wantHosts.has(el)));
+  content.querySelectorAll('.table-scroll').forEach(el => setClass(el, 'table-scroll', el === host));
+  wantHosts.forEach(el => setClass(el, 'scroll-host', true));
+  if (host) setClass(host, 'table-scroll', true);
+  setClass(content, 'rows-only-scroll', !!host);
+}
+
+// Pages are written into #content as raw HTML by a dozen modules, most of
+// them async and none of them reporting when they are done, so the layout is
+// re-derived from whatever is actually in the DOM.
+//
+// The sync runs straight from the observer callback rather than being
+// deferred to an animation frame: a frame is not guaranteed to arrive
+// promptly (a background tab never paints), which would leave a page stuck
+// with the previous page's scroll layout. Watching childList only — never
+// attributes — is what keeps the class changes above from re-triggering it,
+// and each run is a single querySelector when nothing has to change.
+function initRowsOnlyScroll() {
+  const content = document.getElementById('content');
+  if (!content) return;
+  new MutationObserver(syncRowsOnlyScroll).observe(content, { childList: true, subtree: true });
+  syncRowsOnlyScroll();
+}
+
+if (document.readyState === 'loading') {
+  document.addEventListener('DOMContentLoaded', initRowsOnlyScroll);
+} else {
+  initRowsOnlyScroll();
+}
