@@ -4232,6 +4232,10 @@ async function showBatchPayConfirmModal() {
 
     const cust = cMap[o.customer_id];
     let inv = invMap[oId];
+    // Captured BEFORE the synthetic preview invoice below overwrites invMap[oId]
+    // — this is what decides whether the order can be merged into a shared
+    // invoice or must keep the number it already has.
+    const hasExistingInvoice = !!inv;
     let invNum = inv?.invoice_number;
     let balance = 0;
     let payments = [];
@@ -4284,6 +4288,7 @@ async function showBatchPayConfirmModal() {
       amount: balance,
       orderId: oId,
       invoiceId: inv.id,
+      hasExistingInvoice,
       pickupDate: o.pickup_date
     });
 
@@ -4292,6 +4297,9 @@ async function showBatchPayConfirmModal() {
         <td style="padding:8px 0; font-family:monospace; font-weight:700;">${o.batch_id || '—'}</td>
         <td style="padding:8px 0;">${escapeHtml(cust?.hotel_name || '—')}</td>
         <td style="padding:8px 0; font-family:monospace;">${escapeHtml(invNum || '—')}</td>
+        <td style="padding:8px 0;">${hasExistingInvoice
+          ? '<span class="badge badge-blue">Existing invoice</span>'
+          : '<span class="badge badge-orange">No invoice yet</span>'}</td>
         <td style="padding:8px 0; text-align:right; font-weight:600; color:var(--success);">${formatCurrency(balance)}</td>
         <td style="padding:8px 0;">${formatDate(o.pickup_date)}</td>
       </tr>`;
@@ -4302,17 +4310,41 @@ async function showBatchPayConfirmModal() {
   currentBatchPayOption = 'standard';
   currentBatchInvoiceMode = 'separate';
 
+  // An order that already has an invoice can never be merged into a shared
+  // one — merging would delete its invoice row, and with it the invoice number
+  // already issued to the customer. Those orders are always settled in place
+  // under their own number, so the Single / Separate choice is offered only
+  // when at least one selected order has no invoice yet, and it governs only
+  // those orders.
+  const batchExistingCount = selectedBatchDetails.filter(d => d.hasExistingInvoice).length;
+  const batchFreshCount = selectedBatchDetails.length - batchExistingCount;
+  window._batchExistingCount = batchExistingCount;
+  window._batchFreshCount = batchFreshCount;
+
+  const invoiceModeHTML = batchFreshCount > 0
+    ? `
+    <div style="display:flex;gap:8px;margin-bottom:14px;">
+      <button class="btn btn-sm" id="batch-inv-separate" onclick="selectBatchInvoiceMode('separate')" style="background:#1a4d8f;color:#fff;border-color:#1a4d8f;font-weight:600;"><i class="fas fa-file-invoice"></i> Separate Invoice</button>
+      <button class="btn btn-sm" id="batch-inv-single" onclick="selectBatchInvoiceMode('single')" style="background:var(--secondary);color:var(--text);border-color:var(--border);font-weight:600;"><i class="fas fa-layer-group"></i> Single Invoice</button>
+    </div>
+    <p id="batch-inv-mode-hint" style="font-size:0.8em; color:var(--text-muted); margin-bottom:14px;">${batchInvoiceModeHint('separate')}</p>`
+    : `
+    <div style="display:flex;align-items:flex-start;gap:10px;background:rgba(26,77,143,0.07);border:1px solid rgba(26,77,143,0.25);border-radius:10px;padding:12px 14px;margin-bottom:14px;">
+      <i class="fas fa-file-invoice" style="color:#1a4d8f;margin-top:2px;"></i>
+      <div style="font-size:0.84em;color:var(--text);line-height:1.55;">
+        <strong>All ${batchExistingCount} selected order${batchExistingCount !== 1 ? 's' : ''} already ${batchExistingCount !== 1 ? 'have' : 'has'} an invoice.</strong>
+        Each one will be settled under its own existing invoice number, so no invoice number changes and none is replaced.
+        The Single Invoice option is unavailable for this selection.
+      </div>
+    </div>`;
+
   createModal('batch-pay-confirm-modal', 'Batch Payment Summary', `
     <div style="display:flex;gap:8px;margin-bottom:10px;">
       <button class="btn btn-sm" id="batch-opt-standard" onclick="selectBatchPayOption('standard')" style="background:var(--success);color:#fff;border-color:var(--success);font-weight:600;"><i class="fas fa-wallet"></i> Standard Batch Payment</button>
       <button class="btn btn-sm" id="batch-opt-deduct" onclick="selectBatchPayOption('deduct')" style="background:var(--secondary);color:var(--text);border-color:var(--border);font-weight:600;"><i class="fas fa-cut"></i> Batch Pay with Deductions</button>
     </div>
 
-    <div style="display:flex;gap:8px;margin-bottom:14px;">
-      <button class="btn btn-sm" id="batch-inv-separate" onclick="selectBatchInvoiceMode('separate')" style="background:#1a4d8f;color:#fff;border-color:#1a4d8f;font-weight:600;"><i class="fas fa-file-invoice"></i> Separate Invoice</button>
-      <button class="btn btn-sm" id="batch-inv-single" onclick="selectBatchInvoiceMode('single')" style="background:var(--secondary);color:var(--text);border-color:var(--border);font-weight:600;"><i class="fas fa-layer-group"></i> Single Invoice</button>
-    </div>
-    <p id="batch-inv-mode-hint" style="font-size:0.8em; color:var(--text-muted); margin-bottom:14px;">Each order will be saved under its own separate invoice number.</p>
+    ${invoiceModeHTML}
 
     <p style="font-size:0.88em; color:var(--text-muted); margin-bottom:14px;">Please review the summary of selected orders before confirming payment.</p>
 
@@ -4326,6 +4358,7 @@ async function showBatchPayConfirmModal() {
             <th style="padding:6px 0; text-align:left;">Order ID</th>
             <th style="padding:6px 0; text-align:left;">Customer</th>
             <th style="padding:6px 0; text-align:left;">Invoice No</th>
+            <th style="padding:6px 0; text-align:left;">Invoice Status</th>
             <th style="padding:6px 0; text-align:right;">Amount (LKR)</th>
             <th style="padding:6px 0; text-align:left;">Pickup Date</th>
           </tr>
@@ -4464,14 +4497,11 @@ async function processBatchPayment(method = 'Cash', notes = 'Paid fully via Batc
 
     const createdInvoiceIds = [];
     const touchedCustomerIds = new Set();
-    const isSingleInvoice = currentBatchInvoiceMode === 'single';
-    const singleInvoiceNumber = isSingleInvoice ? await DB.generateInvoiceNumber() : null;
 
     // Phase 1 — pure computation, no writes yet. Doing every order's math
     // up front (and only starting to write once it's all known-good) means
     // a mid-batch failure can't leave an order half-updated: marked Paid
-    // with no invoice behind it, or its old invoice deleted with nothing to
-    // replace it — the "invoice missing" bug this replaced.
+    // with no invoice behind it — the "invoice missing" bug this replaced.
     let deductionAssigned = 0;
     const computed = [];
     for (let idx = 0; idx < details.length; idx++) {
@@ -4487,14 +4517,14 @@ async function processBatchPayment(method = 'Cash', notes = 'Paid fully via Batc
       const orderAdvance = order.advance_payment || 0;
       const orderBalance = detail.amount; // balance for this order
 
-      // Proportional deduction split — only meaningful in Separate Invoice
-      // mode (Single Invoice mode below records the un-split deductionAmount
-      // directly on the one consolidated invoice). The last order absorbs
+      // Proportional deduction split. It runs for every mode now: a batch can
+      // be part consolidated and part settled in place, so the deduction has
+      // to be attributable per order either way. The last order absorbs
       // whatever rounding remainder is left, so the per-order pieces always
       // sum to exactly `deductionAmount` instead of silently drifting a cent
       // or two off it.
       let orderDeduction = 0;
-      if (!isSingleInvoice && deductionAmount > 0 && totalAmount > 0) {
+      if (deductionAmount > 0 && totalAmount > 0) {
         const isLast = idx === details.length - 1;
         orderDeduction = isLast
           ? Math.round((deductionAmount - deductionAssigned) * 100) / 100
@@ -4510,60 +4540,119 @@ async function processBatchPayment(method = 'Cash', notes = 'Paid fully via Batc
       });
     }
 
-    if (isSingleInvoice) {
-      // Build + write the consolidated invoice FIRST. Only once it (and its
-      // deduction/payment) exist do we touch each order's own pre-existing
-      // invoice or status, so a failure here leaves every order exactly as
-      // it was before — never "Paid" with no invoice behind it.
-      const singleInvoiceTotal = computed.reduce((s, c) => s + c.orderTotal, 0);
-      const singleInvoiceAdvance = computed.reduce((s, c) => s + c.orderAdvance, 0);
-      const singleInvoiceDetails = computed.map(c => ({
+    // Phase 2 — split the batch by whether the order already has an invoice.
+    //
+    // An order that already has one is ALWAYS settled in place under that
+    // number. Folding it into a shared invoice would delete its invoice row,
+    // destroying an invoice number that has already been issued to the
+    // customer. So the Single / Separate choice governs only the orders that
+    // have no invoice yet, and the modal hides the choice entirely when there
+    // are none of those.
+    const preInvoiced = computed.filter(c => c.existingInv);
+    const uninvoiced  = computed.filter(c => !c.existingInv);
+    // Consolidating a single order is just a separate invoice with extra
+    // bookkeeping, so it only kicks in from two orders up.
+    const useSingle = currentBatchInvoiceMode === 'single' && uninvoiced.length >= 2;
+    const singleInvoiceNumber = useSingle ? await DB.generateInvoiceNumber() : null;
+
+    // ── 2a. Orders that already have an invoice — settle in place ──
+    for (const c of preInvoiced) {
+      const { oId, order, orderTotal, orderDeduction, payAmount, existingInv } = c;
+      const invId = existingInv.id;
+      const invNum = existingInv.invoice_number;
+
+      await DB.updateInvoice(invId, {
+        balance: 0,
+        paid_status: 'Paid',
+        deduction_amount: (existingInv.deduction_amount || 0) + orderDeduction,
+        payment_date: paymentDateISO
+      });
+      createdInvoiceIds.push(invId);
+
+      if (orderDeduction > 0) {
+        await DB.addDeduction({
+          invoice_id: invId,
+          invoice_number: invNum,
+          original_amount: orderTotal,
+          deduction_amount: orderDeduction,
+          final_amount: orderTotal - orderDeduction,
+          reason: reason
+        });
+      }
+
+      if (payAmount > 0) {
+        await DB.addPayment({
+          invoice_id: invId,
+          amount: payAmount,
+          method: method,
+          notes: notes,
+          date: paymentDateISO
+        });
+      }
+
+      await DB.updateOrder(oId, { status: 'Paid', payment_date: paymentDateISO });
+
+      await DB.logAction(
+        'Payment Received',
+        `Batch payment: Order #${order.batch_id || oId} paid LKR ${payAmount.toLocaleString()} via ${method} under its existing invoice ${invNum}${orderDeduction > 0 ? ' (Deduction: LKR ' + orderDeduction.toLocaleString() + ')' : ''}`,
+        { order_id: oId, batch_id: order.batch_id, invoice_id: invId, amount: payAmount, deduction: orderDeduction, method },
+        'Payment'
+      );
+    }
+
+    // ── 2b. Orders with no invoice yet ──
+    if (useSingle) {
+      // One consolidated invoice covering only the not-yet-invoiced orders.
+      // Nothing is deleted here: none of these orders has an invoice row to
+      // lose, so no payment or deduction history has to be carried across.
+      //
+      // The consolidated invoice reconciles to zero because, for an order
+      // with no invoice, orderBalance = orderTotal - advance. So:
+      //   netPayable = Σ orderTotal - Σ orderDeduction
+      //   totalPaid  = Σ advance + Σ (orderBalance - orderDeduction)
+      //              = Σ orderTotal - Σ orderDeduction
+      const singleInvoiceTotal   = uninvoiced.reduce((s, c) => s + c.orderTotal, 0);
+      const singleInvoiceAdvance = uninvoiced.reduce((s, c) => s + c.orderAdvance, 0);
+      const singleDeduction      = uninvoiced.reduce((s, c) => s + c.orderDeduction, 0);
+      const totalPayAmount       = uninvoiced.reduce((s, c) => s + c.payAmount, 0);
+
+      const singleInvoiceDetails = uninvoiced.map(c => ({
         invoiceNumber: singleInvoiceNumber,
         orderNumber: c.order.batch_id || ('#' + c.oId),
         customerName: c.customerName,
         amount: c.orderBalance
       }));
-      const primaryOrderId = computed[0].oId;
-      const primaryOrder = computed[0].order;
 
-      // Any order in this batch may already carry a deduction from an
-      // earlier Pay Now settlement. Those deduction rows get moved onto the
-      // consolidated invoice below (rather than being cascade-deleted with
-      // their old invoice), so its deduction_amount has to carry them too —
-      // otherwise the invoice's own recomputed balance won't come back to
-      // zero. See the reconciliation note by the fold-in loop.
-      const carriedDeduction = computed.reduce(
-        (s, c) => s + (parseFloat(c.existingInv?.deduction_amount) || 0), 0);
+      const primaryOrder = uninvoiced[0].order;
 
       const newInvId = await DB.addInvoice({
-        order_id:         primaryOrderId,
-        invoice_number:   singleInvoiceNumber,
-        issue_date:       paymentDateISO,
-        delivery_date:    primaryOrder?.delivery_date || today(),
-        invoice_type:     'Standard',
-        total_amount:     singleInvoiceTotal,
-        advance_payment:  singleInvoiceAdvance,
-        balance:          0,
-        paid_status:      'Paid',
-        deduction_amount: deductionAmount + carriedDeduction,
-        payment_date:     paymentDateISO,
-        batch_order_ids:      computed.map(c => c.oId).join(','),
+        order_id:              uninvoiced[0].oId,
+        invoice_number:        singleInvoiceNumber,
+        issue_date:            paymentDateISO,
+        delivery_date:         primaryOrder?.delivery_date || today(),
+        invoice_type:          'Standard',
+        total_amount:          singleInvoiceTotal,
+        advance_payment:       singleInvoiceAdvance,
+        balance:               0,
+        paid_status:           'Paid',
+        deduction_amount:      singleDeduction,
+        payment_date:          paymentDateISO,
+        batch_order_ids:       uninvoiced.map(c => c.oId).join(','),
         batch_invoice_details: JSON.stringify(singleInvoiceDetails)
       });
       createdInvoiceIds.push(newInvId);
 
-      if (deductionAmount > 0) {
+      if (singleDeduction > 0) {
         await DB.addDeduction({
           invoice_id: newInvId,
           invoice_number: singleInvoiceNumber,
-          original_amount: totalAmount,
-          deduction_amount: deductionAmount,
-          final_amount: totalAmount - deductionAmount,
+          original_amount: singleInvoiceTotal,
+          deduction_amount: singleDeduction,
+          final_amount: singleInvoiceTotal - singleDeduction,
           reason: reason
         });
       }
 
-      const totalPayAmount = Math.max(0, totalAmount - deductionAmount);
       if (totalPayAmount > 0) {
         await DB.addPayment({
           invoice_id: newInvId,
@@ -4574,135 +4663,68 @@ async function processBatchPayment(method = 'Cash', notes = 'Paid fully via Batc
         });
       }
 
-      // Consolidated invoice is safely written — now fold in each order:
-      // retire its old standalone invoice (can't be reused once merged) and
-      // mark it Paid.
-      //
-      // The old invoice ROW goes, but its money does not. Payments and
-      // deductions are re-pointed at the consolidated invoice first;
-      // deleting them (as this used to) permanently erased cash that had
-      // genuinely been collected through Pay Now, so every report summing
-      // the payments table — including "Monthly Cash Collected" for months
-      // already closed — retroactively dropped by that amount. Deductions
-      // would have gone the same way via the ON DELETE CASCADE on
-      // deductions.invoice_id.
-      //
-      // Carrying both across is also what makes the consolidated invoice
-      // internally consistent. With P = prior payments, D = prior
-      // deductions and A = advances:
-      //   netPayable = Σ orderTotal − (newDeduction + D)
-      //   totalPaid  = Σ A + Σ P + (batchDue − newDeduction)
-      // and since each orderBalance already equals
-      // orderTotal − A − P − D, the two sides cancel and the recomputed
-      // balance lands on exactly 0 — matching the balance:0 / Paid we
-      // write above. Deleting the history left it short by Σ P.
-      for (const c of computed) {
-        if (c.existingInv) {
-          await DB.reassignPaymentsToInvoice(c.existingInv.id, newInvId);
-          await DB.reassignDeductionsToInvoice(c.existingInv.id, newInvId, singleInvoiceNumber);
-          await DB.deleteInvoice(c.existingInv.id);
-        }
+      for (const c of uninvoiced) {
         await DB.updateOrder(c.oId, { status: 'Paid', payment_date: paymentDateISO });
         await DB.logAction(
           'Payment Received',
           `Batch payment: Order #${c.order.batch_id || c.oId} folded into single invoice ${singleInvoiceNumber}`,
-          { order_id: c.oId, batch_id: c.order.batch_id, amount: c.payAmount, deduction: c.orderDeduction, method },
+          { order_id: c.oId, batch_id: c.order.batch_id, invoice_id: newInvId, amount: c.payAmount, deduction: c.orderDeduction, method },
           'Payment'
         );
       }
     } else {
-      // Separate Invoice mode — each order settles independently.
-      for (const c of computed) {
-        const { oId, order, itemsSubtotal, orderTotal, orderAdvance, orderDeduction, payAmount, existingInv } = c;
+      // One brand new invoice per not-yet-invoiced order.
+      for (const c of uninvoiced) {
+        const { oId, order, itemsSubtotal, orderTotal, orderAdvance, orderDeduction, payAmount } = c;
 
-        if (existingInv) {
-          // This order already has its own invoice (e.g. from an earlier Pay
-          // Now partial payment) — settle it in place under its existing
-          // invoice number instead of discarding it and minting a new one.
-          const newInvId = existingInv.id;
-          const invNum = existingInv.invoice_number;
+        const invNum = await DB.generateInvoiceNumber();
+        const newInvId = await DB.addInvoice({
+          order_id:                 oId,
+          invoice_number:           invNum,
+          issue_date:               paymentDateISO,
+          delivery_date:            order.delivery_date || today(),
+          invoice_type:             'Standard',
+          total_amount:             orderTotal,
+          advance_payment:          orderAdvance,
+          extra_payment:            order.extra_payment || 0,
+          balance:                  0,
+          paid_status:              'Paid',
+          discount_rate:            order.discount_rate || 0,
+          discount_amount:          order.discount_amount || 0,
+          delivery_charge:          order.delivery_charge || 0,
+          subtotal_before_discount: itemsSubtotal > 0 ? itemsSubtotal : orderTotal,
+          deduction_amount:         orderDeduction,
+          payment_date:             paymentDateISO
+        });
+        createdInvoiceIds.push(newInvId);
 
-          await DB.updateInvoice(newInvId, {
-            balance: 0,
-            paid_status: 'Paid',
-            deduction_amount: (existingInv.deduction_amount || 0) + orderDeduction,
-            payment_date: paymentDateISO
+        if (orderDeduction > 0) {
+          await DB.addDeduction({
+            invoice_id: newInvId,
+            invoice_number: invNum,
+            original_amount: orderTotal,
+            deduction_amount: orderDeduction,
+            final_amount: orderTotal - orderDeduction,
+            reason: reason
           });
+        }
 
-          createdInvoiceIds.push(newInvId);
-
-          if (orderDeduction > 0) {
-            await DB.addDeduction({
-              invoice_id: newInvId,
-              invoice_number: invNum,
-              original_amount: orderTotal,
-              deduction_amount: orderDeduction,
-              final_amount: orderTotal - orderDeduction,
-              reason: reason
-            });
-          }
-
-          if (payAmount > 0) {
-            await DB.addPayment({
-              invoice_id: newInvId,
-              amount: payAmount,
-              method: method,
-              notes: notes,
-              date: paymentDateISO
-            });
-          }
-        } else {
-          // First ever payment on this order — one invoice per order.
-          const invNum = await DB.generateInvoiceNumber();
-          const newInvId = await DB.addInvoice({
-            order_id:                 oId,
-            invoice_number:           invNum,
-            issue_date:               paymentDateISO,
-            delivery_date:            order.delivery_date || today(),
-            invoice_type:             'Standard',
-            total_amount:             orderTotal,
-            advance_payment:          orderAdvance,
-            extra_payment:            order.extra_payment || 0,
-            balance:                  0,
-            paid_status:              'Paid',
-            discount_rate:            order.discount_rate || 0,
-            discount_amount:          order.discount_amount || 0,
-            delivery_charge:          order.delivery_charge || 0,
-            subtotal_before_discount: itemsSubtotal > 0 ? itemsSubtotal : orderTotal,
-            deduction_amount:         orderDeduction,
-            payment_date:             paymentDateISO
+        if (payAmount > 0) {
+          await DB.addPayment({
+            invoice_id: newInvId,
+            amount: payAmount,
+            method: method,
+            notes: notes,
+            date: paymentDateISO
           });
-
-          createdInvoiceIds.push(newInvId);
-
-          if (orderDeduction > 0) {
-            await DB.addDeduction({
-              invoice_id: newInvId,
-              invoice_number: invNum,
-              original_amount: orderTotal,
-              deduction_amount: orderDeduction,
-              final_amount: orderTotal - orderDeduction,
-              reason: reason
-            });
-          }
-
-          if (payAmount > 0) {
-            await DB.addPayment({
-              invoice_id: newInvId,
-              amount: payAmount,
-              method: method,
-              notes: notes,
-              date: paymentDateISO
-            });
-          }
         }
 
         await DB.updateOrder(oId, { status: 'Paid', payment_date: paymentDateISO });
 
         await DB.logAction(
           'Payment Received',
-          `Batch payment: Order #${order.batch_id || oId} paid LKR ${payAmount.toLocaleString()} via ${method}${orderDeduction > 0 ? ' (Deduction: LKR ' + orderDeduction.toLocaleString() + ')' : ''}`,
-          { order_id: oId, batch_id: order.batch_id, amount: payAmount, deduction: orderDeduction, method },
+          `Batch payment: Order #${order.batch_id || oId} paid LKR ${payAmount.toLocaleString()} via ${method} under new invoice ${invNum}${orderDeduction > 0 ? ' (Deduction: LKR ' + orderDeduction.toLocaleString() + ')' : ''}`,
+          { order_id: oId, batch_id: order.batch_id, invoice_id: newInvId, amount: payAmount, deduction: orderDeduction, method },
           'Payment'
         );
       }
@@ -4711,9 +4733,9 @@ async function processBatchPayment(method = 'Cash', notes = 'Paid fully via Batc
     paynowSelectedIds = [];
 
     hideModal('batch-pay-confirm-modal');
-    toast(isSingleInvoice
-      ? `Batch payment completed! Orders saved under a single invoice (${singleInvoiceNumber}).`
-      : `Batch payment completed! ${createdInvoiceIds.length} separate invoices created.`);
+    toast(useSingle
+      ? `Batch payment completed! ${uninvoiced.length} orders saved under one new invoice (${singleInvoiceNumber})${preInvoiced.length ? `, ${preInvoiced.length} settled under their existing invoice numbers` : ''}.`
+      : `Batch payment completed! ${createdInvoiceIds.length} invoices settled${preInvoiced.length ? ` (${preInvoiced.length} under existing invoice numbers)` : ''}.`);
 
     await _refreshPayNowTable();
     touchedCustomerIds.forEach(cid => refreshCustomerDetailIfOpen(cid));
@@ -4927,6 +4949,25 @@ function selectBatchPayOption(type) {
 
 let currentBatchInvoiceMode = 'separate';
 
+// Spells out exactly which orders the chosen mode acts on. In a mixed batch
+// the mode only ever applies to the orders that have no invoice yet — the
+// rest always keep the number they were already issued.
+function batchInvoiceModeHint(mode) {
+  const fresh = window._batchFreshCount || 0;
+  const existing = window._batchExistingCount || 0;
+  const keepsNote = existing > 0
+    ? ` The ${existing} order${existing !== 1 ? 's' : ''} that already ${existing !== 1 ? 'have' : 'has'} an invoice keep${existing !== 1 ? '' : 's'} its own existing invoice number.`
+    : '';
+
+  if (mode === 'separate') {
+    return `Each order without an invoice gets its own new invoice number.${keepsNote}`;
+  }
+  if (fresh < 2) {
+    return `Only ${fresh} order has no invoice yet, so it gets one invoice of its own.${keepsNote}`;
+  }
+  return `The ${fresh} orders without an invoice will share one new invoice number.${keepsNote}`;
+}
+
 function selectBatchInvoiceMode(mode) {
   currentBatchInvoiceMode = mode;
   const optSeparate = document.getElementById('batch-inv-separate');
@@ -4936,12 +4977,11 @@ function selectBatchInvoiceMode(mode) {
   if (mode === 'separate') {
     if (optSeparate) { optSeparate.style.background = '#1a4d8f'; optSeparate.style.borderColor = '#1a4d8f'; optSeparate.style.color = '#fff'; }
     if (optSingle) { optSingle.style.background = 'var(--secondary)'; optSingle.style.borderColor = 'var(--border)'; optSingle.style.color = 'var(--text)'; }
-    if (hint) hint.textContent = 'Each order will be saved under its own separate invoice number.';
   } else {
     if (optSingle) { optSingle.style.background = '#1a4d8f'; optSingle.style.borderColor = '#1a4d8f'; optSingle.style.color = '#fff'; }
     if (optSeparate) { optSeparate.style.background = 'var(--secondary)'; optSeparate.style.borderColor = 'var(--border)'; optSeparate.style.color = 'var(--text)'; }
-    if (hint) hint.textContent = 'All selected orders will be saved under one shared invoice number (with their own order IDs).';
   }
+  if (hint) hint.textContent = batchInvoiceModeHint(mode);
 }
 
 function recalcBatchDeduction(total) {

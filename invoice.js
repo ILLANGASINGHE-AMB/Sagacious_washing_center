@@ -127,6 +127,7 @@ async function renderInvoices() {
             <option value="">All Statuses</option>
             <option value="Paid">Paid</option>
             <option value="Partially Paid">Partially Paid</option>
+            <option value="Unpaid">Unpaid</option>
           </select>
         </div>
 
@@ -305,10 +306,11 @@ async function _refreshInvoicesTable() {
     };
   });
 
-  // This tab only ever shows invoices with money actually against them —
-  // an invoice is a record of a payment, not a placeholder for one. Any
-  // stray Unpaid row (legacy data, a Credit Bill, etc.) stays out of view.
-  filtered = filtered.filter(inv => inv.computedStatus !== 'Unpaid');
+  // Unpaid invoices are listed here too. An invoice is raised when the order
+  // is billed, not when it is settled, so hiding the Unpaid ones made every
+  // invoice raised before its payment (and the whole legacy book carried over
+  // from the old POS) look as though it had vanished. Use the Status filter
+  // to narrow to Paid / Partially Paid / Unpaid.
 
   // Apply filters
   if (invoiceSearch) {
@@ -414,17 +416,22 @@ async function _refreshInvoicesTable() {
   const totalOutstanding = filtered.reduce((s, inv) => s + inv.computedBalance, 0);
   const paidCount = filtered.filter(inv => inv.computedStatus === 'Paid').length;
   const partialCount = filtered.filter(inv => inv.computedStatus === 'Partially Paid').length;
+  const unpaidCount = filtered.filter(inv => inv.computedStatus === 'Unpaid').length;
+  // Every invoice still owing money, not just the partially paid ones — the
+  // Unpaid rows are visible now, so they have to be counted here as well or
+  // the card contradicts the balances listed directly under it.
+  const outstandingCount = filtered.filter(inv => inv.computedBalance > 0).length;
 
   const elInvoices = document.getElementById('card-total-invoices');
   if (elInvoices) elInvoices.textContent = totalInvoices;
   const elInvoicesSub = document.getElementById('card-total-invoices-sub');
-  if (elInvoicesSub) elInvoicesSub.textContent = `${paidCount} Paid · ${partialCount} Partially Paid`;
+  if (elInvoicesSub) elInvoicesSub.textContent = `${paidCount} Paid · ${partialCount} Partially Paid · ${unpaidCount} Unpaid`;
   const elRevenue = document.getElementById('card-total-revenue');
   if (elRevenue) elRevenue.textContent = formatCurrency(totalRevenue);
   const elOutstanding = document.getElementById('card-outstanding-balance');
   if (elOutstanding) elOutstanding.textContent = formatCurrency(totalOutstanding);
   const elOutstandingSub = document.getElementById('card-outstanding-balance-sub');
-  if (elOutstandingSub) elOutstandingSub.textContent = `Across ${partialCount} invoice${partialCount !== 1 ? 's' : ''}`;
+  if (elOutstandingSub) elOutstandingSub.textContent = `Across ${outstandingCount} invoice${outstandingCount !== 1 ? 's' : ''}`;
 
   // Set Count Label
   const countEl = document.getElementById('inv-count');
@@ -499,12 +506,12 @@ function getSortIcon(field) {
 
 // ── VIEW / PRINT INVOICE ──
 // ── Shared invoice/order resolution for bill preview & print ──
-// A "Single Invoice" batch payment keeps only one invoice row (keyed to the
-// first selected order) but covers every order listed in `batch_order_ids`
-// — each other order's own invoice row is deleted once it's folded in (see
-// processBatchPayment in app.js). Looking an invoice up by `order_id` alone
-// then finds nothing for those other orders; this fallback finds the shared
-// invoice by scanning for the order id inside `batch_order_ids`.
+// A "Single Invoice" batch payment writes one invoice row (keyed to the first
+// of the orders it covers) for every order listed in `batch_order_ids`. Those
+// orders had no invoice of their own to begin with — that is the only reason
+// they were eligible to be merged (see processBatchPayment in app.js) — so
+// looking one up by `order_id` alone finds nothing for all but the first;
+// this fallback finds the shared invoice by scanning `batch_order_ids`.
 async function _findInvoiceForOrder(orderId) {
   const direct = await _billDB.getInvoiceByOrder(orderId);
   if (direct) return direct;
