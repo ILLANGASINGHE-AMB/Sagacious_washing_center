@@ -3469,6 +3469,7 @@ async function renderPayNow() {
               <th>Order ID</th>
               <th>Customer</th>
               <th>Status</th>
+              <th>Invoice Status</th>
               <th>Pickup Date</th>
               <th>Unpaid Balance</th>
               <th>OverDue (days)</th>
@@ -3537,7 +3538,7 @@ async function _refreshPayNowTable() {
 
   // Render rows
   tbody.innerHTML = items.length === 0
-    ? `<tr><td colspan="8" style="text-align:center;padding:32px;color:var(--text-muted);">No pending payments found</td></tr>`
+    ? `<tr><td colspan="9" style="text-align:center;padding:32px;color:var(--text-muted);">No pending payments found</td></tr>`
     : items.map(o => {
         const cust = cMap[o.customer_id];
         const inv = invMap[o.id];
@@ -3552,6 +3553,9 @@ async function _refreshPayNowTable() {
           <td><strong>${o.batch_id || '—'}</strong></td>
           <td>${escapeHtml(getOrderCustomerName(o, cMap))}</td>
           <td>${statusBadge(o.status)}</td>
+          <td>${inv
+            ? '<span class="badge badge-blue">Existing</span>'
+            : '<span class="badge badge-orange">No</span>'}</td>
           <td>${formatDate(o.pickup_date)}</td>
           <td style="color:${balance > 0 ? 'var(--danger)' : 'var(--success)'};font-weight:700;">${formatCurrency(balance)}</td>
           <td style="color:${overdueDays > 7 ? 'var(--danger)' : 'var(--text-muted)'};font-weight:${overdueDays > 7 ? '700' : '400'};">${overdueDays} day${overdueDays !== 1 ? 's' : ''}</td>
