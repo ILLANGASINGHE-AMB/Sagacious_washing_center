@@ -4212,6 +4212,23 @@ async function processPartialPayment(orderId, invoiceId, maxAmount, amount, meth
 async function showBatchPayConfirmModal() {
   if (paynowSelectedIds.length < 2) return;
 
+  // Building this summary reads every selected order's items and its
+  // invoice's payments, so a large batch spends several seconds on the
+  // network with nothing on screen and no sign the click registered. The
+  // overlay covers the whole build, including the early exit for an order
+  // with no items, and reports which order is being read.
+  showProcessingOverlay(
+    'Preparing Batch Summary',
+    `Loading ${paynowSelectedIds.length} selected orders...`
+  );
+  try {
+    await _buildBatchPayConfirmModal();
+  } finally {
+    hideProcessingOverlay();
+  }
+}
+
+async function _buildBatchPayConfirmModal() {
   const [orders, invoices, customers] = await Promise.all([
     DB.getOrders(),
     DB.getInvoices(),
@@ -4226,9 +4243,13 @@ async function showBatchPayConfirmModal() {
   let batchListHTML = '';
   const selectedBatchDetails = [];
 
+  const progressEl = document.getElementById('processing-sublabel');
+  let checked = 0;
+
   for (const oId of paynowSelectedIds) {
     const o = oMap[oId];
     if (!o) continue;
+    if (progressEl) progressEl.textContent = `Checking order ${++checked} of ${paynowSelectedIds.length}...`;
 
     const cust = cMap[o.customer_id];
     let inv = invMap[oId];
